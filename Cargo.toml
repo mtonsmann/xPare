@@ -1,0 +1,44 @@
+# SafetyStrip workspace.
+#
+# Members:
+#   core      - pure, deterministic transformation core (#![forbid(unsafe_code)], no OS/IO/net)
+#   core-ffi  - thin C ABI shim over `core` (the ONLY crate allowed to use `unsafe`)
+#   cli       - headless harness over `core` (the agent's own validation/fuzz driver)
+#   xtask     - mechanical invariant enforcement (run via `cargo xtask ...`)
+#
+# `fuzz/` is deliberately NOT a member: it is its own workspace so libFuzzer and
+# the nightly-only toolchain never leak into normal stable builds.
+[workspace]
+resolver = "2"
+members = ["core", "core-ffi", "cli", "xtask"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/safetystrip/safetystrip"
+
+[workspace.dependencies]
+# Config (de)serialization — the load-bearing part of the FFI boundary. Boring, ubiquitous, audited.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Markdown -> plain text. CommonMark is too irregular to reimplement safely; pulldown-cmark
+# is the boring, well-audited standard (used by rustdoc/mdBook). default-features off drops the
+# unused `getopts` bundled-binary feature, keeping the surface minimal.
+pulldown-cmark = { version = "0.12", default-features = false }
+# Best-effort zeroization of heap buffers that have held clipboard content before they are freed.
+zeroize = "1"
+# Tooling only (xtask): generate and verify the frozen C header.
+cbindgen = "0.27"
+# Dev-only: property testing for determinism / round-trip / never-panics.
+proptest = "1"
+
+[profile.release]
+# Smaller, simpler release artifacts for the shipped staticlib/cdylib.
+# NOTE: panic stays "unwind" (the default) on purpose. The FFI shim wraps every
+# call in `catch_unwind`, so a stray panic is converted to SS_ERR_INTERNAL at the
+# boundary instead of unwinding across it (UB) or aborting the host app.
+opt-level = "s"
+lto = true
+codegen-units = 1

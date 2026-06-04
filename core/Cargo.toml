@@ -1,0 +1,19 @@
+[package]
+name = "safetystrip-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Pure, deterministic, memory-safe text transformation core for SafetyStrip. No OS, I/O, or network."
+
+[lib]
+name = "safetystrip_core"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+pulldown-cmark = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

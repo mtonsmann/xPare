@@ -1,0 +1,7 @@
+# Pin the toolchain so every agent run and CI use the same compiler.
+# Fuzzing requires nightly and is invoked explicitly with `cargo +nightly fuzz`;
+# it is intentionally NOT pinned here so normal builds stay on stable.
+[toolchain]
+channel = "stable"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

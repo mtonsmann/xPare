@@ -1,0 +1,17 @@
+[package]
+name = "safetystrip-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Headless harness over safetystrip-core: read stdin, apply a JSON config, write stdout. The agent's own validation/fuzz driver."
+
+[[bin]]
+name = "safetystrip"
+path = "src/main.rs"
+
+[dependencies]
+# Intentionally dependency-light: arguments are parsed by hand to keep the
+# harness boring and the dependency surface minimal. Config parsing lives in core.
+safetystrip-core = { path = "../core" }

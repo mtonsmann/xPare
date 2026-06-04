@@ -1,0 +1,17 @@
+[package]
+name = "safetystrip-ffi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Thin, language-neutral C ABI shim over safetystrip-core. The only crate that uses `unsafe`."
+
+[lib]
+name = "safetystrip_ffi"
+# staticlib for static-linking into the native shells; cdylib for dynamic consumers.
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+safetystrip-core = { path = "../core" }
+zeroize = { workspace = true }

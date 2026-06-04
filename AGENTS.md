@@ -1,0 +1,143 @@
+# Agent Instructions
+
+You are working in a memory-safe plain-text clipboard utility: a platform-neutral
+Rust transformation **core** (`core/`) driven by native **shells**
+(`shells/macos/` in Swift today; `shells/windows/` and `shells/linux/` reserved).
+The core transforms text (coerce rich → plain, strip HTML/Markdown, normalize
+whitespace, change case, line ops). Shells own all OS integration.
+
+Treat these as compatibility and safety surfaces. Do not change them without an
+explicit instruction and a PR call-out:
+
+- The **FFI ABI** between core and shells — narrow, stable, language-neutral.
+- `#![forbid(unsafe_code)]` in the core.
+- The **privacy posture**: no network anywhere, no persistence or logging of
+  clipboard content, in-memory only.
+- The core's freedom from OS, filesystem, and network dependencies.
+- **Deterministic** transform output for a given `(input, config)`.
+
+`ARCHITECTURE.md` is the repository map. Detailed rules live in
+`docs/guardrails/`. This file is only a map — keep it short and route to the
+guardrails rather than inlining their content.
+
+## Bootstrap (first run)
+
+On a clean repository, the docs and checks referenced below do not exist yet —
+they are the deliverable, not a precondition. Create them per the kickoff brief
+before relying on the operating loop, and do not block on their absence. Until
+the CI checks exist, the surfaces named above are guidance, not enforcement;
+encode them as failing checks early.
+
+## Operating Loop
+
+1. Classify the change before editing (core transform / FFI boundary / shell /
+   security posture / dependencies & CI / docs).
+2. Open the matching workflow section below for the guardrails to consult.
+3. Use `ARCHITECTURE.md` for module responsibilities, the core/shell boundary,
+   and the enforced invariants.
+4. Keep the diff narrow. Do not mix transform logic, ABI changes, shell code,
+   dependency posture, and formatting unless the task requires it.
+5. Add or update focused tests for behavior changes — especially anything that
+   affects transform output, the ABI, or the privacy posture. Core changes must
+   include adversarial-input coverage.
+6. Run checks that match the risk of the change (see `CONTRIBUTING.md`). If you
+   skip a relevant check, explain why in the PR.
+7. Update `ARCHITECTURE.md`, `DESIGN.md`, the relevant guardrail, and the shell
+   contract when the boundary, invariants, posture, or supported transforms
+   change.
+
+For non-trivial work, write an execution plan under `docs/exec-plans/active/`
+with a decision log before you start; move it to `completed/` when done.
+
+## Core Transformations
+
+Use for changes to transform logic (HTML/Markdown strip, whitespace, case, line
+ops) or the pipeline.
+
+Consult:
+
+- `docs/guardrails/transform-correctness-and-adversarial-input.md`
+- `docs/guardrails/memory-safety.md`
+
+The core stays `#![forbid(unsafe_code)]`, never panics on input, and has no OS,
+I/O, network, or global mutable state. Every behavior change gets regression and
+adversarial coverage. Output must remain deterministic for a given config.
+
+## FFI Boundary And ABI
+
+Use for the C ABI surface, config serialization, generated bindings, or the
+version/capabilities query.
+
+Consult:
+
+- `docs/guardrails/ffi-boundary-and-abi-stability.md`
+- `ARCHITECTURE.md` (boundary contract)
+
+Keep the surface narrow and data-driven: `transform`, a matching free, and a
+version/capabilities query. **Adding or changing a transform must not change the
+ABI** — feature selection crosses as serialized config data. Any ABI change is a
+compatibility event: bump the version, call it out in the PR, and confirm a
+non-Swift shell could still consume the boundary unchanged. The checked-in C
+header is the source of truth; a test fails if it drifts.
+
+## Native Shells
+
+Use for the Swift macOS shell, or scaffolding a new platform shell.
+
+Consult:
+
+- `docs/guardrails/shell-contract.md` (per-platform responsibility checklist)
+- `docs/guardrails/macos-posture.md` (sandbox, entitlements, hotkey, pasteboard)
+
+Shells own clipboard read/write, rich→plain extraction, change detection, tray
+UI, hotkey, settings, and calling the core. No transform logic lives in a shell.
+macOS: App Sandbox + Hardened Runtime, minimal entitlements, no Accessibility or
+Input Monitoring, in-place pasteboard rewrite only. A new platform = implement
+the shell contract checklist and link the core.
+
+## Security And Privacy Posture
+
+Use for anything touching clipboard data handling, entitlements, logging,
+network, or telemetry.
+
+Consult:
+
+- `docs/guardrails/privacy-and-data-handling.md`
+- `SECURITY.md`
+
+No network anywhere. No persistence or logging of clipboard content. In-memory
+only; zeroize buffers after use. Any new entitlement, any dependency capable of
+network access, or any new data path is a posture change — call it out and
+justify it in the PR.
+
+## Dependencies, CI, And Automation
+
+Use for crate/dependency ranges, lints, CI, structural tests, and automation.
+
+Consult:
+
+- `docs/guardrails/dependency-posture.md`
+
+Favor boring, API-stable, well-audited crates; justify any new dependency,
+especially anything pulling in `unsafe` or network capability. Keep mechanical
+dependency and automation updates separate from behavior changes. The invariants
+(no-unsafe core, frozen ABI surface, no-network, core-has-no-OS-deps,
+determinism) are enforced by CI lints and structural tests. Keep them green by
+fixing the code, not by weakening the check.
+
+## Documentation-Only Changes
+
+Use for README, `ARCHITECTURE.md`, `DESIGN.md`, guardrails, runbooks, and
+process docs.
+
+Consult `ARCHITECTURE.md` and the guardrail for the topic being documented.
+Docs-only PRs may skip core tests when the PR explains why. Still run the
+formatter.
+
+## Pull Requests
+
+- State the change class and any compatibility or posture impact (ABI, privacy,
+  entitlements, supported transforms).
+- Keep diffs narrow and single-purpose.
+- Update the relevant guardrail and `ARCHITECTURE.md` when invariants or the
+  boundary move.

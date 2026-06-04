@@ -1,0 +1,15 @@
+[package]
+name = "xtask"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+description = "Mechanical invariant enforcement for SafetyStrip (run via `cargo xtask <check>`)."
+
+[dependencies]
+# Tooling only — never shipped, never linked into core/shell. Parses `cargo metadata`
+# output and generates/verifies the frozen C header.
+serde = { workspace = true }
+serde_json = { workspace = true }
+cbindgen = { workspace = true }
