@@ -119,6 +119,23 @@ fn defang_already_defanged_is_a_noop() {
 }
 
 #[test]
+fn defang_url_with_hxxp_in_path_is_left_alone() {
+    // The idempotence guard keys on the `hxxp` marker, so a genuine URL whose path
+    // already contains "hxxp" is intentionally NOT defanged (documented tradeoff —
+    // pinning it here so the no-op is deliberate, not accidental).
+    let url = "http://example.com/hxxp";
+    assert_eq!(defang(url, SQ), url);
+}
+
+#[test]
+fn defang_leading_colon_ipv6_is_skipped() {
+    // Leading/trailing colons are trimmed as surrounding punctuation, so compressed
+    // forms like "::1" fall out of IPv6 classification and are left unchanged
+    // (documented heuristic edge).
+    assert_eq!(defang("::1", SQ), "::1");
+}
+
+#[test]
 fn defang_round_style() {
     assert_eq!(defang("http://a.b", RD), "hxxp(://)a(.)b");
     assert_eq!(defang("user@a.b", RD), "user(@)a(.)b");

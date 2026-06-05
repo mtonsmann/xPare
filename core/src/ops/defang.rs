@@ -22,6 +22,11 @@
 /// style-agnostic and reverses both regardless of which produced the input.
 pub use crate::config::BracketStyle;
 
+// Token edges and the URL/email heuristics are shared with the extractors so all
+// three agree on what a token (and a URL/email) is — single source of truth.
+use crate::ops::lines::{is_email, is_url, trim_token_punct};
+use std::borrow::Cow;
+
 // Inherent helpers on the shared type (same crate, so this is allowed): the bracket
 // chars for a style. Kept here next to the defang logic that uses them.
 impl BracketStyle {
@@ -120,33 +125,26 @@ pub fn defang(input: &str, style: BracketStyle) -> String {
 
 /// Defang a single whitespace-free token: trim surrounding punctuation, transform the
 /// core, and re-emit `prefix + core' + suffix`.
-fn defang_token(token: &str, style: BracketStyle) -> String {
+///
+/// Returns `Cow::Borrowed(token)` when the core is not an indicator — `prefix + core
+/// + suffix` is byte-identical to the original token, so an unchanged token needs no
+/// allocation (matching `clean_urls`'s allocation discipline).
+fn defang_token(token: &str, style: BracketStyle) -> Cow<'_, str> {
     let core = trim_token_punct(token);
-    // The trimmed core is a contiguous slice of `token`; recover the surrounding
-    // prefix/suffix by byte offsets derived from pointer arithmetic on the slices,
-    // which are guaranteed to lie on char boundaries (trim works on chars).
-    let core_off = core.as_ptr() as usize - token.as_ptr() as usize;
-    let prefix = &token[..core_off];
-    let suffix = &token[core_off + core.len()..];
-
-    let transformed = transform_core(core, style);
-    match transformed {
-        // Borrowed-unchanged: avoid building a new String when nothing changed and
-        // there is no surrounding punctuation.
-        None if prefix.is_empty() && suffix.is_empty() => token.to_string(),
-        None => {
-            let mut s = String::with_capacity(token.len());
-            s.push_str(prefix);
-            s.push_str(core);
-            s.push_str(suffix);
-            s
-        }
+    match transform_core(core, style) {
+        None => Cow::Borrowed(token),
         Some(new_core) => {
+            // The trimmed core is a contiguous slice of `token`; recover the
+            // surrounding prefix/suffix by byte offset. Both lie on char boundaries
+            // because `trim_matches` only ever trims whole chars.
+            let core_off = core.as_ptr() as usize - token.as_ptr() as usize;
+            let prefix = &token[..core_off];
+            let suffix = &token[core_off + core.len()..];
             let mut s = String::with_capacity(prefix.len() + new_core.len() + suffix.len());
             s.push_str(prefix);
             s.push_str(&new_core);
             s.push_str(suffix);
-            s
+            Cow::Owned(s)
         }
     }
 }
@@ -276,56 +274,6 @@ fn replace_dots_and(s: &str, at: char, style: BracketStyle) -> String {
     out
 }
 
-/// Trim a small, fixed set of surrounding punctuation/brackets/quotes from a token.
-/// Operates on `char` boundaries via `trim_matches`, so it is panic-free. This set is
-/// kept identical to `ops::lines`'s token-trimming set so defang and the extractors
-/// agree on token edges.
-fn trim_token_punct(token: &str) -> &str {
-    token.trim_matches(|c: char| {
-        matches!(
-            c,
-            '<' | '>' | '(' | ')' | '[' | ']' | '{' | '}' | ',' | ';' | ':' | '"' | '\''
-        )
-    })
-}
-
-/// URL heuristic (mirrors `ops::lines::is_url`): starts with `http://`, `https://`,
-/// or `www.` (case-sensitive) with at least one more char after the prefix.
-fn is_url(token: &str) -> bool {
-    for prefix in ["http://", "https://", "www."] {
-        if let Some(rest) = token.strip_prefix(prefix) {
-            if !rest.is_empty() {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-/// Email heuristic (mirrors `ops::lines::is_email`): exactly one `@`, non-empty local
-/// part, and a domain containing an interior `.` (neither first nor last char).
-fn is_email(token: &str) -> bool {
-    let mut parts = token.split('@');
-    let local = match parts.next() {
-        Some(l) => l,
-        None => return false,
-    };
-    let domain = match parts.next() {
-        Some(d) => d,
-        None => return false,
-    };
-    if parts.next().is_some() {
-        return false;
-    }
-    if local.is_empty() || domain.is_empty() {
-        return false;
-    }
-    match domain.find('.') {
-        Some(dot) => dot > 0 && dot < domain.len() - 1,
-        None => false,
-    }
-}
-
 /// IPv4 classifier: exactly four parts separated by `.`, each a 1–3 digit decimal in
 /// 0..=255. Heuristic but strict enough to avoid matching version strings like
 /// "1.2.3" (only three parts) or "1.2.3.4.5".
@@ -391,32 +339,30 @@ fn is_ipv6(s: &str) -> bool {
 /// This deliberately rejects pure-numeric dotted strings (handled by IPv4), version
 /// numbers ("1.2"), and prose words (no dot).
 fn is_bare_domain(s: &str) -> bool {
-    let labels: Vec<&str> = s.split('.').collect();
-    if labels.len() < 2 {
+    // Split off the final label (TLD) without allocating. No dot at all -> not a
+    // domain; `host` non-empty then guarantees the >= 2-label requirement.
+    let (host, tld) = match s.rsplit_once('.') {
+        Some(parts) => parts,
+        None => return false,
+    };
+    // TLD: all ASCII letters, length >= 2.
+    if tld.len() < 2 || !tld.bytes().all(|b| b.is_ascii_alphabetic()) {
         return false;
     }
-    let last = labels.len() - 1;
-    for (i, label) in labels.iter().enumerate() {
+    if host.is_empty() {
+        return false;
+    }
+    // Every preceding label: non-empty, ASCII alphanumeric or '-', no edge '-'.
+    for label in host.split('.') {
         let bytes = label.as_bytes();
-        if bytes.is_empty() {
+        if bytes.is_empty() || bytes[0] == b'-' || bytes[bytes.len() - 1] == b'-' {
             return false;
         }
-        if bytes[0] == b'-' || bytes[bytes.len() - 1] == b'-' {
+        if !bytes
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || *b == b'-')
+        {
             return false;
-        }
-        if i == last {
-            // TLD: all ASCII letters, length >= 2.
-            if bytes.len() < 2 || !bytes.iter().all(|b| b.is_ascii_alphabetic()) {
-                return false;
-            }
-        } else {
-            // Interior label: ASCII alphanumeric or '-'.
-            if !bytes
-                .iter()
-                .all(|b| b.is_ascii_alphanumeric() || *b == b'-')
-            {
-                return false;
-            }
         }
     }
     true
@@ -464,7 +410,7 @@ pub fn refang(input: &str) -> String {
             // Defensive clamp so a truncated/invalid lead byte can never slice past the
             // end (input is valid UTF-8, but stay panic-free regardless).
             let end = (i + ch_len).min(n);
-            // SAFETY-FREE: build the char from the validated &str slice on a boundary.
+            // Slice the original validated &str on a char boundary (no unsafe).
             out.push_str(&input[i..end]);
             i = end;
         }

@@ -35,6 +35,10 @@
 //! * **Idempotent:** `clean_urls(clean_urls(x)) == clean_urls(x)`. Percent-encoding
 //!   of surviving values is never altered.
 
+// Token edges and the URL heuristic are shared with the extractors and defang so all
+// agree on what a token (and a URL) is — single source of truth.
+use crate::ops::lines::{is_url, trim_token_punct};
+
 /// Query-parameter keys treated as trackers and removed. Matching is
 /// case-insensitive; an entry ending in `*` matches by prefix.
 ///
@@ -76,32 +80,6 @@ pub const TRACKING_PARAMS: &[&str] = &[
     "_openstat", // Yandex / LiveInternet openstat tracker
     "wickedid",  // Wicked Reports attribution
 ];
-
-/// Surrounding punctuation trimmed off a token before the URL test, and re-emitted
-/// around the cleaned core. Kept identical to the rest of the core's token heuristic
-/// (see `ops::lines`).
-fn trim_token_punct(token: &str) -> &str {
-    token.trim_matches(|c: char| {
-        matches!(
-            c,
-            '<' | '>' | '(' | ')' | '[' | ']' | '{' | '}' | ',' | ';' | ':' | '"' | '\''
-        )
-    })
-}
-
-/// URL heuristic: case-sensitive `http://` / `https://` / `www.` prefix with at
-/// least one trailing char. Matches `ops::lines::is_url` so extraction and cleaning
-/// agree on what a URL is.
-fn is_url(token: &str) -> bool {
-    for prefix in ["http://", "https://", "www."] {
-        if let Some(rest) = token.strip_prefix(prefix) {
-            if !rest.is_empty() {
-                return true;
-            }
-        }
-    }
-    false
-}
 
 /// True if `key` matches any [`TRACKING_PARAMS`] entry, case-insensitively. An entry
 /// ending in `*` matches by prefix; otherwise it must match in full.
