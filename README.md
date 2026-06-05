@@ -80,6 +80,10 @@ This runs `fmt --check`, `clippy -D warnings`, the test suite, and every structu
 invariant check (no-unsafe-in-core, core dependency allowlist, no-network banlist,
 frozen ABI header, minimal macOS entitlements). See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
+A root `Makefile` wraps these and the other common commands — run `make help`
+(`make ci`, `make checks`, `make bench`, `make app`/`make run`). It only delegates
+to the underlying commands, so it is never a separate source of truth.
+
 ### Fuzzing (optional, proves never-panics)
 
 `fuzz/` is its own workspace and needs nightly + `cargo-fuzz`:
@@ -90,18 +94,33 @@ cargo +nightly fuzz run strip_html -- -max_total_time=60
 
 Targets: `strip_html`, `strip_markdown`, `transform_pipeline`.
 
-### Build the macOS shell
-
-The shell links the FFI staticlib over the frozen C ABI:
+### Benchmarks & the performance guard
 
 ```sh
-cargo build -p safetystrip-ffi --release
-swift build --package-path shells/macos
+cargo bench -p safetystrip-core      # or: make bench
 ```
 
-> `swift build` compiles the shell sources under Command-Line-Tools. Producing a
-> signed, notarized `.app` needs full Xcode and is a documented step, not produced
-> in the dev environment. See [the macOS posture](docs/guardrails/macos-posture.md).
+Criterion benchmarks measure the strippers, the default pipeline, and the case
+transforms. Separately, `core/tests/perf_guard.rs` (part of the gate) asserts the
+strippers stay **linear** on large adversarial inputs, so a super-linear regression
+fails the suite rather than shipping a denial-of-service.
+
+### Build and run the macOS shell
+
+The shell links the FFI staticlib over the frozen C ABI. To put it on your menu bar:
+
+```sh
+cd shells/macos && ./package-app.sh --run      # or, from the root: make run
+```
+
+This builds the staticlib, `swift build`s the app, assembles a runnable
+`LSUIElement` `.app`, ad-hoc signs it (Apple Silicon requires a signature), and
+launches it — a ✂ icon appears in the menu bar and the default hotkey **⌥⌘V**
+strips the clipboard in place.
+
+> A signed, **notarized** build for distribution to other Macs needs full Xcode + a
+> Developer ID. See [the macOS posture](docs/guardrails/macos-posture.md) and
+> [`shells/macos/README.md`](shells/macos/README.md).
 
 ## Repository layout
 

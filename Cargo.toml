@@ -33,6 +33,9 @@ zeroize = "1"
 cbindgen = "0.27"
 # Dev-only: property testing for determinism / round-trip / never-panics.
 proptest = "1"
+# Dev-only: benchmarking. default-features off drops the heavy plotters/rayon
+# extras; `cargo_bench_support` is what lets it run as a `cargo bench` harness.
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
 
 [profile.release]
 # Smaller, simpler release artifacts for the shipped staticlib/cdylib.

@@ -32,6 +32,14 @@ own (e.g. `cargo xtask check-abi`) for a fast inner loop.
 > The first three steps shell out to `cargo`. Make sure the pinned toolchain
 > (`rust-toolchain.toml`, stable + `clippy` + `rustfmt`) is installed.
 
+### `make` shortcuts (optional)
+
+A root `Makefile` wraps the common commands for convenience — `make help` lists
+them. It is a thin layer that **delegates** to the canonical commands (so there is
+no second source of truth): `make ci` is exactly `cargo xtask ci`, `make checks`
+runs the structural checks, `make bench` runs the benchmarks, `make app`/`make run`
+build/launch the macOS shell. Use them or the underlying commands interchangeably.
+
 ## Run checks that match the risk of the change
 
 You do not have to run the full gate for every edit, but you must run everything

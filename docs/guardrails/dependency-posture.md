@@ -27,11 +27,13 @@ capability-constrained**, and the constraint is enforced mechanically.
    (core, core-ffi, cli, xtask), not just the core. This is the no-exfiltration
    backstop at the dependency level.
 4. **Tooling/dev/fuzz deps are constrained too, but separated.** `cbindgen` is a
-   build/tooling dep of `xtask`; `proptest` is dev-only; `libfuzzer-sys`/`arbitrary`
-   live in the **separate `fuzz/` workspace** so libFuzzer and the nightly toolchain
-   never leak into the stable build. None of these may be a *normal* dependency of
-   the core (the `check-core-deps` closure skips dev/build deps, so e.g. `proptest`
-   does not pollute it).
+   build/tooling dep of `xtask`; `proptest` (property tests) and `criterion`
+   (benchmarks; `default-features = false` to drop the heavy plotters/rayon extras)
+   are dev-only; `libfuzzer-sys`/`arbitrary` live in the **separate `fuzz/` workspace**
+   so libFuzzer and the nightly toolchain never leak into the stable build. None of
+   these may be a *normal* dependency of the core: the `check-core-deps` **and**
+   `check-no-network` closures skip dev/build deps, so e.g. `proptest` and `criterion`
+   (and their larger trees) do not pollute or trip them.
 5. **Pin and constrain.** Shared versions live in `[workspace.dependencies]`
    (`Cargo.toml`); `pulldown-cmark` uses `default-features = false` to drop the
    unused bundled-binary feature and keep the surface minimal.
