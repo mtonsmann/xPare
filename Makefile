@@ -10,7 +10,21 @@
 CARGO ?= cargo
 .DEFAULT_GOAL := help
 
-.PHONY: help build test lint fmt fmt-check ci checks header bench bench-large fuzz app run clean
+# Throughput harness knobs (see core/tests/throughput.rs and docs/performance.md).
+# PERF_MIN_MIB_PER_SEC is empty by default (report-only); set it only on a
+# calibrated machine to turn the end-to-end scenarios into a hard floor.
+PERF_MIB ?= 64
+PERF_SAMPLES ?= 3
+PERF_MIN_MIB_PER_SEC ?=
+
+# Release packaging (see shells/macos/release.sh and docs/release-model.md).
+# dist/github-release are gated and need Developer ID credentials + a vX.Y.Z tag.
+VERSION ?=
+CERT_NAME ?=
+NOTARY_PROFILE ?=
+SIGN_ENTITLEMENTS ?=
+
+.PHONY: help build test lint fmt fmt-check ci checks header bench bench-large perf fuzz app run preview dist github-release clean clean-release
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -40,6 +54,8 @@ checks: ## Run only the structural invariant checks (no build/test)
 	$(CARGO) run -p xtask -- check-core-deps
 	$(CARGO) run -p xtask -- check-no-network
 	$(CARGO) run -p xtask -- check-entitlements
+	$(CARGO) run -p xtask -- check-no-content-logging
+	$(CARGO) run -p xtask -- check-clipboard-safety
 
 header: ## Regenerate the frozen C ABI header
 	$(CARGO) run -p xtask -- gen-header
@@ -50,6 +66,10 @@ bench: ## Run the quick (clipboard-scale) benchmarks
 bench-large: ## Run the heavy log-file benchmarks up to 256 MB (slow)
 	$(CARGO) bench -p safetystrip-core --bench transform_large
 
+perf: ## Throughput baseline (PERF_MIB=128 PERF_SAMPLES=7 [PERF_MIN_MIB_PER_SEC=N])
+	SS_PERF_MIB=$(PERF_MIB) SS_PERF_SAMPLES=$(PERF_SAMPLES) SS_PERF_MIN_MIB_PER_SEC=$(PERF_MIN_MIB_PER_SEC) \
+		$(CARGO) test -p safetystrip-core --release --test throughput -- --ignored --nocapture
+
 fuzz: ## Build the fuzz targets (then: cargo +nightly fuzz run <target>)
 	cd fuzz && $(CARGO) +nightly fuzz build
 
@@ -59,6 +79,18 @@ app: ## Build the macOS menu-bar .app bundle (dist/SafetyStrip.app)
 run: ## Build and launch the macOS menu-bar app
 	cd shells/macos && ./package-app.sh --run
 
-clean: ## Remove build artifacts (workspace, fuzz, macOS)
+preview: ## Unsigned/ad-hoc preview zip + checksum under dist/release (VERSION optional)
+	cd shells/macos && VERSION="$(VERSION)" ./release.sh preview
+
+dist: ## Gated Developer ID sign+notarize+staple release (needs CERT_NAME [+ NOTARY_PROFILE])
+	cd shells/macos && VERSION="$(VERSION)" CERT_NAME="$(CERT_NAME)" NOTARY_PROFILE="$(NOTARY_PROFILE)" SIGN_ENTITLEMENTS="$(SIGN_ENTITLEMENTS)" ./release.sh dist
+
+github-release: ## Upload the signed release zip + checksum via gh (needs VERSION)
+	cd shells/macos && VERSION="$(VERSION)" ./release.sh github-release
+
+clean: ## Remove build artifacts (workspace, fuzz, macOS, release)
 	$(CARGO) clean
-	rm -rf shells/macos/.build shells/macos/dist fuzz/target
+	rm -rf shells/macos/.build shells/macos/dist fuzz/target dist/release
+
+clean-release: ## Remove only staged release artifacts (dist/release)
+	rm -rf dist/release

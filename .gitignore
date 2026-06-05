@@ -16,6 +16,9 @@ shells/macos/dist
 *.xcodeproj
 DerivedData/
 
+# Release artifacts (staged by `make preview` / `make dist`)
+/dist/
+
 # macOS
 .DS_Store
 
