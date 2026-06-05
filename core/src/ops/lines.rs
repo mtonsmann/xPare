@@ -174,25 +174,40 @@ pub fn unwrap_lines(input: &str) -> String {
 ///   is preserved in the output.
 pub fn sort_lines(input: &str, descending: bool, case_insensitive: bool) -> String {
     let (lines, trailing_newline) = content_lines(input);
-    // Precompute the comparison key once per line (avoids re-folding in the
-    // comparator and keeps the sort O(n log n) with linear key build).
-    let mut keyed: Vec<(String, &str)> = lines
-        .iter()
-        .map(|&content| {
-            let key = if case_insensitive {
-                content.chars().flat_map(char::to_lowercase).collect()
-            } else {
-                content.to_string()
-            };
-            (key, content)
-        })
-        .collect();
-    keyed.sort_by(|a, b| a.0.cmp(&b.0));
+    let sorted: Vec<&str> = if case_insensitive {
+        // Case-insensitive: precompute one folded key per line so the comparator does
+        // no per-comparison work. The keys cost ~input size in memory — that is the
+        // price of case folding; the case-sensitive path below allocates nothing.
+        let mut keyed: Vec<(String, &str)> = lines
+            .iter()
+            .map(|&content| {
+                let key: String = content.chars().flat_map(char::to_lowercase).collect();
+                (key, content)
+            })
+            .collect();
+        keyed.sort_by(|a, b| orient(descending, a.0.cmp(&b.0)));
+        keyed.into_iter().map(|(_, content)| content).collect()
+    } else {
+        // Case-sensitive: sort the borrowed slices directly. No per-line key
+        // allocation, so memory stays O(number of lines), not O(input bytes) — this
+        // is what keeps large inputs (e.g. log files) sorting in bounded extra space.
+        let mut sorted = lines;
+        sorted.sort_by(|a, b| orient(descending, a.cmp(b)));
+        sorted
+    };
+    join_lines(&sorted, trailing_newline)
+}
+
+/// Apply sort direction to a comparison result. Used with a *stable* `sort_by` so
+/// that equal lines keep their original relative order in **both** directions
+/// (ascending and descending), rather than ascending-then-`reverse()` which would
+/// flip the order of equal runs.
+fn orient(descending: bool, ord: std::cmp::Ordering) -> std::cmp::Ordering {
     if descending {
-        keyed.reverse();
+        ord.reverse()
+    } else {
+        ord
     }
-    let contents: Vec<&str> = keyed.iter().map(|(_, c)| *c).collect();
-    join_lines(&contents, trailing_newline)
 }
 
 /// Remove duplicate lines, keeping the first occurrence and original order.
