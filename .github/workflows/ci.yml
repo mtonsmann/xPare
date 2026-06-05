@@ -10,7 +10,11 @@
 name: CI
 
 on:
+  # PRs get the full gate. `push` runs CI only on main (post-merge validation and the
+  # push-event status on the protected branch) — feature branches are covered by their
+  # pull_request run, so this avoids the duplicate push+PR runs on every PR-branch push.
   push:
+    branches: [main]
   pull_request:
 
 # Cancel superseded runs on the same ref to save CI minutes.
