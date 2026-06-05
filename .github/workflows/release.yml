@@ -82,8 +82,6 @@ jobs:
     env:
       VERSION: ${{ github.ref_name }}
       NOTARY_PROFILE: safetystrip-notary
-      KEYCHAIN_PATH: ${{ runner.temp }}/safetystrip-signing.keychain-db
-      CERTIFICATE_PATH: ${{ runner.temp }}/developer-id.p12
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -102,6 +100,13 @@ jobs:
             exit 1
           fi
           echo "RELEASE_VERSION=${version}" >> "${GITHUB_ENV}"
+
+      # `runner.temp` is not available in job-level `env:`, so derive the signing
+      # paths from $RUNNER_TEMP here and export them for the later steps.
+      - name: Prepare signing paths
+        run: |
+          echo "KEYCHAIN_PATH=${RUNNER_TEMP}/safetystrip-signing.keychain-db" >> "${GITHUB_ENV}"
+          echo "CERTIFICATE_PATH=${RUNNER_TEMP}/developer-id.p12" >> "${GITHUB_ENV}"
 
       - name: Validate required Apple secrets
         env:
