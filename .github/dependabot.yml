@@ -12,6 +12,11 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # Wait a few days after an action release before proposing the bump, so a
+    # freshly-published malicious or broken version isn't pulled in on day zero
+    # (supply-chain hygiene; also satisfies zizmor's dependabot-cooldown audit).
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: ci
     groups:

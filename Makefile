@@ -73,8 +73,8 @@ perf: ## Throughput baseline (PERF_MIB=128 PERF_SAMPLES=7 [PERF_MIN_MIB_PER_SEC=
 fuzz: ## Build the fuzz targets (then: cargo +nightly fuzz run <target>)
 	cd fuzz && $(CARGO) +nightly fuzz build
 
-zizmor: ## Audit the GitHub Actions workflows for security (needs zizmor installed)
-	zizmor .github/workflows/
+zizmor: ## Audit the GitHub Actions config (workflows + dependabot) for security (needs zizmor)
+	zizmor .github/
 
 app: ## Build the macOS menu-bar .app bundle (dist/SafetyStrip.app)
 	cd shells/macos && ./package-app.sh
