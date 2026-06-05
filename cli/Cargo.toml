@@ -5,6 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+# Product-internal: the headless validation/fuzz harness binary, not a crates.io
+# release. Marking it private (like xtask) keeps its `path` dep on core off the
+# cargo-deny wildcard check and prevents an accidental `cargo publish`.
+publish = false
 description = "Headless harness over safetystrip-core: read stdin, apply a JSON config, write stdout. The agent's own validation/fuzz driver."
 
 [[bin]]

@@ -62,12 +62,15 @@ exceptions = [
 
 [bans]
 # A second major version of a crate is worth a look (bloat / divergent behavior) but
-# is not fatal on its own, so it is a warning. A wildcard ("*") dependency is never
-# acceptable in a shipped tool. The strict core-deps allowlist (check-core-deps)
-# remains the authority on what the CORE may pull in; this governs the whole
-# workspace's supply chain.
+# is not fatal on its own, so it is a warning. A wildcard ("*") version requirement on
+# a crates.io dependency is never acceptable in a shipped tool and is denied — but the
+# workspace's OWN crates depend on each other by `path` (safetystrip-ffi/-cli -> core),
+# which carries no version and so reads as a wildcard; allow-wildcard-paths exempts
+# those intra-workspace path deps only, not registry crates. The strict core-deps
+# allowlist (check-core-deps) remains the authority on what the CORE may pull in.
 multiple-versions = "warn"
 wildcards = "deny"
+allow-wildcard-paths = true
 deny = []
 
 [sources]
