@@ -24,7 +24,7 @@ CERT_NAME ?=
 NOTARY_PROFILE ?=
 SIGN_ENTITLEMENTS ?=
 
-.PHONY: help build test lint fmt fmt-check ci checks header bench bench-large perf fuzz app run preview dist github-release clean clean-release
+.PHONY: help build test lint fmt fmt-check ci checks header bench bench-large perf fuzz zizmor app run preview dist github-release clean clean-release
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -72,6 +72,9 @@ perf: ## Throughput baseline (PERF_MIB=128 PERF_SAMPLES=7 [PERF_MIN_MIB_PER_SEC=
 
 fuzz: ## Build the fuzz targets (then: cargo +nightly fuzz run <target>)
 	cd fuzz && $(CARGO) +nightly fuzz build
+
+zizmor: ## Audit the GitHub Actions workflows for security (needs zizmor installed)
+	zizmor .github/workflows/
 
 app: ## Build the macOS menu-bar .app bundle (dist/SafetyStrip.app)
 	cd shells/macos && ./package-app.sh

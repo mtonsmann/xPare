@@ -46,6 +46,14 @@ capability-constrained**, and the constraint is enforced mechanically.
    - if it touches the OS/filesystem/network, the fix is to **drop the dependency
      that pulled it in** — never widen the allowlist to admit capability, and never
      remove a crate from the banlist to make a build pass.
+8. **Pin GitHub Actions to commit SHAs; audit workflows with zizmor.** Every `uses:`
+   in `.github/workflows/` is pinned to a full commit SHA (with a `# vX.Y.Z` comment)
+   so a moved tag can't change what runs in CI, and checkouts set
+   `persist-credentials: false`. [`zizmor`](https://docs.zizmor.sh) statically audits
+   the workflows (unpinned actions, credential persistence, template injection,
+   over-broad `GITHUB_TOKEN` permissions) and **gates CI** via the `zizmor` job;
+   `.github/dependabot.yml` bumps the pinned SHAs so the pins don't rot. The actions
+   themselves are supply-chain just like crates — boring, audited, pinned.
 
 ## How the checks work
 
@@ -62,6 +70,7 @@ not how to silence it.
 
 - `cargo xtask check-core-deps`
 - `cargo xtask check-no-network`
+- `make zizmor` (workflow security; the `zizmor` CI job runs it on every push/PR).
 - When editing `xtask` itself: `cargo test -p xtask`,
   `cargo clippy -p xtask --all-targets -- -D warnings`.
 - All of the above are part of `cargo xtask ci` (the same command CI runs).

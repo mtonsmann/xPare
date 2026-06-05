@@ -21,6 +21,11 @@ env:
   # Treat warnings as hard errors everywhere (clippy also gets -D warnings below).
   RUSTFLAGS: "-D warnings"
 
+# Least-privilege GITHUB_TOKEN: CI only needs to read the repo. A job that needs
+# more (e.g. zizmor's SARIF upload) opts in with its own job-level permissions.
+permissions:
+  contents: read
+
 jobs:
   # ----------------------------------------------------------------------------
   # Primary gate: the whole portable check suite on Linux.
@@ -30,19 +35,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
 
       # Install the pinned stable toolchain. dtolnay/rust-toolchain honors
       # rust-toolchain.toml's channel; we add clippy + rustfmt explicitly because
       # `cargo xtask ci` shells out to both.
       - name: Install Rust (pinned stable + clippy + rustfmt)
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           components: clippy, rustfmt
 
       # Cache the cargo registry, git db, and target dir keyed on the lockfile.
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: |
             ~/.cargo/registry/index/
@@ -72,13 +79,15 @@ jobs:
     continue-on-error: true
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
 
       - name: Install Rust (pinned stable)
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: |
             ~/.cargo/registry/index/
@@ -116,10 +125,12 @@ jobs:
     continue-on-error: true
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
 
       - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
 
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --locked
@@ -134,3 +145,25 @@ jobs:
             cargo +nightly fuzz run "$target" -- -max_total_time=30
             echo "::endgroup::"
           done
+
+  # ----------------------------------------------------------------------------
+  # GitHub Actions security: zizmor statically audits the workflow files
+  # themselves (template injection, credential persistence, unpinned actions,
+  # over-broad token permissions). A required gate — workflow security is part of
+  # the posture, like the core invariants. Run it locally with `make zizmor`.
+  # ----------------------------------------------------------------------------
+  zizmor:
+    name: zizmor (workflow security)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The zizmor action uploads its findings to GitHub code scanning (SARIF).
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Run zizmor
+        uses: zizmorcore/zizmor-action@5f14fd08f7cf1cb1609c1e344975f152c7ee938d # v0.5.6
