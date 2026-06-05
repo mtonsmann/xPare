@@ -136,8 +136,11 @@ Favor boring, API-stable, well-audited crates; justify any new dependency,
 especially anything pulling in `unsafe` or network capability. Keep mechanical
 dependency and automation updates separate from behavior changes. The invariants
 (no-unsafe core, frozen ABI surface, no-network, core-has-no-OS-deps,
-determinism) are enforced by CI lints and structural tests. Keep them green by
-fixing the code, not by weakening the check.
+determinism) are enforced by CI lints and structural tests. Supply-chain auditing
+(`cargo-deny`: advisories, licenses, bans, sources), workflow linting (`actionlint`
++ `zizmor`), and shell linting (`shellcheck`) also run inside `cargo xtask ci`, so
+the one gate stays a complete superset of CI. Keep them green by fixing the code,
+not by weakening the check.
 
 ## Performance And Releases
 

@@ -1,0 +1,81 @@
+# cargo-deny policy — the supply-chain gate for SafetyStrip.
+#
+# Run by `cargo xtask check-supply-chain` (and inside `cargo xtask ci`). This is the
+# known-vulnerability + license + source layer that complements the structural
+# dependency checks in xtask/src/main.rs:
+#   - check-core-deps  governs WHAT the core may pull in (a tiny pure-data allowlist),
+#   - check-no-network bans network/OS-capable crates across the whole workspace,
+#   - this file        flags KNOWN-VULNERABLE crates (RustSec), non-allowed licenses,
+#                      banned/duplicate crates, and non-crates.io sources.
+#
+# Posture rule (same as every other guardrail): fix the dependency — update, replace,
+# or drop it. Only after a documented risk decision add a *scoped* ignore/exception
+# below, with a reason. Never broaden a policy just to make the check pass.
+#
+# Schema note: cargo-deny >= 0.18 dropped the `version`/severity fields; this file
+# uses the current key set. Pinned tool version lives in xtask (CARGO_DENY_VERSION)
+# and the CI install step — keep them in lockstep.
+
+[graph]
+# Check every target so a platform-specific transitive crate can't smuggle in a
+# vulnerability or disallowed license that the host triple happens to hide.
+all-features = true
+
+[advisories]
+# RustSec advisory DB. All security vulnerabilities are denied by default; there is
+# no allowlisting of vulnerabilities here — `ignore` is for individual, justified
+# advisory IDs only (none today).
+db-urls = ["https://github.com/RustSec/advisory-db"]
+yanked = "deny"
+# Flag unmaintained crates that are workspace members or their direct dependencies
+# (actionable), without failing on deep transitive crates we cannot readily replace.
+unmaintained = "workspace"
+ignore = [
+    # Example shape (keep commented until a real, justified exception exists):
+    # { id = "RUSTSEC-0000-0000", reason = "not reachable; tracked in #123" },
+]
+
+[licenses]
+# The workspace ships under "MIT OR Apache-2.0"; allow the permissive licenses the
+# dependency tree actually resolves to. A license outside this list FAILS the gate —
+# decide to allow it here (with rationale in the PR) or drop the dependency. No
+# copyleft is allowed workspace-wide; the single weak-copyleft tooling dep (cbindgen,
+# MPL-2.0) is scoped to itself under [licenses.exceptions] below.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception", # wasm-tools / rustix / WASI crates
+    "BSD-2-Clause",                   # zerocopy
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0", # unicode-ident
+    "Zlib",        # foldhash
+]
+confidence-threshold = 0.93
+exceptions = [
+    # cbindgen is MPL-2.0 (weak, file-level copyleft). It is a *tooling* dependency
+    # of xtask used to generate the frozen C header — its code is never linked into
+    # the shipped core/FFI/shell artifacts. Scope the allowance to cbindgen only so
+    # MPL-2.0 cannot silently enter a shipped crate.
+    { name = "cbindgen", allow = ["MPL-2.0"] },
+]
+
+[bans]
+# A second major version of a crate is worth a look (bloat / divergent behavior) but
+# is not fatal on its own, so it is a warning. A wildcard ("*") version requirement on
+# a crates.io dependency is never acceptable in a shipped tool and is denied — but the
+# workspace's OWN crates depend on each other by `path` (safetystrip-ffi/-cli -> core),
+# which carries no version and so reads as a wildcard; allow-wildcard-paths exempts
+# those intra-workspace path deps only, not registry crates. The strict core-deps
+# allowlist (check-core-deps) remains the authority on what the CORE may pull in.
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+deny = []
+
+[sources]
+# Crates must come from crates.io. A git or alternative-registry dependency is a
+# supply-chain decision that must be made explicitly, not slipped in via a lockfile.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

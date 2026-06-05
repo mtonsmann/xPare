@@ -1,14 +1,20 @@
 # SafetyStrip CI.
 #
 # The portable gate is `cargo xtask ci` (see xtask/src/main.rs): fmt --check,
-# clippy -D warnings, the full test suite, and every structural invariant check
-# (unsafe-forbid, core-deps allowlist, no-network banlist, frozen ABI header,
-# minimal macOS entitlements). Running the *same* command in CI as locally keeps
-# the invariants honest — there is no CI-only logic to drift from.
+# clippy -D warnings, the full test suite, every structural invariant check
+# (unsafe-forbid, core-deps allowlist, no-network banlist, content-logging,
+# clipboard-safety, frozen ABI header, minimal macOS entitlements), and the external
+# linters (shellcheck; actionlint + zizmor for workflows; cargo-deny for the supply
+# chain). Running the *same* command in CI as locally keeps the gate honest — a green
+# `cargo xtask ci` means a green PR, with no CI-only logic to drift from.
 name: CI
 
 on:
+  # PRs get the full gate. `push` runs CI only on main (post-merge validation and the
+  # push-event status on the protected branch) — feature branches are covered by their
+  # pull_request run, so this avoids the duplicate push+PR runs on every PR-branch push.
   push:
+    branches: [main]
   pull_request:
 
 # Cancel superseded runs on the same ref to save CI minutes.
@@ -60,10 +66,40 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      # Single source of truth: the same command an engineer runs locally.
-      # This runs fmt --check, clippy -D warnings, test --workspace, then
-      # check-unsafe-forbid, check-core-deps, check-no-network, check-abi, and
-      # check-entitlements (a missing entitlements file FAILS — it is a deliverable).
+      # External linters that `cargo xtask ci` shells out to (supply-chain, workflow,
+      # shell). Installed here as pinned, PREBUILT binaries so CI stays fast (no
+      # from-source compiles) and matches what xtask auto-installs locally. The action
+      # is SHA-pinned like every other `uses:` (zizmor's unpinned-uses); Dependabot
+      # keeps the SHA current. Keep the tool versions in lockstep with
+      # CARGO_DENY_VERSION / ZIZMOR_VERSION in xtask/src/main.rs. (actionlint is a Go
+      # binary, not a crate, so install-action doesn't carry it — see the next step.)
+      - name: Install lint tools (cargo-deny, zizmor, shellcheck)
+        uses: taiki-e/install-action@59012be0884e296ca2da49b530610e72c49039ad # v2.81.6
+        with:
+          tool: cargo-deny@0.19.8,zizmor@1.25.2,shellcheck@0.11.0
+
+      # actionlint from its pinned release tarball, sha256-verified — same supply-chain
+      # rigor as the SHA-pinned actions and cargo-deny's own checksum checks. Bump the
+      # version AND the checksum together with ACTIONLINT_INSTALL_HINT in
+      # xtask/src/main.rs. Checksum from actionlint_1.7.12_checksums.txt.
+      - name: Install actionlint (pinned + checksum-verified)
+        run: |
+          ver=1.7.12
+          sha=8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+          tmp="$(mktemp -d)"
+          curl --fail --silent --show-error --location \
+            --output "${tmp}/actionlint.tar.gz" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ver}/actionlint_${ver}_linux_amd64.tar.gz"
+          echo "${sha}  ${tmp}/actionlint.tar.gz" | sha256sum --check --strict -
+          tar -xzf "${tmp}/actionlint.tar.gz" -C "${tmp}" actionlint
+          sudo install -m 0755 "${tmp}/actionlint" /usr/local/bin/actionlint
+          actionlint --version
+
+      # Single source of truth: the same command an engineer runs locally. Runs
+      # fmt --check, clippy -D warnings, test --workspace, every structural invariant
+      # check, then the external linters above (check-shell; check-workflows =
+      # actionlint + zizmor; check-supply-chain = cargo-deny). A green run here means a
+      # green PR — there is no required check outside this one command.
       - name: cargo xtask ci
         run: cargo run -p xtask -- ci
 
