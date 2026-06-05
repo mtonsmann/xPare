@@ -1,6 +1,6 @@
 # Exec Plan 0001 — Initial re-architecture & first working cut
 
-Status: **active** · Started: 2026-06-04
+Status: **completed** · Started: 2026-06-04 · Completed: 2026-06-04
 
 ## Goal
 
@@ -72,3 +72,50 @@ Phase 0 freezes the contracts so work parallelizes without merge conflicts:
 Paste simulation, Windows/Linux shells (reserved only), WASM/iOS, signing/notarization,
 and the "adopt-if-it-grows" harness pieces (doc-GC agents, observability, quality
 cadences) — noted in DESIGN.md.
+
+## Outcome
+
+Delivered and green. Built scaffold-first (frozen `Config` schema + `ops::*`
+signatures + C ABI), then fanned out the implementation across parallel agents
+with disjoint file ownership, then integrated.
+
+- **Core** (`#![forbid(unsafe_code)]`): hand-rolled HTML stripper + pulldown-cmark
+  Markdown stripper + whitespace/case/line ops + best-effort extraction. ~115
+  tests: stripper regressions, golden, pipeline, config round-trip, and
+  determinism/idempotence proptests, plus a checked-in adversarial corpus replay.
+- **core-ffi**: narrow C ABI with `catch_unwind` + buffer zeroization; 12
+  round-trip tests; checked-in header with a drift check.
+- **CLI**: dependency-free headless harness; 22 integration tests.
+- **xtask**: `check-unsafe-forbid` / `check-core-deps` / `check-no-network` /
+  `check-abi` / `check-entitlements` / `ci`; GitHub Actions runs the gate.
+- **fuzz**: three nightly cargo-fuzz targets (incl. arbitrary-derived configs);
+  smoke runs found no crashes.
+- **Swift macOS shell**: compiles and statically links the core; 30 tests pass
+  including a real FFI integration test and continuous-mode teardown; minimal
+  app-sandbox entitlements. Signed `.app` packaging documented, not produced
+  (Command-Line-Tools-only environment — no full Xcode).
+- **Knowledge base**: ARCHITECTURE / DESIGN / SECURITY / README + 7 guardrails;
+  AGENTS.md promoted from bootstrap to a live router.
+
+`cargo xtask ci` passes end-to-end (fmt, clippy `-D warnings`, all workspace
+tests, every structural invariant). `swift test` passes.
+
+### Bugs caught by the harness during integration
+
+- **Non-idempotent line ops** (`dedupe_lines("\r\r\n")` → `"\r\n"` → `"\n"`): the
+  shared `split_lines` stripped only one trailing `\r`, so a content line could
+  re-form a CRLF and re-strip. The idempotence proptest caught it; fixed by
+  stripping the whole trailing `\r` run. Regression seed checked in.
+- **Over-strong stripper test**: an initial test expected `strip_markdown` alone to
+  drop a `<script>` body embedded in raw HTML. pulldown-cmark reparses the body as
+  Markdown text, so this is neither achievable nor correct for `strip_markdown` —
+  `strip_html` is the script-neutralizing workhorse. Reframed the test and the docs
+  around the canonical `StripHtml → StripMarkdown` order.
+
+### Follow-ups (not blocking)
+
+- `strip_markdown` could accumulate consecutive raw-HTML *block* events and strip
+  them as one unit (dropping block-level `<script>`/`<style>` in embedded HTML);
+  deferred — `strip_html` already covers the security need and is what the shell runs.
+- Run longer fuzz campaigns as a nightly CI job (currently smoke only).
+- Package and run the real menu-bar `.app` once a full Xcode toolchain is available.
