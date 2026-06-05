@@ -51,9 +51,21 @@ capability-constrained**, and the constraint is enforced mechanically.
    so a moved tag can't change what runs in CI, and checkouts set
    `persist-credentials: false`. [`zizmor`](https://docs.zizmor.sh) statically audits
    the workflows (unpinned actions, credential persistence, template injection,
-   over-broad `GITHUB_TOKEN` permissions) and **gates CI** via the `zizmor` job;
-   `.github/dependabot.yml` bumps the pinned SHAs so the pins don't rot. The actions
-   themselves are supply-chain just like crates — boring, audited, pinned.
+   over-broad `GITHUB_TOKEN` permissions) and **gates CI** via both the dedicated
+   `zizmor` SARIF job and `cargo xtask ci` (`check-workflows`, which also runs
+   `actionlint` for correctness), so an agent catches workflow issues locally before
+   pushing; `.github/dependabot.yml` bumps the pinned SHAs so the pins don't rot. The
+   actions themselves are supply-chain just like crates — boring, audited, pinned.
+9. **Audit the supply chain and the non-Rust surface mechanically.**
+   [`cargo-deny`](https://embarkstudios.github.io/cargo-deny/) (`deny.toml`) scans the
+   whole dependency tree for RustSec advisories, yanked crates, license compliance (a
+   permissive allowlist; `cbindgen`'s MPL-2.0 is a *scoped* exception, never allowed
+   workspace-wide), and a crates.io-only source policy — the *known-vulnerability*
+   layer the structural allowlist cannot provide. The shell scripts are linted with
+   `shellcheck` (the release plumbing signs and notarizes, so a shell bug is a
+   release-integrity bug). All of these run inside `cargo xtask ci`, so the one gate
+   stays a complete superset of CI. Same posture rule: fix the dependency, or add a
+   *scoped*, justified `ignore`/`exception` in `deny.toml` — never broaden the policy.
 
 ## How the checks work
 
@@ -62,15 +74,23 @@ capability-constrained**, and the constraint is enforced mechanically.
   not on `CORE_DEP_ALLOWLIST`.
 - `check-no-network` walks the closure of **every** workspace member and fails if any
   crate on `NETWORK_BANLIST` appears anywhere.
+- `check-supply-chain` runs `cargo-deny check` (advisories + licenses + bans + sources)
+  against `deny.toml`.
+- `check-shell` runs `shellcheck` over every shell script; `check-workflows` runs
+  `actionlint` (correctness) then `zizmor` (security) over `.github/workflows/`.
 
-Both print remediation-oriented messages that explain how to *fix* the violation,
+These all print remediation-oriented messages that explain how to *fix* the violation,
 not how to silence it.
 
 ## Enforcing checks
 
 - `cargo xtask check-core-deps`
 - `cargo xtask check-no-network`
-- `make zizmor` (workflow security; the `zizmor` CI job runs it on every push/PR).
+- `cargo xtask check-supply-chain` (cargo-deny; auto-installs the pinned tool on first
+  local use, pre-installed in CI)
+- `cargo xtask check-shell` (shellcheck) and `cargo xtask check-workflows` (actionlint
+  + zizmor). The cargo-installable tools auto-install; `shellcheck`/`actionlint` print
+  a one-line install hint if missing. `make zizmor` runs the security audit on its own.
 - When editing `xtask` itself: `cargo test -p xtask`,
   `cargo clippy -p xtask --all-targets -- -D warnings`.
 - All of the above are part of `cargo xtask ci` (the same command CI runs).

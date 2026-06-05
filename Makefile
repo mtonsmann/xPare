@@ -24,7 +24,7 @@ CERT_NAME ?=
 NOTARY_PROFILE ?=
 SIGN_ENTITLEMENTS ?=
 
-.PHONY: help build test lint fmt fmt-check ci checks header bench bench-large perf fuzz zizmor app run preview dist github-release clean clean-release
+.PHONY: help build test lint fmt fmt-check ci checks supply-chain lint-actions lint-shell header bench bench-large perf fuzz zizmor app run preview dist github-release clean clean-release
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -56,6 +56,15 @@ checks: ## Run only the structural invariant checks (no build/test)
 	$(CARGO) run -p xtask -- check-entitlements
 	$(CARGO) run -p xtask -- check-no-content-logging
 	$(CARGO) run -p xtask -- check-clipboard-safety
+
+supply-chain: ## cargo-deny: RustSec advisories + license allowlist + bans + sources
+	$(CARGO) run -p xtask -- check-supply-chain
+
+lint-actions: ## Lint workflows: actionlint (correctness) + zizmor (security)
+	$(CARGO) run -p xtask -- check-workflows
+
+lint-shell: ## shellcheck the shell scripts (build/release plumbing)
+	$(CARGO) run -p xtask -- check-shell
 
 header: ## Regenerate the frozen C ABI header
 	$(CARGO) run -p xtask -- gen-header

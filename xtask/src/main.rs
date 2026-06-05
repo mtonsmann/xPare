@@ -10,6 +10,11 @@
 //!   check-core-deps     strict allowlist on `safetystrip-core`'s dependency tree
 //!   check-no-network    workspace-wide banlist of network/OS-capable crates
 //!   check-entitlements  assert the macOS entitlements file is minimal
+//!   check-no-content-logging  assert no clipboard content is logged/persisted
+//!   check-clipboard-safety    assert default targets avoid the real clipboard
+//!   check-supply-chain  cargo-deny: advisories + licenses + bans + sources
+//!   check-workflows     lint GitHub Actions workflows (actionlint + zizmor)
+//!   check-shell         shellcheck the shell scripts
 //!   ci                  run fmt --check, clippy -D warnings, test, and all the above
 //!
 //! Every check exits nonzero on violation with a remediation-oriented message so a
@@ -30,6 +35,9 @@ fn main() -> ExitCode {
         Some("check-entitlements") => report(check_entitlements()),
         Some("check-no-content-logging") => report(check_no_content_logging()),
         Some("check-clipboard-safety") => report(check_clipboard_safety()),
+        Some("check-supply-chain") => report(check_supply_chain()),
+        Some("check-workflows") => report(check_workflows()),
+        Some("check-shell") => report(check_shell()),
         Some("ci") => run_ci(),
         Some(other) => {
             eprintln!("xtask: unknown subcommand '{other}'");
@@ -55,7 +63,10 @@ fn usage() {
          \x20 check-entitlements   assert the macOS entitlements file is minimal\n\
          \x20 check-no-content-logging  assert no clipboard content is logged/persisted\n\
          \x20 check-clipboard-safety     assert default targets avoid the real clipboard\n\
-         \x20 ci                   fmt + clippy + test + every structural check"
+         \x20 check-supply-chain   cargo-deny: advisories + licenses + bans + sources\n\
+         \x20 check-workflows      lint GitHub Actions workflows (actionlint + zizmor)\n\
+         \x20 check-shell          shellcheck the shell scripts\n\
+         \x20 ci                   fmt + clippy + test + every structural & external check"
     );
 }
 
@@ -734,7 +745,10 @@ fn collect_source_files(root: &std::path::Path, exts: &[&str], out: &mut Vec<Pat
         if path.is_dir() {
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            if matches!(name.as_ref(), "target" | ".build" | ".git" | ".swiftpm") {
+            if matches!(
+                name.as_ref(),
+                "target" | ".build" | ".git" | ".swiftpm" | ".claude"
+            ) {
                 continue;
             }
             collect_source_files(&path, exts, out);
@@ -863,6 +877,190 @@ fn check_clipboard_safety() -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
+// external linters (supply-chain, workflows, shell)
+// ---------------------------------------------------------------------------
+//
+// Unlike the structural checks above (pure Rust, zero external deps), these shell
+// out to third-party linters. They are still part of `cargo xtask ci` so the one
+// gate stays a true SUPERSET of CI — a green local run means a green PR, with no
+// second command to remember. Pinned versions keep local and CI byte-identical;
+// the cargo-installable tools auto-install on first local use, while the system
+// tools fail with the exact install commands (CI installs all of them as a pinned
+// step). Bump these in lockstep with the "Install lint tools" step in
+// .github/workflows/ci.yml.
+const CARGO_DENY_VERSION: &str = "0.19.8";
+const ZIZMOR_VERSION: &str = "1.25.2";
+
+const SHELLCHECK_INSTALL_HINT: &str = "\x20 macOS:  brew install shellcheck\n\
+     \x20 Debian: sudo apt-get install -y shellcheck\n\
+     \x20 Pinned: https://github.com/koalaman/shellcheck/releases/tag/v0.11.0";
+
+const ACTIONLINT_INSTALL_HINT: &str = "\x20 macOS:  brew install actionlint\n\
+     \x20 Go:     go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12\n\
+     \x20 Pinned: https://github.com/rhysd/actionlint/releases/tag/v1.7.12";
+
+/// The cargo bin dir (`$CARGO_HOME/bin`, else `~/.cargo/bin`) where `cargo install`
+/// places executables — not always on `$PATH` in minimal agent/CI shells, so we
+/// search it explicitly.
+fn cargo_bin_dir() -> Option<PathBuf> {
+    if let Some(home) = std::env::var_os("CARGO_HOME") {
+        return Some(PathBuf::from(home).join("bin"));
+    }
+    std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cargo").join("bin"))
+}
+
+/// Resolve an executable to an absolute path by searching `$PATH` then the cargo
+/// bin dir. `None` if it is not found anywhere we look. (Unix layout: xtask runs on
+/// the macOS/Linux dev/CI hosts; the reserved Windows shell is not built here.)
+fn resolve_tool(bin: &str) -> Option<PathBuf> {
+    let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect())
+        .unwrap_or_default();
+    dirs.extend(cargo_bin_dir());
+    dirs.into_iter().map(|d| d.join(bin)).find(|c| c.is_file())
+}
+
+/// Run an external linter (resolved to an absolute path) from the workspace root,
+/// inheriting stdio so its diagnostics stream straight to the user. Same contract
+/// as `run_cargo`: Ok on success, a remediation-oriented message otherwise.
+fn run_tool(label: &str, program: &std::path::Path, args: &[&str]) -> Result<(), String> {
+    println!("ci: $ {label} {}", args.join(" "));
+    let status = Command::new(program)
+        .args(args)
+        .current_dir(workspace_root())
+        .status()
+        .map_err(|e| format!("ci: FAIL — could not launch `{label}`: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "ci: FAIL — `{label}` reported problems (exited {status}). Fix the reported \
+             issues; do not weaken the check."
+        ))
+    }
+}
+
+/// Ensure a cargo-installable linter is present, auto-installing the pinned version
+/// on first local use (it lands in the cargo bin dir). In CI the tool is
+/// pre-installed, so this is a no-op there.
+fn ensure_cargo_tool(bin: &str, crate_name: &str, version: &str) -> Result<PathBuf, String> {
+    if let Some(path) = resolve_tool(bin) {
+        return Ok(path);
+    }
+    println!(
+        "ci: `{bin}` not found — installing {crate_name}@{version} via cargo \
+         (one-time; CI pre-installs it)…"
+    );
+    let installed = Command::new("cargo")
+        .args(["install", "--locked", &format!("{crate_name}@{version}")])
+        .status()
+        .map_err(|e| format!("ci: FAIL — could not launch `cargo install {crate_name}`: {e}"))?
+        .success();
+    if installed {
+        if let Some(path) = resolve_tool(bin) {
+            return Ok(path);
+        }
+    }
+    Err(format!(
+        "ci: FAIL — could not auto-install `{bin}`. Install it manually and re-run:\n\
+         \x20 cargo install --locked {crate_name}@{version}"
+    ))
+}
+
+/// Require a system linter (not a cargo crate). If missing, fail with the exact
+/// install commands rather than silently skipping — a skip would let a local pass
+/// hide a CI failure. CI installs these as a pinned step, so the gate is identical
+/// locally and in CI.
+fn require_system_tool(bin: &str, what: &str, install_hint: &str) -> Result<PathBuf, String> {
+    resolve_tool(bin).ok_or_else(|| {
+        format!(
+            "ci: FAIL — `{bin}` is not installed (needed for {what}).\n\
+             Install it, then re-run `cargo xtask ci`:\n{install_hint}"
+        )
+    })
+}
+
+/// All shell scripts under the workspace, skipping build/VCS/worktree dirs.
+fn shell_scripts(root: &std::path::Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    collect_source_files(root, &["sh"], &mut out);
+    out.sort();
+    out
+}
+
+/// check-shell: shellcheck every shell script in the tree. The macOS build/release
+/// plumbing is load-bearing — `release.sh` signs, notarizes, and staples — so a
+/// shell bug there is a release-integrity bug.
+fn check_shell() -> Result<(), String> {
+    let root = workspace_root();
+    let scripts = shell_scripts(&root);
+    if scripts.is_empty() {
+        println!("check-shell: no shell scripts found; nothing to lint.");
+        return Ok(());
+    }
+    let shellcheck = require_system_tool(
+        "shellcheck",
+        "shell-script linting",
+        SHELLCHECK_INSTALL_HINT,
+    )?;
+    let rel: Vec<String> = scripts
+        .iter()
+        .map(|p| p.strip_prefix(&root).unwrap_or(p).display().to_string())
+        .collect();
+    let args: Vec<&str> = rel.iter().map(String::as_str).collect();
+    run_tool("shellcheck", &shellcheck, &args)
+}
+
+/// check-workflows: lint the GitHub Actions workflows for correctness (actionlint)
+/// and security (zizmor). actionlint is a system tool; zizmor is cargo-installable
+/// (auto-installed, pinned). This is the local twin of the dedicated CI `zizmor`
+/// job (which additionally uploads SARIF to code scanning), so an agent catches
+/// workflow problems before pushing instead of from a failed CI run.
+fn check_workflows() -> Result<(), String> {
+    let root = workspace_root();
+    if !root.join(".github/workflows").is_dir() {
+        println!("check-workflows: no .github/workflows directory; nothing to lint.");
+        return Ok(());
+    }
+    // Correctness first (fast, offline): expression/syntax errors, bad `needs`
+    // graphs, shellcheck over inline `run:` blocks.
+    let actionlint = require_system_tool(
+        "actionlint",
+        "GitHub Actions workflow linting (correctness)",
+        ACTIONLINT_INSTALL_HINT,
+    )?;
+    run_tool("actionlint", &actionlint, &[])?;
+    // Security second: template injection, credential persistence, unpinned actions,
+    // over-broad token permissions. Run --offline so the gate's exit code never
+    // depends on a GitHub token or network reachability — deterministic locally and
+    // in this CI job. The few network-only audits (e.g. known-vulnerable-actions) are
+    // covered by the dedicated `zizmor` CI job, which does the full online pass and
+    // uploads SARIF to code scanning.
+    let zizmor = ensure_cargo_tool("zizmor", "zizmor", ZIZMOR_VERSION)?;
+    run_tool("zizmor", &zizmor, &["--offline", ".github/workflows"])
+}
+
+/// check-supply-chain: cargo-deny over the whole workspace per the checked-in
+/// `deny.toml` — RustSec advisories, the license allowlist, banned/duplicate
+/// crates, and the crates.io-only source policy. Complements `check-core-deps`
+/// (which constrains *what* the core may pull in) with *known-vulnerability* and
+/// license auditing across the entire tree.
+fn check_supply_chain() -> Result<(), String> {
+    let deny = ensure_cargo_tool("cargo-deny", "cargo-deny", CARGO_DENY_VERSION)?;
+    run_tool("cargo-deny", &deny, &["check"]).map_err(|e| {
+        format!(
+            "{e}\n\
+             \n\
+             A supply-chain gate tripped (see deny.toml): a RustSec advisory, a\n\
+             non-allowed license, a banned/duplicate crate, or an unknown source. Fix it\n\
+             by updating, replacing, or dropping the offending dependency. Only after a\n\
+             documented risk decision, add a *scoped* `ignore`/`exceptions` entry (with a\n\
+             reason) in deny.toml — do not broaden the policy to make the check pass."
+        )
+    })
+}
+
+// ---------------------------------------------------------------------------
 // ci
 // ---------------------------------------------------------------------------
 
@@ -956,6 +1154,23 @@ fn run_ci() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
+    // External linters last: they shell out to third-party tools (auto-installed
+    // locally, pre-installed in CI) and some touch the network (advisory DB, online
+    // workflow audits). Within the phase, offline+fast first (shell, then workflow
+    // correctness), then the network-touching ones, so failures surface cheapest.
+    if let Err(msg) = check_shell() {
+        eprintln!("{msg}");
+        return ExitCode::FAILURE;
+    }
+    if let Err(msg) = check_workflows() {
+        eprintln!("{msg}");
+        return ExitCode::FAILURE;
+    }
+    if let Err(msg) = check_supply_chain() {
+        eprintln!("{msg}");
+        return ExitCode::FAILURE;
+    }
+
     println!("ci: all checks passed.");
     ExitCode::SUCCESS
 }
@@ -967,6 +1182,47 @@ fn run_ci() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shell_scripts_finds_release_plumbing_and_skips_build_dirs() {
+        let scripts = shell_scripts(&workspace_root());
+        let names: Vec<String> = scripts
+            .iter()
+            .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .collect();
+        // The load-bearing macOS scripts must be discovered so check-shell lints them.
+        for expected in ["release.sh", "package-app.sh", "build.sh"] {
+            assert!(names.contains(&expected.to_string()), "missing {expected}");
+        }
+        // Never reach into build/VCS/worktree dirs *within* the workspace. The
+        // workspace root itself can live under e.g. .claude/worktrees during agent
+        // runs, so compare paths RELATIVE to the root, not the absolute prefix.
+        let root = workspace_root();
+        for p in &scripts {
+            let rel = p
+                .strip_prefix(&root)
+                .unwrap_or(p)
+                .to_string_lossy()
+                .replace('\\', "/");
+            assert!(
+                !rel.contains("target/")
+                    && !rel.contains(".build/")
+                    && !rel.contains(".git/")
+                    && !rel.contains(".claude/"),
+                "should not scan build/worktree dirs: {rel}"
+            );
+        }
+    }
+
+    #[test]
+    fn deny_config_present_with_all_four_checks() {
+        // check-supply-chain is only meaningful with the policy file checked in.
+        let text = std::fs::read_to_string(workspace_root().join("deny.toml"))
+            .expect("deny.toml must exist at the workspace root for check-supply-chain");
+        for section in ["[advisories]", "[licenses]", "[bans]", "[sources]"] {
+            assert!(text.contains(section), "deny.toml is missing {section}");
+        }
+    }
 
     /// A minimal, correct entitlements file: exactly app-sandbox = true.
     const GOOD_MINIMAL: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
