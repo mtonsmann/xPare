@@ -1,0 +1,164 @@
+# SafetyStrip release.
+#
+# Tag-triggered (v*). The `validate` job always runs the full gate, builds the app
+# bundle, and uploads an explicitly UNSIGNED preview artifact — it needs no Apple
+# secrets, so it works on every tag and every fork. `publish-official` runs only
+# when the repo opts in (vars.SAFETYSTRIP_ENABLE_OFFICIAL_RELEASE == 'true') AND the
+# Apple Developer ID / notary secrets are present; it signs, notarizes, and
+# publishes the GitHub Release. Signing/notary credentials are NEVER required for
+# pull-request CI (see .github/workflows/ci.yml).
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: validate + unsigned preview
+    runs-on: macos-latest
+    env:
+      VERSION: ${{ github.ref_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (pinned stable + clippy + rustfmt)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Normalize release version
+        run: |
+          set -euo pipefail
+          version="${VERSION#v}"
+          if ! [[ "${version}" =~ ^[0-9]+(\.[0-9]+){2}([.-][A-Za-z0-9]+)?$ ]]; then
+            echo "Release tags must look like vX.Y.Z or vX.Y.Z-suffix."
+            exit 1
+          fi
+          echo "RELEASE_VERSION=${version}" >> "${GITHUB_ENV}"
+
+      # The same portable gate engineers run locally: fmt + clippy -D warnings +
+      # tests + every structural invariant (unsafe-forbid, core-deps, no-network,
+      # ABI drift, entitlements, and the ported content-logging / clipboard-safety
+      # checks).
+      - name: cargo xtask ci
+        run: cargo run -p xtask -- ci
+
+      - name: Build the Swift shell (release)
+        run: |
+          cargo build -p safetystrip-ffi --release
+          swift build -c release --package-path shells/macos
+
+      - name: Package unsigned preview
+        run: make preview VERSION="${RELEASE_VERSION}"
+
+      - name: Upload unsigned preview artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SafetyStrip-${{ github.ref_name }}-unsigned-preview
+          path: |
+            dist/release/SafetyStrip-v${{ env.RELEASE_VERSION }}-macos-*-unsigned-preview.zip
+            dist/release/SafetyStrip-v${{ env.RELEASE_VERSION }}-macos-*-unsigned-preview.zip.sha256
+
+      - name: Note on official publication
+        if: ${{ vars.SAFETYSTRIP_ENABLE_OFFICIAL_RELEASE != 'true' }}
+        run: |
+          echo "Official GitHub Release publication is disabled."
+          echo "Set repo variable SAFETYSTRIP_ENABLE_OFFICIAL_RELEASE=true and add the"
+          echo "Apple Developer ID + notary secrets to publish signed assets."
+
+  publish-official:
+    name: sign, notarize, and publish
+    needs: validate
+    if: ${{ vars.SAFETYSTRIP_ENABLE_OFFICIAL_RELEASE == 'true' }}
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ github.ref_name }}
+      NOTARY_PROFILE: safetystrip-notary
+      KEYCHAIN_PATH: ${{ runner.temp }}/safetystrip-signing.keychain-db
+      CERTIFICATE_PATH: ${{ runner.temp }}/developer-id.p12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (pinned stable + clippy + rustfmt)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Normalize release version
+        run: |
+          set -euo pipefail
+          version="${VERSION#v}"
+          if ! [[ "${version}" =~ ^[0-9]+(\.[0-9]+){2}([.-][A-Za-z0-9]+)?$ ]]; then
+            echo "Release tags must look like vX.Y.Z or vX.Y.Z-suffix."
+            exit 1
+          fi
+          echo "RELEASE_VERSION=${version}" >> "${GITHUB_ENV}"
+
+      - name: Validate required Apple secrets
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          MACOS_NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
+          MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in \
+            MACOS_CERTIFICATE_P12_BASE64 MACOS_CERTIFICATE_PASSWORD \
+            MACOS_NOTARY_APPLE_ID MACOS_NOTARY_TEAM_ID MACOS_NOTARY_PASSWORD; do
+            if [ -z "${!name}" ]; then echo "Missing required secret: ${name}"; exit 1; fi
+          done
+
+      - name: Import Developer ID certificate
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          echo "${MACOS_CERTIFICATE_P12_BASE64}" | base64 -D > "${CERTIFICATE_PATH}"
+          security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          security set-keychain-settings -lut 21600 "${KEYCHAIN_PATH}"
+          security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          security import "${CERTIFICATE_PATH}" -P "${MACOS_CERTIFICATE_PASSWORD}" \
+            -t cert -f pkcs12 -k "${KEYCHAIN_PATH}" -T /usr/bin/codesign -T /usr/bin/security
+          security list-keychains -d user -s "${KEYCHAIN_PATH}"
+          security default-keychain -s "${KEYCHAIN_PATH}"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          identity="$(security find-identity -v -p codesigning "${KEYCHAIN_PATH}" | sed -n 's/.*"\(Developer ID Application:.*\)".*/\1/p' | head -n 1)"
+          if [ -z "${identity}" ]; then echo "No Developer ID Application identity found."; exit 1; fi
+          echo "CERT_NAME=${identity}" >> "${GITHUB_ENV}"
+
+      - name: Store notary credentials
+        env:
+          MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          MACOS_NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
+          MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          xcrun notarytool store-credentials "${NOTARY_PROFILE}" \
+            --apple-id "${MACOS_NOTARY_APPLE_ID}" \
+            --team-id "${MACOS_NOTARY_TEAM_ID}" \
+            --password "${MACOS_NOTARY_PASSWORD}"
+
+      - name: Sign, notarize, and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          make dist VERSION="${RELEASE_VERSION}" CERT_NAME="${CERT_NAME}" NOTARY_PROFILE="${NOTARY_PROFILE}"
+          make github-release VERSION="${RELEASE_VERSION}"
+
+      - name: Clean temporary signing material
+        if: ${{ always() }}
+        run: |
+          security delete-keychain "${KEYCHAIN_PATH}" >/dev/null 2>&1 || true
+          rm -f "${CERTIFICATE_PATH}"

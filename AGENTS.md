@@ -113,12 +113,16 @@ network, or telemetry.
 Consult:
 
 - `docs/guardrails/privacy-and-data-handling.md`
+- `docs/guardrails/content-logging-and-clipboard-safety.md`
 - `SECURITY.md`
 
 No network anywhere. No persistence or logging of clipboard content. In-memory
-only; zeroize buffers after use. Any new entitlement, any dependency capable of
-network access, or any new data path is a posture change — call it out and
-justify it in the PR.
+only: the core holds pipeline intermediates in `Zeroizing` buffers and the FFI
+zeroizes the output buffer, so clipboard-derived bytes are wiped after use. The
+mechanical checks `check-no-content-logging` and `check-clipboard-safety` (in
+`cargo xtask ci`) enforce no content logging/persistence and keep real-clipboard
+exercise opt-in. Any new entitlement, any dependency capable of network access, or
+any new data path is a posture change — call it out and justify it in the PR.
 
 ## Dependencies, CI, And Automation
 
@@ -134,6 +138,25 @@ dependency and automation updates separate from behavior changes. The invariants
 (no-unsafe core, frozen ABI surface, no-network, core-has-no-OS-deps,
 determinism) are enforced by CI lints and structural tests. Keep them green by
 fixing the code, not by weakening the check.
+
+## Performance And Releases
+
+Use for transform performance work or macOS release packaging.
+
+Consult:
+
+- `docs/exec-plans/active/0002-performance-ceiling-and-optimization-loop.md`
+  (ceiling model, optimization waves, acceptance rules) and `docs/performance.md`
+  (what we measure + the local baseline).
+- `docs/release-model.md` and
+  `docs/exec-plans/active/0003-macos-release-plumbing.md` (source / unsigned-preview /
+  Developer ID releases).
+
+Performance is *measured* by criterion (`make bench`) and the opt-in `make perf`
+throughput harness, and *gated* in CI only for complexity (`perf_guard.rs`), never
+absolute speed. Releases: `make preview` is unsigned and needs no Apple account;
+`make dist` / `make github-release` are gated on Developer ID credentials. An
+optimization or release change may never weaken a guardrail.
 
 ## Documentation-Only Changes
 

@@ -111,6 +111,17 @@ asserts the strippers stay **linear** on large adversarial inputs, and its
 `--ignored` `handles_256mb_log_pipeline` test validates a full 256 MB pipeline on
 demand (`cargo test -p safetystrip-core --test perf_guard -- --ignored`).
 
+For a quick same-machine throughput baseline (roofline controls + per-op + end-to-end
+medians, synthetic input only):
+
+```sh
+make perf PERF_MIB=128 PERF_SAMPLES=7
+```
+
+[`docs/performance.md`](docs/performance.md) records the method and a measured local
+baseline; the full optimization method (ceiling model, waves, acceptance rules) is in
+[`docs/exec-plans/active/0002-performance-ceiling-and-optimization-loop.md`](docs/exec-plans/active/0002-performance-ceiling-and-optimization-loop.md).
+
 ### Build and run the macOS shell
 
 The shell links the FFI staticlib over the frozen C ABI. To put it on your menu bar:
@@ -127,6 +138,10 @@ strips the clipboard in place.
 > A signed, **notarized** build for distribution to other Macs needs full Xcode + a
 > Developer ID. See [the macOS posture](docs/guardrails/macos-posture.md) and
 > [`shells/macos/README.md`](shells/macos/README.md).
+
+Release packaging — an unsigned preview (`make preview`, no Apple account needed) and
+a gated Developer ID sign + notarize flow (`make dist`) — is documented in
+[`docs/release-model.md`](docs/release-model.md).
 
 ## Repository layout
 
@@ -150,6 +165,8 @@ docs/         ARCHITECTURE / DESIGN / SECURITY, guardrails, exec plans
 | [`SECURITY.md`](SECURITY.md) | Privacy/data-handling posture and how each property is enforced |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | The local gate, the per-change-class checklist, fuzzing |
 | [`AGENTS.md`](AGENTS.md) | Short router: classify a change, then jump to the right guardrail |
+| [`docs/performance.md`](docs/performance.md) | What we measure, how to run `make perf`, the local baseline, and the optimization method |
+| [`docs/release-model.md`](docs/release-model.md) | Source vs. unsigned-preview vs. Developer ID releases, and the tag-triggered workflow |
 | [`docs/guardrails/`](docs/guardrails/) | Focused, actionable rules per change class (transforms, memory safety, FFI/ABI, shells, macOS, privacy, dependencies) |
 
 ## License

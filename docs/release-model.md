@@ -1,0 +1,98 @@
+# Release Model
+
+SafetyStrip follows the normal open-source macOS pattern:
+
+- **Source is the canonical distribution** for contributors and privacy-sensitive
+  users (`make app` / `make run` build and launch a local bundle).
+- **Tagged GitHub Releases** (`v*`) are the end-user download surface.
+- macOS binary assets are built from a tag, checksummed, and attached to the
+  release with notes.
+- Broad end-user downloads must be **Developer ID signed and notarized**.
+
+Unlike the upstream FormatStripper lineage, the SafetyStrip Swift app **statically
+links** `libsafetystrip_ffi.a`, so a release bundle has **no embedded dylib** under
+`Contents/Frameworks` to relocate or sign separately — the bundle is the Swift
+executable plus its `Info.plist` and icon, and the Developer ID signature covers the
+single Mach-O and the bundle.
+
+## Current status
+
+The local product is source-built. From the repo root:
+
+```sh
+make app     # build + assemble shells/macos/dist/SafetyStrip.app (ad-hoc signed)
+make run     # the above, then `open` it
+```
+
+For an explicitly **unsigned preview** archive (no Apple account required):
+
+```sh
+make preview                 # uses an exact vX.Y.Z tag, or:
+make preview VERSION=1.2.3
+```
+
+That writes `dist/release/SafetyStrip-vX.Y.Z-macos-<arch>-unsigned-preview.zip` and
+its `.sha256`. There are **no official downloadable release assets yet** — by
+design, the bundle is unsigned/un-notarized until Developer ID credentials exist.
+
+## Target release channels
+
+1. GitHub Releases for users.
+2. Build-from-source for contributors and privacy-sensitive users.
+3. Homebrew Cask after stable signed/notarized releases exist.
+
+Signed assets are architecture-labeled:
+
+```text
+SafetyStrip-vX.Y.Z-macos-arm64.zip
+SafetyStrip-vX.Y.Z-macos-x86_64.zip
+```
+
+If the project later ships universal binaries, asset names should make the
+architecture choice explicit.
+
+## Release workflow
+
+`.github/workflows/release.yml` runs on `v*` tags:
+
+1. **validate** (always): checkout → `cargo run -p xtask -- ci` (the full gate) →
+   build the FFI staticlib + `swift build -c release` → `make preview` → upload the
+   unsigned preview as a workflow artifact.
+2. **publish-official** (gated): only when repo variable
+   `SAFETYSTRIP_ENABLE_OFFICIAL_RELEASE == 'true'` **and** the Apple secrets are
+   present. Imports the Developer ID cert into a temp keychain, stores notary
+   credentials, runs `make dist` (sign → notarize → staple → zip → checksum →
+   verify) and `make github-release`, then wipes the signing material.
+
+Signing/notary credentials are **never** required for pull-request CI. Absent them,
+CI still builds and tests, but must not publish an artifact as an official binary.
+
+## Local official release (after credentials exist)
+
+On an exact `vX.Y.Z` tag, with full Xcode + a Developer ID identity:
+
+```sh
+xcrun notarytool store-credentials safetystrip-notary \
+  --apple-id you@example.com --team-id TEAMID --password app-specific-password
+
+make dist VERSION=1.2.3 \
+  CERT_NAME="Developer ID Application: Your Name (TEAMID)" \
+  NOTARY_PROFILE=safetystrip-notary
+
+make github-release VERSION=1.2.3
+```
+
+## First public binary prerequisites
+
+- Lock the public bundle identifier (currently `com.safetystrip.app`).
+- Decide universal vs. per-arch assets.
+- Add Developer ID signing + notarization secrets (kept **out** of the repo).
+- Verify Gatekeeper acceptance on a clean macOS machine.
+- Keep the no-network, no-telemetry, no-clipboard-content-logging posture intact —
+  enforced by `cargo xtask ci` on every release run.
+
+## References
+
+- GitHub Releases: <https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases>
+- Apple Developer ID distribution (signing + notarization):
+  <https://developer.apple.com/support/developer-id/>

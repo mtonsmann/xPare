@@ -14,6 +14,9 @@ name = "safetystrip_core"
 serde = { workspace = true }
 serde_json = { workspace = true }
 pulldown-cmark = { workspace = true }
+# Best-effort wiping of clipboard-derived intermediates in the pipeline (alloc
+# feature is on by default; no OS/IO/network surface — see CORE_DEP_ALLOWLIST).
+zeroize = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }

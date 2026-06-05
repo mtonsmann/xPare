@@ -208,8 +208,17 @@ newline collapsing was found by perf testing and fixed by bounding the backward
 scan; `core/tests/perf_guard.rs` guards against regressions, and the fuzzer's 4 KB
 input cap is why scaling bugs must be caught here, not there).
 
+Performance is a methodical, measured track — criterion benches (`make bench`), an
+opt-in roofline-calibrated throughput harness (`make perf`), and the `perf_guard.rs`
+complexity gate. The method (ceiling model, optimization waves, accept /
+diminishing-returns rules) and a current local baseline are in
+[`docs/performance.md`](docs/performance.md) and
+[exec-plan 0002](docs/exec-plans/active/0002-performance-ceiling-and-optimization-loop.md).
+
 Measured on a 256 MB / 2.05 M-line synthetic log (release build, single op or the
-noted pipeline):
+noted pipeline); these single-op figures **predate intermediate zeroization** — see
+[`docs/performance.md`](docs/performance.md) for current end-to-end throughput and the
+measured cost of the wipe:
 
 | Operation | Time | Peak RSS |
 |---|---:|---:|
@@ -222,9 +231,9 @@ noted pipeline):
 | `sort_lines` (case-insensitive) | ~2.0 s | ~1.3 GB |
 
 **Memory model.** The pipeline is a fold — `text = op(text)` — so each operation
-allocates a fresh output `String` and the previous one is freed, giving a peak of
-~2× the current text size per step; with the input buffer also live, observed peak
-working set is ~3–5× the input. Two deliberate choices keep that bounded:
+allocates a fresh output `String` and the previous one is wiped (`Zeroizing`) and
+freed, giving a peak of ~2× the current text size per step; with the input buffer
+also live, observed peak working set is ~3–5× the input. Two deliberate choices keep that bounded:
 
 - `dedupe_lines` borrows line slices into a `HashSet<&str>` (membership only), so its
   extra memory is O(number of lines), not O(bytes).
@@ -275,12 +284,13 @@ Benchmarks for these sizes live in `core/benches/transform_large.rs`
 
 These are accepted trade-offs, documented so they are not mistaken for defects.
 
-- **Zeroization is best-effort.** `ss_buffer_free` zeroizes the final output buffer,
-  but Rust may reallocate intermediate `String`s during a multi-step pipeline, and
-  those interim allocations are not individually wiped. We minimize copies and wipe
-  the buffer that crosses the boundary; we cannot guarantee no transient copy ever
-  touched the allocator. The OS clipboard itself is also outside our control once
-  the shell writes back.
+- **Zeroization is best-effort.** The pipeline now holds each intermediate in a
+  `Zeroizing` buffer (wiped on drop) and `ss_buffer_free` wipes the output buffer, so
+  clipboard-derived bytes are scrubbed from the heap after use — at a measured
+  throughput cost on very large inputs (see [`docs/performance.md`](docs/performance.md)).
+  It remains best-effort: the caller's input buffer and the OS clipboard itself are
+  outside the core's control, and the allocator may briefly retain freed pages before
+  reuse.
 - **`StripMarkdown` alone is not a script-neutralizing sanitizer.** It delegates
   *embedded* HTML to `strip_html` best-effort, but the supported path for hostile
   content is `StripHtml` → `StripMarkdown`. Do not rely on `StripMarkdown` by itself

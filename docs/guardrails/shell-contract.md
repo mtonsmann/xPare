@@ -52,6 +52,16 @@ new platform.
    (release the result; it is zeroized on free). Build the `config_json` from the
    user's chosen pipeline. The canonical sanitization config is
    **`StripHtml` → `StripMarkdown`**.
+8. **Off-thread transform (UI responsiveness).** `ss_transform` is synchronous and,
+   on large inputs (e.g. a multi-hundred-MB log pasted onto the clipboard), can take
+   ~1 s or more — far too long to run on the UI/event thread. Run the transform **off
+   the UI thread** and marshal the result back to the UI thread to apply it. This is
+   an **inherently per-shell** responsibility: each platform's threading/UI model
+   differs, so it cannot be shared, and the C ABI stays synchronous on purpose — the
+   shell owns concurrency exactly as it owns clipboard I/O and the hotkey. (The core
+   also zeroizes pipeline intermediates, which adds cost on very large inputs — a
+   further reason to keep big transforms off the UI thread; see
+   [`docs/performance.md`](../performance.md).)
 
 ## Wiring to the core (how the macOS shell does it)
 

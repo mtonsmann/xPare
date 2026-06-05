@@ -2,7 +2,9 @@
 
 **When to consult:** anything touching how clipboard **content** is handled —
 network, persistence, logging/telemetry, in-memory lifetime, entitlements, or any
-new data path. This is the guardrail behind [`SECURITY.md`](../../SECURITY.md).
+new data path. This is the guardrail behind [`SECURITY.md`](../../SECURITY.md). The
+mechanical content-logging / clipboard-safety checks have their own guardrail:
+[content-logging-and-clipboard-safety](content-logging-and-clipboard-safety.md).
 
 The one promise: **clipboard content never leaves the process, is never persisted,
 and is never logged.** Content lives in memory only for the duration of a transform
@@ -24,9 +26,10 @@ and is wiped from the buffer that crosses the boundary.
    diagnostics go to **stderr** and only transformed text goes to **stdout**, so the
    two streams never mix. Shells must not log content either.
 4. **In-memory only + best-effort wipe.** Content exists only as in-memory strings
-   during a transform. `ss_buffer_free` zeroizes the returned buffer before freeing
-   it. Minimize transient copies of content; do not stash it in a global, a cache, or
-   a long-lived object.
+   during a transform. The core holds each pipeline intermediate in a `Zeroizing`
+   buffer (wiped on drop) and `ss_buffer_free` zeroizes the returned buffer before
+   freeing it. Minimize transient copies of content; do not stash it in a global, a
+   cache, or a long-lived object.
 5. **No telemetry / analytics / "phone home."** There is nothing to add here — there
    is no code that could, and there must not be.
 6. **Settings are configuration, not content.** Persisting the user's pipeline,
@@ -51,7 +54,9 @@ guardrails.
 | No network anywhere | `cargo xtask check-no-network` (banlist across the whole tree) + sandbox has no network entitlement |
 | Core has no OS/filesystem/network deps | `cargo xtask check-core-deps` (strict transitive allowlist) |
 | No log sink in the core | `#![deny(clippy::print_stdout, print_stderr, dbg_macro)]` + `clippy -D warnings` + no logging crate |
-| In-memory only / wipe | buffer zeroized in `ss_buffer_free`; covered by `cargo test -p safetystrip-ffi` |
+| No content logged/persisted (incl. shells) | `cargo xtask check-no-content-logging` (scans shipped Rust + Swift source) |
+| Default checks avoid the real clipboard | `cargo xtask check-clipboard-safety` |
+| In-memory only / wipe | pipeline intermediates in `Zeroizing`; output buffer zeroized in `ss_buffer_free`; covered by `cargo test` |
 | Minimal entitlements | `cargo xtask check-entitlements` |
 
 All of these are part of `cargo xtask ci`, which CI runs verbatim.

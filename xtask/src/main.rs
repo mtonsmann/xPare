@@ -28,6 +28,8 @@ fn main() -> ExitCode {
         Some("check-core-deps") => report(check_core_deps()),
         Some("check-no-network") => report(check_no_network()),
         Some("check-entitlements") => report(check_entitlements()),
+        Some("check-no-content-logging") => report(check_no_content_logging()),
+        Some("check-clipboard-safety") => report(check_clipboard_safety()),
         Some("ci") => run_ci(),
         Some(other) => {
             eprintln!("xtask: unknown subcommand '{other}'");
@@ -51,6 +53,8 @@ fn usage() {
          \x20 check-core-deps      assert core's dep tree is on the strict allowlist\n\
          \x20 check-no-network     assert no network/OS crate is anywhere in the tree\n\
          \x20 check-entitlements   assert the macOS entitlements file is minimal\n\
+         \x20 check-no-content-logging  assert no clipboard content is logged/persisted\n\
+         \x20 check-clipboard-safety     assert default targets avoid the real clipboard\n\
          \x20 ci                   fmt + clippy + test + every structural check"
     );
 }
@@ -303,6 +307,8 @@ fn normal_dep_closure<'a>(meta: &'a Metadata, start: &[&'a str]) -> BTreeSet<&'a
 ///   `syn`, `unicode-ident`, `unicode-xid`.
 /// * pure formatting / data helpers: `itoa`, `ryu`, `zmij` (float formatting),
 ///   `memchr`, `bitflags`, `unicase`.
+/// * `zeroize` — best-effort wiping of clipboard-derived pipeline intermediates
+///   (alloc feature only; no transitive crates, no OS/IO/network surface).
 ///
 /// Derived by running `cargo metadata` against the pinned dependency ranges and
 /// then frozen here. If `cargo update` legitimately introduces a new *pure-data*
@@ -331,6 +337,9 @@ const CORE_DEP_ALLOWLIST: &[&str] = &[
     "memchr",
     "bitflags",
     "unicase",
+    // best-effort heap zeroization of clipboard-derived pipeline intermediates
+    // (alloc feature only; no transitive crates, no OS/IO/network surface).
+    "zeroize",
 ];
 
 /// Assert that every crate in the core's transitive normal-dependency tree is on
@@ -636,6 +645,224 @@ fn check_entitlements() -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
+// check-no-content-logging
+// ---------------------------------------------------------------------------
+//
+// Ported from the upstream FormatStripper `guardrails.py` content-logging check and
+// tuned for low noise on this tree: the trigger words are clipboard-specific or
+// transform-result names (not the generic input/output/text), so the CLI's
+// intentional write of transformed output to stdout is NOT flagged, while logging or
+// persisting actual clipboard-derived content is. Scans shipped source only; `xtask`
+// (this tooling) and tests are excluded — they legitimately name these words.
+
+/// Shipped source roots scanned for clipboard-content logging/persistence.
+const CONTENT_SCAN_ROOTS: &[&str] = &["core/src", "cli/src", "shells/macos/Sources"];
+
+/// Call tokens that emit to a log/diagnostic sink (Rust + Swift idioms).
+const LOGGING_TOKENS: &[&str] = &[
+    "print!",
+    "print(",
+    "println!",
+    "println(",
+    "eprint!",
+    "eprint(",
+    "eprintln!",
+    "eprintln(",
+    "dbg!",
+    "NSLog(",
+    "os_log(",
+    "logger.debug",
+    "logger.info",
+    "logger.trace",
+    "logger.warning",
+    "logger.error",
+    "log::debug",
+    "log::info",
+    "log::trace",
+    "log::warn",
+    "log::error",
+];
+
+/// Call tokens that persist data to disk / user defaults.
+const PERSISTENCE_TOKENS: &[&str] = &[
+    "UserDefaults",
+    "FileManager.default",
+    "fs::write",
+    "File::create",
+    "write(to:",
+    "NSKeyedArchiver",
+];
+
+/// Words that name clipboard-derived / transform-result content (matched
+/// case-insensitively). Deliberately excludes the generic `input`/`output`/`text`
+/// the upstream regex used, which would flag the CLI's legitimate stdout write.
+const CONTENT_WORDS: &[&str] = &[
+    "clipboard",
+    "pasteboard",
+    "plaintext",
+    "plain_text",
+    "payload",
+    "selection",
+    "transformed",
+    "stripped",
+    "clipboardtext",
+];
+
+/// True if the line calls a logging or persistence sink.
+fn line_logs_or_persists(line: &str) -> bool {
+    LOGGING_TOKENS.iter().any(|t| line.contains(t))
+        || PERSISTENCE_TOKENS.iter().any(|t| line.contains(t))
+}
+
+/// True if the (already-lowercased) line names clipboard-derived content.
+fn line_names_content(line_lower: &str) -> bool {
+    CONTENT_WORDS.iter().any(|w| line_lower.contains(w))
+}
+
+/// A line is a violation iff it both routes to a sink AND names clipboard content.
+fn flags_content_logging(line: &str) -> bool {
+    line_logs_or_persists(line) && line_names_content(&line.to_ascii_lowercase())
+}
+
+/// Recursively collect files under `root` with one of `exts`, skipping build/VCS dirs.
+fn collect_source_files(root: &std::path::Path, exts: &[&str], out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if matches!(name.as_ref(), "target" | ".build" | ".git" | ".swiftpm") {
+                continue;
+            }
+            collect_source_files(&path, exts, out);
+        } else if path
+            .extension()
+            .and_then(|x| x.to_str())
+            .is_some_and(|x| exts.contains(&x))
+        {
+            out.push(path);
+        }
+    }
+}
+
+/// Assert no shipped source line logs or persists clipboard-derived content.
+fn check_no_content_logging() -> Result<(), String> {
+    let root = workspace_root();
+    let mut files: Vec<PathBuf> = Vec::new();
+    for r in CONTENT_SCAN_ROOTS {
+        collect_source_files(&root.join(r), &["rs", "swift"], &mut files);
+    }
+    files.sort();
+
+    let mut hits: Vec<String> = Vec::new();
+    for path in &files {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        for (i, line) in text.lines().enumerate() {
+            if flags_content_logging(line) {
+                let shown = path.strip_prefix(&root).unwrap_or(path.as_path());
+                hits.push(format!("{}:{}: {}", shown.display(), i + 1, line.trim()));
+            }
+        }
+    }
+
+    if hits.is_empty() {
+        println!(
+            "check-no-content-logging: scanned {} shipped source file(s); no clipboard-content \
+             logging or persistence.",
+            files.len()
+        );
+        Ok(())
+    } else {
+        Err(format!(
+            "check-no-content-logging: FAIL — line(s) appear to log or persist clipboard-derived \
+             content:\n\x20 {}\n\
+             \n\
+             SafetyStrip must never write clipboard content to a log sink, to disk, or to user\n\
+             defaults. Log fixed operational states only; persist user *settings* (operation\n\
+             choices, shortcuts), never clipboard input/output/derived text. If this is a false\n\
+             positive, rename the local so the line no longer reads as logging real content.",
+            hits.join("\n  ")
+        ))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// check-clipboard-safety
+// ---------------------------------------------------------------------------
+//
+// The default verification targets must never touch the user's REAL clipboard.
+// Real `NSPasteboard.general` exercise stays behind an explicitly opt-in target, so
+// `make ci` / `make check` can run safely in any environment.
+
+/// Default (non-opt-in) Make targets that must not depend on a real-clipboard smoke.
+const DEFAULT_MAKE_TARGETS: &[&str] = &[
+    "check", "checks", "ci", "all", "build", "test", "app", "run", "preview", "dist",
+];
+
+/// Parse a Makefile rule `target: prereqs` into its parts, or `None` if the line is a
+/// recipe (leading tab), a variable assignment, or not a rule.
+fn parse_make_rule(line: &str) -> Option<(&str, &str)> {
+    if line.starts_with('\t') {
+        return None;
+    }
+    let colon = line.find(':')?;
+    let before = &line[..colon];
+    let after = &line[colon + 1..];
+    // Skip `X := y` / `X ?= y` / `X = y` / `X ::= y` assignments.
+    if before.contains('=') || after.starts_with('=') {
+        return None;
+    }
+    let prereqs = after.split('#').next().unwrap_or("").trim();
+    Some((before.trim(), prereqs))
+}
+
+/// Assert no default Make target depends on a real-clipboard (`*general*`) smoke.
+fn check_clipboard_safety() -> Result<(), String> {
+    let path = workspace_root().join("Makefile");
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        println!("check-clipboard-safety: no Makefile present; nothing to check.");
+        return Ok(());
+    };
+
+    let mut hits: Vec<String> = Vec::new();
+    for (i, line) in text.lines().enumerate() {
+        if let Some((target, prereqs)) = parse_make_rule(line) {
+            if DEFAULT_MAKE_TARGETS.contains(&target) {
+                for prereq in prereqs.split_whitespace() {
+                    if prereq.contains("general") {
+                        hits.push(format!(
+                            "Makefile:{}: default target `{target}` depends on `{prereq}`",
+                            i + 1
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    if hits.is_empty() {
+        println!(
+            "check-clipboard-safety: default Make targets do not exercise the real clipboard."
+        );
+        Ok(())
+    } else {
+        Err(format!(
+            "check-clipboard-safety: FAIL —\n\x20 {}\n\
+             \n\
+             Real NSPasteboard.general verification must stay OPT-IN. Default targets must use\n\
+             synthetic pasteboards only, so `make ci`/`make check` never read or mutate the\n\
+             user's real clipboard.",
+            hits.join("\n  ")
+        ))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // ci
 // ---------------------------------------------------------------------------
 
@@ -695,6 +922,14 @@ fn run_ci() -> ExitCode {
         return ExitCode::FAILURE;
     }
     if let Err(msg) = check_no_network() {
+        eprintln!("{msg}");
+        return ExitCode::FAILURE;
+    }
+    if let Err(msg) = check_no_content_logging() {
+        eprintln!("{msg}");
+        return ExitCode::FAILURE;
+    }
+    if let Err(msg) = check_clipboard_safety() {
         eprintln!("{msg}");
         return ExitCode::FAILURE;
     }
@@ -868,6 +1103,63 @@ mod tests {
         assert_eq!(
             entitlement_keys(text),
             vec!["a".to_string(), "b".to_string()]
+        );
+    }
+
+    // --- check-no-content-logging ---
+
+    #[test]
+    fn content_logging_flags_logging_of_clipboard_content() {
+        assert!(flags_content_logging(
+            r#"os_log("stripped clipboard: %@", payload)"#
+        ));
+        assert!(flags_content_logging(
+            r#"println!("pasteboard = {}", transformed)"#
+        ));
+    }
+
+    #[test]
+    fn content_logging_flags_persisting_clipboard_content() {
+        assert!(flags_content_logging(
+            "UserDefaults.standard.set(clipboardText, forKey: key)"
+        ));
+    }
+
+    #[test]
+    fn content_logging_allows_legitimate_lines() {
+        // The CLI's intentional write of transformed output to stdout is not logging
+        // (no log/persist token matches `write_all`, and `output` is not a trigger word).
+        assert!(!flags_content_logging(
+            "stdout().write_all(output.as_bytes())?;"
+        ));
+        // Logging a fixed operational state with no content word is fine.
+        assert!(!flags_content_logging(
+            r#"eprintln!("error: {}", err.code)"#
+        ));
+        // Persisting user *settings* (no content word) is fine.
+        assert!(!flags_content_logging(
+            r#"UserDefaults.standard.set(operations, forKey: "ops")"#
+        ));
+        // A content word with no sink call is fine.
+        assert!(!flags_content_logging(
+            "let transformed = strip(&clipboard);"
+        ));
+    }
+
+    // --- check-clipboard-safety ---
+
+    #[test]
+    fn make_rule_parsing() {
+        assert_eq!(
+            parse_make_rule("check: guardrails smoke-general"),
+            Some(("check", "guardrails smoke-general"))
+        );
+        assert_eq!(parse_make_rule("\t@cargo test"), None); // recipe
+        assert_eq!(parse_make_rule("VERSION ?="), None); // assignment
+        assert_eq!(parse_make_rule(".DEFAULT_GOAL := help"), None); // assignment
+        assert_eq!(
+            parse_make_rule("preview: ## help text"),
+            Some(("preview", ""))
         );
     }
 }

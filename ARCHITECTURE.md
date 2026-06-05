@@ -38,7 +38,7 @@ invariants.
 |---|---|
 | `core/src/lib.rs` | Crate root. Declares `#![forbid(unsafe_code)]` and the `print*`/`dbg!` denies. Re-exports the public API and holds `CAPABILITIES_JSON` (the static self-description). |
 | `core/src/config.rs` | The `Config` / `Operation` / `CaseKind` schema and `parse_config`. This is the data that crosses the FFI. `CONFIG_VERSION = 1`. |
-| `core/src/pipeline.rs` | `transform(input, config)` — folds the ordered operations over the text. Infallible and deterministic. |
+| `core/src/pipeline.rs` | `transform(input, config)` — folds the ordered operations over the text. Infallible and deterministic; holds intermediates in `Zeroizing` buffers so clipboard-derived bytes are wiped after use. |
 | `core/src/ops/mod.rs` | Operations module root; each op is a pure free function. |
 | `core/src/ops/html.rs` | Hand-rolled, pure-safe-Rust HTML→text state machine + curated entity decoder. The rich→plain / script-neutralizing workhorse. |
 | `core/src/ops/markdown.rs` | Markdown→text via `pulldown-cmark`; delegates embedded HTML to `html::strip_html`. |
@@ -71,7 +71,8 @@ Subcommands: `capabilities`, `transform`.
 The portable enforcer of the invariants (no external cargo plugins), so the same
 checks run locally and in CI. Subcommands: `gen-header`, `check-abi`,
 `check-unsafe-forbid`, `check-core-deps`, `check-no-network`, `check-entitlements`,
-and `ci` (fmt + clippy + test + every structural check). See [the dependency
+`check-no-content-logging`, `check-clipboard-safety`, and `ci` (fmt + clippy + test +
+every structural check). See [the dependency
 guardrail](docs/guardrails/dependency-posture.md).
 
 ### `fuzz/` — `safetystrip-fuzz`
@@ -164,6 +165,9 @@ therefore CI). Fix the code to satisfy the check; never weaken the check.
 | Config is data (adding a transform ≠ ABI change) | serde round-trip + version tests | `core` tests |
 | Never panics on input | cargo-fuzz targets + property tests + adversarial corpus | `fuzz/`, `core` tests |
 | No log sink in the core | `#![deny(clippy::print_stdout, print_stderr, dbg_macro)]` + no logging deps | `core/src/lib.rs` |
+| No clipboard content logged or persisted | `check-no-content-logging` (scans shipped Rust + Swift source for sink calls on clipboard-derived content) | `xtask` |
+| Default checks avoid the real clipboard | `check-clipboard-safety` (no default Make target depends on a real-clipboard smoke) | `xtask`, `Makefile` |
+| Pipeline intermediates wiped after use | `Zeroizing` buffers in the pipeline + `ss_buffer_free` zeroizes output | `core/src/pipeline.rs`, `core-ffi` |
 | Deterministic output | `transform(x,c) == transform(x,c)` property test | `core` tests |
 | Minimal macOS entitlements | checked-in entitlements file + `check-entitlements` | `xtask`, `shells/macos/` |
 
