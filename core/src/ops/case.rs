@@ -1,14 +1,122 @@
 //! Case transformations.
 //!
-//! **Implementation owner: pipeline stream (A2).** Scaffold placeholder below is
-//! the identity transform; replace with real Upper/Lower/Title/Sentence logic and
-//! add tests, including non-ASCII behavior.
+//! **Implementation owner: pipeline stream (A2).**
+//!
+//! All transforms iterate over `char`s and use the full Unicode case-mapping
+//! methods ([`char::to_uppercase`] / [`char::to_lowercase`]), not the ASCII-only
+//! variants. Those methods return iterators because one input `char` can map to
+//! several output `char`s (e.g. `'ß'`.to_uppercase() yields `"SS"`, `'İ'`
+//! lowercases to `"i\u{307}"`). The implementations are panic-free (no indexing,
+//! no `unwrap`) and linear in the number of `char`s.
 
 use crate::CaseKind;
 
 /// Recase the whole text according to `kind`.
+///
+/// See the per-kind helpers for the exact, documented rules.
 pub fn change_case(input: &str, kind: CaseKind) -> String {
-    // TODO(A2): implement Upper/Lower/Title/Sentence.
-    let _ = kind;
-    input.to_string()
+    match kind {
+        CaseKind::Upper => to_upper(input),
+        CaseKind::Lower => to_lower(input),
+        CaseKind::Title => to_title(input),
+        CaseKind::Sentence => to_sentence(input),
+    }
+}
+
+/// Full Unicode uppercase of the entire text.
+fn to_upper(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for ch in input.chars() {
+        out.extend(ch.to_uppercase());
+    }
+    out
+}
+
+/// Full Unicode lowercase of the entire text.
+fn to_lower(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for ch in input.chars() {
+        out.extend(ch.to_lowercase());
+    }
+    out
+}
+
+/// Title Case.
+///
+/// Rule (documented, exact):
+/// * A "word" is a maximal run of non-whitespace characters
+///   (`char::is_whitespace()` is the separator). Whitespace and punctuation are
+///   preserved verbatim and in place.
+/// * Within each word, the **first** `char` is uppercased (full Unicode) and every
+///   subsequent `char` is lowercased (full Unicode).
+/// * "First char of a word" is literal: if a word starts with punctuation or a
+///   digit (e.g. `"(hello"`, `"3rd"`), that leading char has no uppercase mapping
+///   and is emitted unchanged, and the rest of the word is lowercased — so
+///   `"(HELLO)"` -> `"(hello)"` and `"3RD"` -> `"3rd"`. This is intentional: we do
+///   not hunt for "the first letter"; we case by position. (Documented in DESIGN.md.)
+fn to_title(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    // `at_word_start` is true at the very start and after any whitespace char.
+    let mut at_word_start = true;
+    for ch in input.chars() {
+        if ch.is_whitespace() {
+            out.push(ch);
+            at_word_start = true;
+        } else if at_word_start {
+            out.extend(ch.to_uppercase());
+            at_word_start = false;
+        } else {
+            out.extend(ch.to_lowercase());
+        }
+    }
+    out
+}
+
+/// Sentence case.
+///
+/// Rule (documented, exact):
+/// * First, the entire text is lowercased (full Unicode).
+/// * Then the first cased letter of each sentence is uppercased. A new sentence
+///   begins at the start of the text and after a sentence terminator (`'.'`, `'!'`,
+///   or `'?'`) **immediately followed by at least one whitespace char**. While in
+///   the "expecting capital" state, the first char that actually has an uppercase
+///   mapping (a cased letter) is uppercased; leading punctuation/digits/whitespace
+///   are emitted unchanged and the state persists until such a letter is found.
+/// * Only `'.'`/`'!'`/`'?'` terminate a sentence, and only when whitespace follows
+///   (so `"e.g."` and `"3.14"` do not start a new sentence; `"end. next"` does).
+///   Newlines count as whitespace, so a terminator at end-of-line capitalizes the
+///   next line's first letter. Example: `"hi! go. ok? yes"` ->
+///   `"Hi! Go. Ok? Yes"`; `"!!! go"` -> `"!!! Go"`.
+fn to_sentence(input: &str) -> String {
+    let lowered = to_lower(input);
+    let mut out = String::with_capacity(lowered.len());
+    // `expect_capital` - we are at/seeking the first cased letter of a sentence.
+    let mut expect_capital = true;
+    // `prev_terminator` - the previous emitted char was `.`/`!`/`?`.
+    let mut prev_terminator = false;
+    for ch in lowered.chars() {
+        // A sentence boundary is "terminator then whitespace": when we see
+        // whitespace right after a terminator, the *next* cased letter starts a
+        // new sentence.
+        if prev_terminator && ch.is_whitespace() {
+            expect_capital = true;
+        }
+
+        if expect_capital {
+            // Try the full-Unicode uppercase. The iterator yields the char itself
+            // unchanged when there is no uppercase mapping (digit/punct/space), in
+            // which case we keep `expect_capital` set and look at the next char.
+            let upper: String = ch.to_uppercase().collect();
+            let has_mapping = !upper.chars().eq(std::iter::once(ch));
+            out.push_str(&upper);
+            if has_mapping {
+                expect_capital = false;
+            }
+        } else {
+            out.push(ch);
+        }
+
+        prev_terminator = matches!(ch, '.' | '!' | '?');
+    }
+    out
 }
