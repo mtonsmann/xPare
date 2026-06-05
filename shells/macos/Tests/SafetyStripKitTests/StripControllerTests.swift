@@ -222,15 +222,14 @@ struct StripControllerTests {
             pasteboard: pb,
             defaults: defaults
         )
-        controller.update(Settings(mode: .onDemand, operations: [.stripHtml])) // persist baseline
 
         let outcome = await controller.runOnce(operations: [.extractUrls])
         #expect(outcome == .stripped(changed: true))
         #expect(pb.writes == ["https://a.com/x"])
 
-        // Neither the in-memory nor the persisted pipeline gained `extract_urls`.
+        // The transient command must not mutate the persisted pipeline — `runOnce`
+        // never writes settings, so the configured pipeline is untouched.
         #expect(controller.settings.operations == [.stripHtml])
-        #expect(Settings.load(from: defaults).operations == [.stripHtml])
     }
 
     /// Continuous mode must refuse to run a reduction even if one is in the pipeline

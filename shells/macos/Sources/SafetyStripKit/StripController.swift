@@ -106,11 +106,22 @@ public final class StripController {
 
     /// Replace settings, persist them, and re-apply side effects so a mode or
     /// hotkey change takes effect immediately.
+    ///
+    /// Only the side effects whose inputs actually changed are re-applied: the
+    /// common case (toggling/editing operations — e.g. typing in a Settings text
+    /// field) persists the new pipeline but does **not** re-register the global
+    /// hotkey or re-evaluate the monitor, which would otherwise thrash on every
+    /// keystroke.
     public func update(_ newSettings: Settings) {
+        let old = settings
         settings = newSettings
         settings.save(to: defaults)
-        installHotkey()
-        applyMonitorForCurrentMode()
+        if newSettings.hotkey != old.hotkey || hotkey == nil {
+            installHotkey()
+        }
+        if newSettings.mode != old.mode || newSettings.pollIntervalMs != old.pollIntervalMs {
+            applyMonitorForCurrentMode()
+        }
     }
 
     // MARK: - The core action

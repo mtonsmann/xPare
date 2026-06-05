@@ -50,8 +50,6 @@ final class AppModel: ObservableObject {
         controller.activate()
     }
 
-    var transformer: Transformer { Transformer() }
-
     /// Toggle continuous vs on-demand.
     func setMode(_ mode: StripMode) {
         settings.mode = mode
@@ -102,8 +100,10 @@ final class AppModel: ObservableObject {
 
     func setSortFlags(descending: Bool, caseInsensitive: Bool) {
         var ops = settings.operations
-        ops.removeAll(where: isSort)
-        ops.append(.sortLines(descending: descending, caseInsensitive: caseInsensitive))
+        // Update the existing sort op in place; never *create* one here (that's the
+        // "Sort lines" toggle's job) so editing flags can't resurrect a disabled sort.
+        guard let idx = ops.firstIndex(where: isSort) else { return }
+        ops[idx] = .sortLines(descending: descending, caseInsensitive: caseInsensitive)
         commit(ops)
     }
 
@@ -319,13 +319,17 @@ private struct MenuContent: View {
             get: { model.isDefangEnabled },
             set: { model.setDefang(enabled: $0) }
         ))
-        // Bounded-choice param as a native submenu (radio via inline Picker).
-        Picker("Defang bracket style", selection: Binding(
-            get: { model.defangStyle },
-            set: { model.setDefangStyle($0) }
-        )) {
-            Text("Square  [.]").tag(BracketStyle.square)
-            Text("Round  (.)").tag(BracketStyle.round)
+        // Bounded-choice param as a native submenu: a nested Menu whose inline Picker
+        // renders the two styles as a radio group with a checkmark on the active one.
+        Menu("Defang bracket style") {
+            Picker("Defang bracket style", selection: Binding(
+                get: { model.defangStyle },
+                set: { model.setDefangStyle($0) }
+            )) {
+                Text("Square  [.]").tag(BracketStyle.square)
+                Text("Round  (.)").tag(BracketStyle.round)
+            }
+            .pickerStyle(.inline)
         }
         .disabled(!model.isDefangEnabled)
 
@@ -348,10 +352,10 @@ private struct MenuContent: View {
 
         Divider()
 
+        // The Settings scene already registers the standard ⌘, — don't double-bind it.
         SettingsLink {
             Text("Settings…")
         }
-        .keyboardShortcut(",", modifiers: [.command])
 
         Button("Quit SafetyStrip") {
             NSApplication.shared.terminate(nil)
