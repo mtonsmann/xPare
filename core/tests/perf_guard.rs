@@ -15,9 +15,11 @@
 
 use std::time::{Duration, Instant};
 
+use safetystrip_core::ops::defang::{defang, refang};
 use safetystrip_core::ops::html::strip_html;
 use safetystrip_core::ops::markdown::strip_markdown;
-use safetystrip_core::{transform, CaseKind, Config, Operation};
+use safetystrip_core::ops::urls::clean_urls;
+use safetystrip_core::{transform, BracketStyle, CaseKind, Config, Operation};
 
 /// Generous per-case ceiling (see module docs for why this can't reasonably flake).
 const BUDGET: Duration = Duration::from_secs(8);
@@ -70,6 +72,37 @@ fn markdown_adversarial_inputs_stay_linear() {
     assert_fast("blockquote_depth", &">".repeat(n), strip_markdown);
     assert_fast("emphasis_storm", &"*".repeat(n), strip_markdown);
     assert_fast("heading_spam", &"# h\n".repeat(n / 4), strip_markdown);
+}
+
+#[test]
+fn ioc_ops_stay_linear() {
+    let n = 200_000;
+    // Token floods: many tiny indicators, one giant token, and adversarial bracket/
+    // dot/colon runs — each must stay linear in the hand-rolled scanners.
+    assert_fast("defang_url_flood", &"http://a.b/x ".repeat(n), |s| {
+        defang(s, BracketStyle::Square)
+    });
+    assert_fast("defang_ip_flood", &"1.2.3.4 ".repeat(n), |s| {
+        defang(s, BracketStyle::Square)
+    });
+    assert_fast("defang_dot_flood", &".".repeat(n), |s| {
+        defang(s, BracketStyle::Square)
+    });
+    assert_fast("defang_colon_flood", &":".repeat(n), |s| {
+        defang(s, BracketStyle::Square)
+    });
+    assert_fast("refang_marker_flood", &"[.]".repeat(n), refang);
+    assert_fast("refang_bracket_flood", &"[".repeat(n), refang);
+    assert_fast(
+        "clean_urls_param_flood",
+        &("https://e.com/?".to_string() + &"utm_source=x&".repeat(n)),
+        clean_urls,
+    );
+    assert_fast(
+        "clean_urls_token_flood",
+        &"https://e.com/?a=1 ".repeat(n),
+        clean_urls,
+    );
 }
 
 #[test]

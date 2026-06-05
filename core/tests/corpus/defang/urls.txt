@@ -1,0 +1,5 @@
+http://example.com/path?q=1
+https://sub.example.co.uk/a.b.c
+www.example.org
+Visit https://a.b:8080/x and (http://c.d).
+plain text with no indicator at all

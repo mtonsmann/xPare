@@ -30,7 +30,7 @@
 //!   cargo +nightly fuzz run transform_pipeline
 use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
-use safetystrip_core::{transform, CaseKind, Config, Operation, CONFIG_VERSION};
+use safetystrip_core::{transform, BracketStyle, CaseKind, Config, Operation, CONFIG_VERSION};
 
 /// Cap on the number of operations applied in a single fuzz case. The pipeline is
 /// linear per op, but each op reallocates the whole string, so an unbounded
@@ -56,6 +56,22 @@ impl From<LocalCase> for CaseKind {
             LocalCase::Lower => CaseKind::Lower,
             LocalCase::Title => CaseKind::Title,
             LocalCase::Sentence => CaseKind::Sentence,
+        }
+    }
+}
+
+/// Mirror of [`safetystrip_core::BracketStyle`] that derives `Arbitrary`.
+#[derive(Arbitrary, Debug)]
+enum LocalBracketStyle {
+    Square,
+    Round,
+}
+
+impl From<LocalBracketStyle> for BracketStyle {
+    fn from(s: LocalBracketStyle) -> Self {
+        match s {
+            LocalBracketStyle::Square => BracketStyle::Square,
+            LocalBracketStyle::Round => BracketStyle::Round,
         }
     }
 }
@@ -96,6 +112,9 @@ enum LocalOp {
     },
     ExtractEmails,
     ExtractUrls,
+    Defang { style: LocalBracketStyle },
+    Refang,
+    CleanUrls,
 }
 
 impl From<LocalOp> for Operation {
@@ -122,6 +141,11 @@ impl From<LocalOp> for Operation {
             LocalOp::SplitOn { delimiter } => Operation::SplitOn { delimiter },
             LocalOp::ExtractEmails => Operation::ExtractEmails,
             LocalOp::ExtractUrls => Operation::ExtractUrls,
+            LocalOp::Defang { style } => Operation::Defang {
+                style: style.into(),
+            },
+            LocalOp::Refang => Operation::Refang,
+            LocalOp::CleanUrls => Operation::CleanUrls,
         }
     }
 }

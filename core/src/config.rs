@@ -81,6 +81,34 @@ pub enum Operation {
     ExtractEmails,
     /// Extract URL-like tokens, one per line (best-effort, documented heuristic).
     ExtractUrls,
+
+    // --- IOC handling (rewrites; see DESIGN.md D12 + the IOC contract) ---
+    /// Defang network indicators (URLs, hosts, IPv4/IPv6, emails) so they are inert
+    /// but human-readable and reversible. Idempotent. (Rule on `ops::defang::defang`.)
+    Defang {
+        #[serde(default)]
+        style: BracketStyle,
+    },
+    /// Reverse `Defang` — re-activate received IOCs. The textual inverse of the
+    /// defang substitution set. (Rule on `ops::defang::refang`.)
+    Refang,
+    /// Strip tracking/analytics query parameters from URL tokens, preserving every
+    /// other parameter, their order, and any fragment. Idempotent; baked-in
+    /// denylist (no network). (Rule on `ops::urls::clean_urls`.)
+    CleanUrls,
+}
+
+/// Bracket convention used by [`Operation::Defang`]. The default (`Square`, `[.]`)
+/// is the de-facto infosec standard; `Round` (`(.)`) is offered as an alternative.
+/// `Refang` reverses **both** styles, so it needs no parameter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum BracketStyle {
+    /// `[.]`, `[@]`, `[://]`, `[:]` — the default.
+    #[default]
+    Square,
+    /// `(.)`, `(@)`, `(://)`, `(:)`.
+    Round,
 }
 
 /// Case transformation kinds.

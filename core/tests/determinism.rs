@@ -14,7 +14,7 @@
 //! and multi-byte / case-expanding Unicode (`ß`, `İ`, `Σ`).
 
 use proptest::prelude::*;
-use safetystrip_core::{transform, CaseKind, Config, Operation, CONFIG_VERSION};
+use safetystrip_core::{transform, BracketStyle, CaseKind, Config, Operation, CONFIG_VERSION};
 
 /// A pool of "interesting" characters plus arbitrary chars, so generated strings hit
 /// the edges of every op while still exploring the whole `char` space.
@@ -81,6 +81,10 @@ fn operation_strategy() -> impl Strategy<Value = Operation> {
         param_string().prop_map(|delimiter| Operation::SplitOn { delimiter }),
         Just(Operation::ExtractEmails),
         Just(Operation::ExtractUrls),
+        prop_oneof![Just(BracketStyle::Square), Just(BracketStyle::Round)]
+            .prop_map(|style| Operation::Defang { style }),
+        Just(Operation::Refang),
+        Just(Operation::CleanUrls),
     ]
 }
 
@@ -128,6 +132,13 @@ proptest! {
             Operation::DedupeLines,
             Operation::ChangeCase { case: CaseKind::Upper },
             Operation::ChangeCase { case: CaseKind::Lower },
+            // Defang is idempotent by construction (the already-defanged guard);
+            // CleanUrls is too (a cleaned URL has no trackers left). Refang is
+            // deliberately excluded — it is a global reverse-substitution, so
+            // nested markers like `[[.]]` collapse on each pass (documented).
+            Operation::Defang { style: BracketStyle::Square },
+            Operation::Defang { style: BracketStyle::Round },
+            Operation::CleanUrls,
         ] {
             let cfg = Config { version: CONFIG_VERSION, operations: vec![op.clone()] };
             let once = transform(&input, &cfg);
