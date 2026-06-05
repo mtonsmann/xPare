@@ -50,10 +50,18 @@ should distrust, so the posture is deliberately minimal and is checked mechanica
 6. **No persistence or logging of pasteboard content** — see
    [privacy-and-data-handling](privacy-and-data-handling.md). Free the core's output
    buffer with `ss_buffer_free` (it is zeroized on free).
+7. **Refuse oversized clipboards gracefully.** Before handing pasteboard text to the
+   core, check it against a RAM-proportional ceiling
+   (`StripController.defaultMaxInputBytes()` = `min(SS_MAX_INPUT_BYTES,
+   physicalMemory / 10)`). A larger clipboard yields a content-free "too large"
+   outcome and is **left untouched** — never risk an out-of-memory abort on a huge
+   paste. This mirrors the OS clipboard's own memory-bound nature; the core's
+   `SS_MAX_INPUT_BYTES` (ABI v2) is the hard backstop beneath it. See `DESIGN.md`
+   → *Performance & large inputs → Input size ceiling*.
 
 ### Continuous mode
 
-7. **Owned poller on `changeCount`, fully torn down when off.** Continuous mode polls
+8. **Owned poller on `changeCount`, fully torn down when off.** Continuous mode polls
    `NSPasteboard.general.changeCount` on a **500 ms** default interval. When the mode
    is disabled the timer/poller object must be invalidated **and** niled — no loop
    runs when the feature is off. On-demand mode (the default) does no polling at all.

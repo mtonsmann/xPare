@@ -10,8 +10,10 @@ import Foundation
     private let transformer = Transformer()
 
     @Test func abiVersionMatchesHeader() {
-        // The frozen header pins SS_ABI_VERSION == 1.
-        #expect(transformer.abiVersion() == 1)
+        // The frozen header pins SS_ABI_VERSION == 2 (v2 added the input-size ceiling:
+        // SS_MAX_INPUT_BYTES + the ErrInputTooLarge status).
+        #expect(transformer.abiVersion() == 2)
+        #expect(Transformer.coreMaxInputBytes > 0)
     }
 
     @Test func capabilitiesIsJSONWithOperations() throws {

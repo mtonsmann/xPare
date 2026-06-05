@@ -115,4 +115,33 @@ struct StripControllerTests {
         }
         #expect(pb.writes.isEmpty)
     }
+
+    /// A clipboard larger than the controller's ceiling is refused gracefully: no
+    /// transform is attempted and the clipboard is left untouched (safety-first —
+    /// we never risk an out-of-memory abort on a huge paste).
+    @Test func oversizedClipboardIsRefusedAndLeftUntouched() throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let text = String(repeating: "x", count: 1000) // 1000 bytes
+        let pb = FakePasteboard(snapshot: PasteboardSnapshot(text: text, kind: .plain))
+        let controller = StripController(
+            settings: Settings(mode: .onDemand, operations: [.collapseWhitespace]),
+            pasteboard: pb,
+            defaults: defaults,
+            maxInputBytes: 16 // far below the 1000-byte clipboard
+        )
+
+        let outcome = controller.stripNow(trigger: .manual)
+        #expect(outcome == .tooLarge(bytes: 1000))
+        #expect(pb.writes.isEmpty, "oversized clipboard must be left untouched")
+    }
+
+    /// The default ceiling is sane: positive, comfortably above a real clipboard,
+    /// and never above the core's hard backstop (`SS_MAX_INPUT_BYTES`).
+    @Test func defaultCeilingIsSaneAndClampedToCoreBackstop() {
+        let ceiling = StripController.defaultMaxInputBytes()
+        #expect(ceiling > 1_000_000, "ceiling should comfortably fit real clipboards")
+        #expect(ceiling <= Transformer.coreMaxInputBytes, "must not exceed the core's hard cap")
+    }
 }

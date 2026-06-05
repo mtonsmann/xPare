@@ -11,6 +11,9 @@ public enum TransformError: Error, Equatable, CustomStringConvertible {
     case invalidConfig
     /// An unexpected internal error / caught panic (`SS_STATUS_ERR_INTERNAL`).
     case internalError
+    /// Input exceeded the core's hard size ceiling
+    /// (`SS_STATUS_ERR_INPUT_TOO_LARGE`, ABI v2).
+    case inputTooLarge
     /// The core returned a status not covered by the frozen ABI.
     case unknownStatus(UInt32)
     /// `ss_transform` reported OK but handed back a null output buffer.
@@ -25,6 +28,7 @@ public enum TransformError: Error, Equatable, CustomStringConvertible {
         case .nullArgument: return "core rejected a null argument"
         case .invalidConfig: return "core rejected the config JSON"
         case .internalError: return "core hit an internal error"
+        case .inputTooLarge: return "input exceeds the core's maximum size"
         case .unknownStatus(let raw): return "core returned unknown status \(raw)"
         case .missingOutputBuffer: return "core returned OK but no output buffer"
         case .encodingFailed: return "failed to encode config as UTF-8 JSON"
@@ -39,6 +43,7 @@ public enum TransformError: Error, Equatable, CustomStringConvertible {
         case SS_STATUS_ERR_NULL_ARG: return .nullArgument
         case SS_STATUS_ERR_INVALID_CONFIG: return .invalidConfig
         case SS_STATUS_ERR_INTERNAL: return .internalError
+        case SS_STATUS_ERR_INPUT_TOO_LARGE: return .inputTooLarge
         default: return .unknownStatus(status.rawValue)
         }
     }
@@ -61,6 +66,11 @@ public struct Transformer: Sendable {
     public func abiVersion() -> UInt32 {
         ss_abi_version()
     }
+
+    /// The core's hard input ceiling in bytes (`SS_MAX_INPUT_BYTES`). Exposed so the
+    /// shell can clamp its own RAM-proportional limit to the core's backstop without
+    /// importing the C module itself.
+    public static var coreMaxInputBytes: Int { Int(SS_MAX_INPUT_BYTES) }
 
     /// The core's self-describing capabilities JSON (`ss_capabilities_json`).
     /// The returned pointer is process-static and must not be freed, so we copy

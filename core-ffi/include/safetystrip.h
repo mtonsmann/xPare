@@ -16,8 +16,33 @@
  * Version of this C ABI. Bump on **any** change to the function signatures,
  * struct/enum layouts, or memory-ownership contract below. Adding a transform is
  * NOT an ABI change and must NOT bump this.
+ *
+ * History: v1 → v2 added [`SS_MAX_INPUT_BYTES`] and a new trailing status,
+ * [`SsStatus::ErrInputTooLarge`]. Existing status values are unchanged, so a v1
+ * caller still interprets `Ok`/`ErrNullArg`/`ErrInvalidConfig`/`ErrInternal`
+ * correctly; only the new size ceiling is added.
  */
-#define SS_ABI_VERSION 1
+#define SS_ABI_VERSION 2
+
+/**
+ * Hard upper bound, in bytes, on the input [`ss_transform`] will accept. A larger
+ * input returns [`SsStatus::ErrInputTooLarge`] *before* anything is read or
+ * allocated, so a pathological size can never cause an out-of-memory abort or an
+ * allocation-size overflow at the boundary.
+ *
+ * This is a **generous, platform-neutral backstop, not the everyday limit.** A
+ * transform's peak working set is a few times its input, so the real ceiling is
+ * memory-bound: the native shell enforces a tighter, RAM-proportional limit (it is
+ * the only layer permitted to ask the OS how much memory exists) and refuses an
+ * oversized clipboard gracefully. The headless CLI is intentionally uncapped, for
+ * large file/log work where the caller manages its own memory.
+ *
+ * Written as a plain decimal literal (not `2 * 1024 * 1024 * 1024`) so the
+ * cbindgen-generated `#define` is a single 64-bit-typed C constant: the expression
+ * form would be evaluated in 32-bit `int` by a C compiler and overflow (2^31 >
+ * INT_MAX), corrupting the value for C/C++ consumers and the Swift macro importer.
+ */
+#define SS_MAX_INPUT_BYTES 2147483648
 
 /**
  * Result status for [`ss_transform`]. `repr(C)` so it is a plain C enum.
@@ -39,6 +64,11 @@ typedef enum SsStatus {
    * An unexpected internal error (e.g. a caught panic). Should never happen.
    */
   SS_STATUS_ERR_INTERNAL = 3,
+  /**
+   * `input_len` exceeded [`SS_MAX_INPUT_BYTES`]; nothing was read, allocated, or
+   * transformed. (Added in ABI v2.)
+   */
+  SS_STATUS_ERR_INPUT_TOO_LARGE = 4,
 } SsStatus;
 
 #ifdef __cplusplus
@@ -69,6 +99,9 @@ const char *ss_capabilities_json(void);
  * * `out` / `out_len` — on `Ok`, `*out` receives a heap buffer of `*out_len` UTF-8
  *   bytes (not NUL-terminated) that the caller must release with [`ss_buffer_free`].
  *   On any error, `*out` is set to null and `*out_len` to 0. Both must not be null.
+ *
+ * Inputs larger than [`SS_MAX_INPUT_BYTES`] return [`SsStatus::ErrInputTooLarge`]
+ * without reading `input` or allocating.
  *
  * # Safety
  * `input` must be valid for reads of `input_len` bytes (or null with `input_len`

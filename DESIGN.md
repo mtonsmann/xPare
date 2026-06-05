@@ -237,6 +237,27 @@ output` (whole buffers), so the core is not a streaming/line-at-a-time API. For 
 target sizes this is simpler and fast enough; true streaming (bounded memory
 regardless of input size) is noted under *Adopt if the project grows*.
 
+**Input size ceiling — memory-bound, like the OS clipboard.** macOS imposes no fixed
+cap on *text* clipboard data (and Finder copies file *references*, not bytes), so
+"match the platform" means scaling with available memory, not a small magic number.
+Because a transform's peak working set is ~3–5× its input, the safe ceiling is a
+fraction of RAM, and safety-first means **refusing gracefully rather than risking an
+out-of-memory abort**. Three layers:
+
+- **Core (pure):** unbounded — a plain memory-bound function.
+- **C ABI (v2):** a fixed, generous backstop `SS_MAX_INPUT_BYTES` (2 GiB). A larger
+  input returns `ErrInputTooLarge` *before* any read or allocation, so it can never
+  abort or overflow at the boundary. It must be a constant because the
+  platform-neutral core may not ask the OS about memory.
+- **macOS shell:** the real, RAM-proportional policy —
+  `min(SS_MAX_INPUT_BYTES, physicalMemory / 10)`, which keeps a worst-case strip under
+  ~half of RAM and scales with the machine. An oversized clipboard yields a
+  content-free "too large" status and is left untouched.
+- **CLI:** intentionally uncapped — the right tool for multi-GB *file* work, where the
+  caller manages its own memory.
+
+This ceiling is what drove the v1 → v2 ABI bump (see the FFI guardrail).
+
 Benchmarks for these sizes live in `core/benches/transform_large.rs`
 (`make bench-large`); a pass/fail 256 MB scaling check is the `--ignored`
 `handles_256mb_log_pipeline` test.

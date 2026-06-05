@@ -19,6 +19,9 @@ public enum StripOutcome: Equatable, Sendable {
     case empty
     /// The core rejected the input or config.
     case failed
+    /// The clipboard exceeded the shell's safe size ceiling and was left untouched
+    /// (no transform attempted). Carries only the byte count, never content.
+    case tooLarge(bytes: Int)
 }
 
 /// Ties the pieces together: read the pasteboard → build a ``TransformConfig``
@@ -36,6 +39,9 @@ public final class StripController {
     private let pasteboard: PasteboardProtocol
     private let transformer: Transformer
     private let defaults: UserDefaults
+    /// Largest clipboard (in UTF-8 bytes) this controller will hand to the core.
+    /// See ``defaultMaxInputBytes()``.
+    private let maxInputBytes: Int
 
     private var monitor: ClipboardMonitor?
     private var hotkey: HotkeyManager?
@@ -48,12 +54,26 @@ public final class StripController {
         settings: Settings? = nil,
         pasteboard: PasteboardProtocol = SystemPasteboard(),
         transformer: Transformer = Transformer(),
-        defaults: UserDefaults = .standard
+        defaults: UserDefaults = .standard,
+        maxInputBytes: Int = StripController.defaultMaxInputBytes()
     ) {
         self.pasteboard = pasteboard
         self.transformer = transformer
         self.defaults = defaults
+        self.maxInputBytes = maxInputBytes
         self.settings = settings ?? Settings.load(from: defaults)
+    }
+
+    /// Default input ceiling: the smaller of the core's hard backstop
+    /// (`SS_MAX_INPUT_BYTES`) and a RAM-proportional bound (~1/10 of physical memory).
+    /// A transform's peak working set is several times its input, so this keeps a
+    /// worst-case strip well under half of physical RAM, refusing larger clipboards
+    /// gracefully rather than risking an out-of-memory abort. It scales with the
+    /// machine, mirroring how the OS pasteboard is itself memory-bound.
+    public static func defaultMaxInputBytes() -> Int {
+        let physical = ProcessInfo.processInfo.physicalMemory
+        let ramBound = Int(min(physical / 10, UInt64(Int.max)))
+        return min(Transformer.coreMaxInputBytes, ramBound)
     }
 
     // MARK: - Lifecycle
@@ -92,6 +112,13 @@ public final class StripController {
     public func stripNow(trigger: StripTrigger = .manual) -> StripOutcome {
         guard let snapshot = pasteboard.readBest() else {
             return .empty
+        }
+
+        // Safety ceiling: refuse an oversized clipboard rather than risk an
+        // out-of-memory abort transforming it. The clipboard is left untouched.
+        let byteCount = snapshot.text.utf8.count
+        if byteCount > maxInputBytes {
+            return .tooLarge(bytes: byteCount)
         }
 
         let config = effectiveConfig(for: snapshot)

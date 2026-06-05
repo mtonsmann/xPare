@@ -14,18 +14,22 @@ change to it is a deliberate compatibility event.
 
 | Symbol | Contract |
 |---|---|
-| `ss_abi_version() -> u32` | Integer ABI version for capability negotiation. Currently `SS_ABI_VERSION = 1`. |
+| `ss_abi_version() -> u32` | Integer ABI version for capability negotiation. Currently `SS_ABI_VERSION = 2`. |
+| `SS_MAX_INPUT_BYTES` (constant) | Hard upper bound on `ss_transform` input size (2 GiB). A larger input returns `ErrInputTooLarge` with nothing read or allocated. A generous **platform-neutral backstop**; the native shell enforces a tighter, RAM-proportional limit. (Added in v2.) |
 | `ss_capabilities_json() -> *const c_char` | Pointer to a **static**, NUL-terminated JSON self-description (name, version, config-schema version, supported operations). Valid for the process lifetime; **must not be freed**; never null. |
 | `ss_transform(input, input_len, config_json, out, out_len) -> SsStatus` | Transform `input` per `config_json`. On `Ok`, `*out`/`*out_len` is a heap buffer the caller must free. On any error, `*out`=null/`*out_len`=0. |
 | `ss_buffer_free(ptr, len)` | Free (and zeroize) a buffer from `ss_transform`. Null `ptr` is a no-op. Free at most once with the exact matching `(ptr, len)`. |
-| `SsStatus` (`repr(C)` enum) | `Ok=0`, `ErrNullArg=1`, `ErrInvalidConfig=2`, `ErrInternal=3`. No global error state. |
+| `SsStatus` (`repr(C)` enum) | `Ok=0`, `ErrNullArg=1`, `ErrInvalidConfig=2`, `ErrInternal=3`, `ErrInputTooLarge=4`. No global error state. |
 
 Memory/ownership/error contract (do not change one side only): input is UTF-8,
 **lossy-decoded** (invalid bytes → U+FFFD) so adversarial bytes never make it fail;
 `input` may be null only if `input_len == 0`; out-params must be writable and are
 initialized on every return path; the output buffer is a leaked `Box<[u8]>`
 reclaimed (and zeroized) by `ss_buffer_free`; a panic in the core is caught and
-returned as `ErrInternal` rather than unwinding across FFI.
+returned as `ErrInternal` rather than unwinding across FFI; and an `input_len`
+above `SS_MAX_INPUT_BYTES` is rejected with `ErrInputTooLarge` **before** any read
+or allocation, so a pathological size cannot cause an out-of-memory abort or an
+allocation-size overflow at the boundary.
 
 ## The rules
 
@@ -45,6 +49,10 @@ returned as `ErrInternal` rather than unwinding across FFI.
    - run `cargo xtask gen-header` to regenerate the header,
    - **call it out in the PR**, and confirm a non-Swift shell could still consume the
      boundary.
+
+   *History:* v1 → v2 added `SS_MAX_INPUT_BYTES` and a new **trailing** `SsStatus`
+   value (`ErrInputTooLarge = 4`) for the input-size ceiling. Existing values were
+   left unchanged, so it is a backward-additive change — the model case for this rule.
 4. **Keep the surface narrow.** Resist adding new entry points. The four symbols
    above are sufficient because behavior is data. New capability should almost always
    be a new operation, queried via `ss_capabilities_json`, not a new function.

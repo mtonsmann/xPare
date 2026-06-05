@@ -16,6 +16,7 @@ use std::os::raw::c_char;
 
 use safetystrip_ffi::{
     ss_abi_version, ss_buffer_free, ss_capabilities_json, ss_transform, SsStatus,
+    SS_MAX_INPUT_BYTES,
 };
 
 // ---------------------------------------------------------------------------
@@ -123,10 +124,40 @@ const IDENTITY_CFG: &str = r#"{"version":1,"operations":[]}"#;
 // ---------------------------------------------------------------------------
 
 #[test]
-fn abi_version_is_one() {
-    assert_eq!(ss_abi_version(), 1);
+fn abi_version_is_two() {
+    assert_eq!(ss_abi_version(), 2);
     // Cross-check against the public constant so a bump can never silently pass.
     assert_eq!(ss_abi_version(), safetystrip_ffi::SS_ABI_VERSION);
+}
+
+// ---------------------------------------------------------------------------
+// 1b. Input size ceiling (ABI v2).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn oversized_input_is_rejected_before_read_or_alloc() {
+    // Do NOT allocate >2 GiB: the size check runs *before* `input` is read, so we pass
+    // a tiny valid buffer with an over-limit `input_len`. `ss_transform` must return
+    // ErrInputTooLarge without dereferencing the pointer or allocating.
+    let tiny = [0u8; 1];
+    let cfg = config(IDENTITY_CFG);
+    let mut out: *mut u8 = std::ptr::null_mut();
+    let mut out_len: usize = 7; // sentinel — must be cleared to 0 on error
+                                // SAFETY: `input_len` > SS_MAX_INPUT_BYTES, so the size check returns before
+                                // `input` is read; the buffer is valid for 1 byte regardless, `cfg` is a valid
+                                // NUL-terminated string, and the out-params are valid for writes.
+    let status = unsafe {
+        ss_transform(
+            tiny.as_ptr(),
+            SS_MAX_INPUT_BYTES + 1,
+            cfg.as_ptr(),
+            &mut out,
+            &mut out_len,
+        )
+    };
+    assert_eq!(status, SsStatus::ErrInputTooLarge);
+    assert!(out.is_null(), "on error *out must be null");
+    assert_eq!(out_len, 0, "on error *out_len must be reset to 0");
 }
 
 // ---------------------------------------------------------------------------

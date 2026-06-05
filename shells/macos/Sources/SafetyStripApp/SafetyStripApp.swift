@@ -73,6 +73,8 @@ final class AppModel: ObservableObject {
             lastStatus = "Clipboard empty"
         case .failed:
             lastStatus = "Could not strip"
+        case .tooLarge(let bytes):
+            lastStatus = "Clipboard too large (\(bytes / (1024 * 1024)) MB)"
         }
     }
 }
