@@ -37,14 +37,21 @@ public enum StripOutcome: Equatable, Sendable {
 @MainActor
 public final class StripController {
     private let pasteboard: PasteboardProtocol
-    private let transformer: Transformer
+    private let transformer: any Transforming
     private let defaults: UserDefaults
     /// Largest clipboard (in UTF-8 bytes) this controller will hand to the core.
     /// See ``defaultMaxInputBytes()``.
     private let maxInputBytes: Int
+    /// How long a strip must run before the "Stripping…" indicator is shown, so the
+    /// instant common case never flickers. Default 400 ms.
+    private let busyThreshold: Duration
 
     private var monitor: ClipboardMonitor?
     private var hotkey: HotkeyManager?
+
+    /// Called on the main actor when the controller starts (`true`) or stops
+    /// (`false`) showing the threshold-gated "Stripping…" indicator. Set by the UI.
+    public var onStrippingChange: ((Bool) -> Void)?
 
     /// Current settings. Mutating via ``update(_:)`` re-applies side effects
     /// (monitor/hotkey) and persists.
@@ -53,14 +60,16 @@ public final class StripController {
     public init(
         settings: Settings? = nil,
         pasteboard: PasteboardProtocol = SystemPasteboard(),
-        transformer: Transformer = Transformer(),
+        transformer: any Transforming = Transformer(),
         defaults: UserDefaults = .standard,
-        maxInputBytes: Int = StripController.defaultMaxInputBytes()
+        maxInputBytes: Int = StripController.defaultMaxInputBytes(),
+        busyThreshold: Duration = .milliseconds(400)
     ) {
         self.pasteboard = pasteboard
         self.transformer = transformer
         self.defaults = defaults
         self.maxInputBytes = maxInputBytes
+        self.busyThreshold = busyThreshold
         self.settings = settings ?? Settings.load(from: defaults)
     }
 
@@ -106,10 +115,13 @@ public final class StripController {
 
     // MARK: - The core action
 
-    /// Read the pasteboard, transform per settings, and write the plain text
-    /// back in place. Returns an outcome describing what happened (no content).
+    /// Read the pasteboard, transform per settings **off the main thread**, and write
+    /// the plain result back in place. Returns an outcome describing what happened (no
+    /// content). The transform runs on a background task so a large input cannot freeze
+    /// the menu-bar UI; if it outlasts `busyThreshold`, `onStrippingChange(true)` fires
+    /// (and `(false)` when it finishes) so the UI can show a "Stripping…" indicator.
     @discardableResult
-    public func stripNow(trigger: StripTrigger = .manual) -> StripOutcome {
+    public func stripNow(trigger: StripTrigger = .manual) async -> StripOutcome {
         guard let snapshot = pasteboard.readBest() else {
             return .empty
         }
@@ -122,19 +134,42 @@ public final class StripController {
         }
 
         let config = effectiveConfig(for: snapshot)
-        let output: String
-        do {
-            output = try transformer.transform(snapshot.text, config: config)
-        } catch {
-            // Deliberately do NOT include the clipboard text (or the input) in
-            // any surfaced error — only the (content-free) error category.
+
+        // Threshold-gated "Stripping…" signal: flip to busy only if the work outlasts
+        // `busyThreshold`, so the instant common case never flickers. The task reports
+        // whether it actually signaled, so we clear the state iff we set it.
+        let threshold = busyThreshold
+        let busyTask = Task { @MainActor [weak self] () -> Bool in
+            do {
+                try await Task.sleep(for: threshold)
+            } catch {
+                return false // cancelled before the threshold elapsed → never signaled
+            }
+            self?.onStrippingChange?(true)
+            return true
+        }
+
+        // The transform is the only heavy step and touches no main-affine state, so
+        // run it OFF the main actor to keep the menu-bar UI responsive on large inputs.
+        let input = snapshot.text
+        let transformer = self.transformer
+        let output: String? = await Task.detached(priority: .userInitiated) {
+            try? transformer.transform(input, config: config)
+        }.value
+
+        busyTask.cancel()
+        if await busyTask.value {
+            onStrippingChange?(false)
+        }
+
+        guard let output else {
+            // Only the (content-free) failure category is surfaced — never the input.
             return .failed
         }
 
-        // Only rewrite when the result actually differs from what a plain paste
-        // would have produced, to avoid bumping the change count needlessly.
-        // For HTML/RTF sources there was no plain string to compare to, so we
-        // always write the stripped plain text.
+        // Only rewrite when the result actually differs from what a plain paste would
+        // have produced, to avoid bumping the change count needlessly. For HTML/RTF
+        // sources there was no plain string to compare to, so we always write.
         let priorPlain = (snapshot.kind == .plain) ? snapshot.text : nil
         if let priorPlain, priorPlain == output {
             return .stripped(changed: false)
@@ -162,9 +197,10 @@ public final class StripController {
         if hotkey == nil {
             hotkey = HotkeyManager { [weak self] in
                 guard let self else { return }
-                // Hotkey is the on-demand trigger; honor it regardless of mode
-                // so the user can always force a strip.
-                _ = self.stripNow(trigger: .manual)
+                // Hotkey is the on-demand trigger; honor it regardless of mode so the
+                // user can always force a strip. Spawn a task so the (off-main)
+                // transform never blocks the run loop the hotkey fired on.
+                Task { @MainActor in _ = await self.stripNow(trigger: .manual) }
             }
         }
         hotkey?.register(keyCode: combo.keyCode, modifiers: combo.modifiers)
@@ -176,7 +212,7 @@ public final class StripController {
             if monitor == nil {
                 monitor = ClipboardMonitor(pasteboard: pasteboard) { [weak self] in
                     guard let self else { return }
-                    _ = self.stripNow(trigger: .clipboardChanged)
+                    Task { @MainActor in _ = await self.stripNow(trigger: .clipboardChanged) }
                 }
             }
             monitor?.start(intervalMs: settings.pollIntervalMs)

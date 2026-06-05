@@ -130,3 +130,13 @@ public struct Transformer: Sendable {
         return result
     }
 }
+
+/// Abstraction over [`Transformer`] so the shell can run the transform from a
+/// background task (and tests can inject a stub). `Sendable` because an
+/// implementation is invoked off the main actor.
+public protocol Transforming: Sendable {
+    /// Transform `input` under `config`, returning the plain-text result.
+    func transform(_ input: String, config: TransformConfig) throws -> String
+}
+
+extension Transformer: Transforming {}

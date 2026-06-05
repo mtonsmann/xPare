@@ -30,6 +30,9 @@ final class AppModel: ObservableObject {
     @Published var settings: SafetyStripKit.Settings
     /// A short, content-free status line for the menu (never clipboard text).
     @Published var lastStatus: String = "Ready"
+    /// True while a strip runs long enough to be worth showing — drives the
+    /// "Stripping…" indicator. Set from the controller's threshold-gated callback.
+    @Published var isStripping: Bool = false
 
     private let controller: StripController
 
@@ -37,6 +40,7 @@ final class AppModel: ObservableObject {
         let controller = StripController()
         self.controller = controller
         self.settings = controller.settings
+        controller.onStrippingChange = { [weak self] busy in self?.isStripping = busy }
         controller.activate()
     }
 
@@ -64,17 +68,20 @@ final class AppModel: ObservableObject {
         settings.operations.contains(op)
     }
 
-    /// Run a strip right now from the menu.
+    /// Run a strip right now from the menu. The transform runs off the main thread;
+    /// we await the outcome and update the (content-free) status on the main actor.
     func stripNow() {
-        switch controller.stripNow(trigger: .manual) {
-        case .stripped(let changed):
-            lastStatus = changed ? "Stripped clipboard" : "Already plain"
-        case .empty:
-            lastStatus = "Clipboard empty"
-        case .failed:
-            lastStatus = "Could not strip"
-        case .tooLarge(let bytes):
-            lastStatus = "Clipboard too large (\(bytes / (1024 * 1024)) MB)"
+        Task { @MainActor in
+            switch await controller.stripNow(trigger: .manual) {
+            case .stripped(let changed):
+                lastStatus = changed ? "Stripped clipboard" : "Already plain"
+            case .empty:
+                lastStatus = "Clipboard empty"
+            case .failed:
+                lastStatus = "Could not strip"
+            case .tooLarge(let bytes):
+                lastStatus = "Clipboard too large (\(bytes / (1024 * 1024)) MB)"
+            }
         }
     }
 }
@@ -101,10 +108,11 @@ private struct MenuContent: View {
             model.stripNow()
         }
         .keyboardShortcut("v", modifiers: [.option, .command])
+        .disabled(model.isStripping)
 
         Divider()
 
-        Text(model.lastStatus)
+        Text(model.isStripping ? "Stripping…" : model.lastStatus)
 
         Divider()
 

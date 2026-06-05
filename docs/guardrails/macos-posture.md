@@ -66,6 +66,19 @@ should distrust, so the posture is deliberately minimal and is checked mechanica
    is disabled the timer/poller object must be invalidated **and** niled — no loop
    runs when the feature is off. On-demand mode (the default) does no polling at all.
 
+### Responsiveness
+
+9. **Transform off the main thread; indicate only when it's slow.** `stripNow` runs
+   the core transform on a background task — the menu-bar UI must never block, even on
+   a large clipboard. It is **threshold-gated**: `onStrippingChange(true)` fires only
+   if a run outlasts `busyThreshold` (default 400 ms), and `(false)` when it finishes,
+   so the instant common case shows nothing and only a multi-second run surfaces a
+   "Stripping…" state. The pasteboard read and the in-place write stay on the main
+   actor (AppKit is main-affine); only the pure transform is backgrounded. The
+   indicator is **indeterminate** by design — the FFI is one opaque call, so an honest
+   percentage isn't available without a progress-callback ABI or the deferred
+   streaming API.
+
 ## Why (short form)
 
 Every avoided permission is a permission the user never has to grant and an attack

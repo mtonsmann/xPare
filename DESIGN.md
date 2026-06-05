@@ -258,6 +258,15 @@ out-of-memory abort**. Three layers:
 
 This ceiling is what drove the v1 → v2 ABI bump (see the FFI guardrail).
 
+**Shell responsiveness.** Because a strip can take a few seconds near the top of the
+allowed range, the macOS shell runs the transform on a background task (the pasteboard
+read and in-place write stay on the main actor) and shows a threshold-gated,
+*indeterminate* "Stripping…" indicator only when a run exceeds ~400 ms — nothing for
+the instant common case. A *determinate* progress bar was deliberately rejected: the
+FFI is a single opaque call, so an honest percentage would need a progress-callback ABI
+or the deferred streaming API, both heavier than the payoff for a delay that is
+imperceptible on normal clipboards. See the macOS-posture guardrail.
+
 Benchmarks for these sizes live in `core/benches/transform_large.rs`
 (`make bench-large`); a pass/fail 256 MB scaling check is the `--ignored`
 `handles_256mb_log_pipeline` test.

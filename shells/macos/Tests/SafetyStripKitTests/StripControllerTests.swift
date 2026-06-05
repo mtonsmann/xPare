@@ -17,7 +17,7 @@ struct StripControllerTests {
 
     /// End-to-end through the real core: HTML on the pasteboard is stripped and
     /// the plain result is written back in place.
-    @Test func stripsHtmlInPlace() throws {
+    @Test func stripsHtmlInPlace() async throws {
         let (defaults, suite) = try isolatedDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
 
@@ -30,14 +30,14 @@ struct StripControllerTests {
             defaults: defaults
         )
 
-        let outcome = controller.stripNow(trigger: .manual)
+        let outcome = await controller.stripNow(trigger: .manual)
         #expect(outcome == .stripped(changed: true))
         #expect(pb.writes == ["hi there"])
     }
 
     /// HTML source forces strip_html even if the user didn't list it, because
     /// the shell contract reads public.html and hands it to the core stripper.
-    @Test func htmlSourceForcesStripHtml() throws {
+    @Test func htmlSourceForcesStripHtml() async throws {
         let (defaults, suite) = try isolatedDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
 
@@ -55,14 +55,14 @@ struct StripControllerTests {
         #expect(config.operations.first == .stripHtml,
                 "HTML source must be run through strip_html first")
 
-        let outcome = controller.stripNow(trigger: .manual)
+        let outcome = await controller.stripNow(trigger: .manual)
         #expect(outcome == .stripped(changed: true))
         #expect(pb.writes == ["Bold text"])
     }
 
     /// A plain string already equal to the stripped result is not rewritten, so
     /// we don't churn the change count.
-    @Test func plainUnchangedIsNotRewritten() throws {
+    @Test func plainUnchangedIsNotRewritten() async throws {
         let (defaults, suite) = try isolatedDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
 
@@ -74,12 +74,12 @@ struct StripControllerTests {
             defaults: defaults
         )
 
-        let outcome = controller.stripNow(trigger: .manual)
+        let outcome = await controller.stripNow(trigger: .manual)
         #expect(outcome == .stripped(changed: false))
         #expect(pb.writes.isEmpty, "unchanged plain text must not be rewritten")
     }
 
-    @Test func emptyPasteboardYieldsEmptyOutcome() throws {
+    @Test func emptyPasteboardYieldsEmptyOutcome() async throws {
         let (defaults, suite) = try isolatedDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
 
@@ -89,7 +89,7 @@ struct StripControllerTests {
             pasteboard: pb,
             defaults: defaults
         )
-        #expect(controller.stripNow() == .empty)
+        #expect(await controller.stripNow() == .empty)
         #expect(pb.writes.isEmpty)
     }
 
@@ -119,7 +119,7 @@ struct StripControllerTests {
     /// A clipboard larger than the controller's ceiling is refused gracefully: no
     /// transform is attempted and the clipboard is left untouched (safety-first —
     /// we never risk an out-of-memory abort on a huge paste).
-    @Test func oversizedClipboardIsRefusedAndLeftUntouched() throws {
+    @Test func oversizedClipboardIsRefusedAndLeftUntouched() async throws {
         let (defaults, suite) = try isolatedDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
 
@@ -132,7 +132,7 @@ struct StripControllerTests {
             maxInputBytes: 16 // far below the 1000-byte clipboard
         )
 
-        let outcome = controller.stripNow(trigger: .manual)
+        let outcome = await controller.stripNow(trigger: .manual)
         #expect(outcome == .tooLarge(bytes: 1000))
         #expect(pb.writes.isEmpty, "oversized clipboard must be left untouched")
     }
@@ -143,5 +143,69 @@ struct StripControllerTests {
         let ceiling = StripController.defaultMaxInputBytes()
         #expect(ceiling > 1_000_000, "ceiling should comfortably fit real clipboards")
         #expect(ceiling <= Transformer.coreMaxInputBytes, "must not exceed the core's hard cap")
+    }
+
+    /// The transform runs OFF the main thread, so a long run can't freeze the
+    /// menu-bar UI. Proven directly: the injected transformer records the thread it
+    /// ran on, which must not be the main thread.
+    @Test func transformRunsOffTheMainThread() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let slow = SlowTransformer(delay: 0.02)
+        let pb = FakePasteboard(snapshot: PasteboardSnapshot(text: "<p>x</p>", kind: .html))
+        let controller = StripController(
+            settings: Settings(mode: .onDemand, operations: [.stripHtml]),
+            pasteboard: pb,
+            transformer: slow,
+            defaults: defaults
+        )
+
+        let outcome = await controller.stripNow(trigger: .manual)
+        #expect(outcome == .stripped(changed: true))
+        #expect(slow.ranOnMainThread == false, "the transform must run off the main thread")
+    }
+
+    /// A run that outlasts the threshold shows the busy indicator, then clears it.
+    @Test func busyIndicatorFiresForSlowRuns() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let slow = SlowTransformer(delay: 0.15)
+        let pb = FakePasteboard(snapshot: PasteboardSnapshot(text: "<p>x</p>", kind: .html))
+        let controller = StripController(
+            settings: Settings(mode: .onDemand, operations: [.stripHtml]),
+            pasteboard: pb,
+            transformer: slow,
+            defaults: defaults,
+            busyThreshold: .milliseconds(20)
+        )
+        var events: [Bool] = []
+        controller.onStrippingChange = { events.append($0) }
+
+        _ = await controller.stripNow(trigger: .manual)
+        #expect(events == [true, false], "a slow run shows then clears the busy indicator")
+    }
+
+    /// A fast run finishes well before the threshold, so the indicator never flips —
+    /// no flicker for the common case.
+    @Test func busyIndicatorStaysSilentForFastRuns() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        // Real (instant) core transformer + a high threshold.
+        let pb = FakePasteboard(snapshot: PasteboardSnapshot(text: "<p>x</p>", kind: .html))
+        let controller = StripController(
+            settings: Settings(mode: .onDemand, operations: [.stripHtml]),
+            pasteboard: pb,
+            defaults: defaults,
+            busyThreshold: .seconds(10)
+        )
+        var events: [Bool] = []
+        controller.onStrippingChange = { events.append($0) }
+
+        let outcome = await controller.stripNow(trigger: .manual)
+        #expect(outcome == .stripped(changed: true))
+        #expect(events.isEmpty, "a fast run must not flip the busy indicator")
     }
 }
