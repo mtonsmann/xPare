@@ -61,6 +61,41 @@ The staticlib's own system dependencies (`-lSystem -lc -lm`) are provided
 automatically by the macOS SDK that SwiftPM already links — no extra system
 libraries are declared here.
 
+## Run it on your menu bar
+
+`package-app.sh` assembles a runnable, ad-hoc-signed menu-bar `.app` from the
+SwiftPM build — **no full Xcode required**:
+
+```sh
+cd shells/macos
+./package-app.sh --run        # build core + app, bundle it, sign, and open it
+# or build without launching:
+./package-app.sh              # -> dist/SafetyStrip.app
+open dist/SafetyStrip.app
+```
+
+A ✂ **scissors** icon appears in the menu bar (no Dock icon — it's an
+`LSUIElement` agent). Using it:
+
+- **Strip on demand (default):** copy some rich text (e.g. a styled web
+  selection), then press the global hotkey **⌥⌘V** — the clipboard is rewritten
+  in place as clean plain text. The same action is the menu's "Strip clipboard
+  now".
+- **Default pipeline:** strip HTML → collapse whitespace → trim trailing
+  whitespace. Toggle individual operations from the menu.
+- **Continuous mode (opt-in):** enable "Continuous monitoring" to strip
+  automatically whenever the clipboard changes (500 ms poll). Off by default.
+- **Quit:** the menu's "Quit SafetyStrip" (⌘Q).
+
+Notes:
+
+- Ad-hoc signing runs the app **unsandboxed** — the most reliable local test.
+  `./package-app.sh --sandbox` signs with the minimal App Sandbox entitlement
+  instead; a *distributable* sandboxed build additionally needs a Developer ID
+  identity + notarization (see *Packaging & distribution*).
+- The global hotkey uses Carbon `RegisterEventHotKey`, so it needs **no**
+  Accessibility or Input-Monitoring permission — macOS should not prompt.
+
 ## Testing
 
 ```sh
@@ -86,11 +121,12 @@ suite (30 tests, 5 suites) covers:
   HTML sources force `strip_html` even if unset; unchanged plain text is not
   rewritten.
 
-## Packaging as a real menu-bar `.app` (requires full Xcode)
+## Packaging & distribution
 
-This headless cut compiles and links a real executable but does **not** produce a
-signed `.app` (Command-Line-Tools only — `xcodebuild` and code-signing are
-unavailable here). To ship it as a true accessory app:
+`package-app.sh` (above) already produces a runnable, ad-hoc-signed bundle
+locally — no full Xcode needed. For a **distributable** app (one other Macs will
+run without Gatekeeper friction), reproduce the same structure under full Xcode,
+or extend the script, with a real signing identity:
 
 1. **Bundle + Info.plist.** Create an app bundle and set `LSUIElement` (a.k.a.
    "Application is agent") to `true` in `Info.plist` so it runs as a menu-bar
@@ -160,8 +196,14 @@ absent, if app-sandbox is missing/false, or if any banned key appears.
   needed to locate `Testing.framework` and `lib_TestingInterop.dylib` at
   runtime; with full Xcode those flags are harmless.
 
-**Documented, not produced (needs full Xcode):**
+**Produced locally (no full Xcode):**
 
-- The signed, sandboxed, Hardened-Runtime `.app` bundle with `LSUIElement` — see
-  *Packaging* above. Running the menu-bar UI as a true accessory app requires
-  that bundle; the executable itself builds today.
+- A runnable menu-bar `.app` (`LSUIElement`, ad-hoc signed) via `package-app.sh`
+  — see *Run it on your menu bar*. It launches as a true accessory app and was
+  smoke-tested to start cleanly.
+
+**Out of scope (needs full Xcode + a Developer account):**
+
+- A Developer-ID-signed, **notarized** build for distribution to other Macs, and
+  a fully enforced App Sandbox in a shipped artifact — see *Packaging &
+  distribution*.
