@@ -21,7 +21,9 @@ mod config;
 pub mod ops;
 mod pipeline;
 
-pub use config::{parse_config, CaseKind, Config, ConfigError, Operation, CONFIG_VERSION};
+pub use config::{
+    parse_config, BracketStyle, CaseKind, Config, ConfigError, Operation, CONFIG_VERSION,
+};
 pub use pipeline::transform;
 
 /// Static JSON describing this core build: name, version, the config schema
@@ -49,7 +51,10 @@ pub const CAPABILITIES_JSON: &str = concat!(
     r#"{"op":"join_with","params":["separator"]},"#,
     r#"{"op":"split_on","params":["delimiter"]},"#,
     r#"{"op":"extract_emails"},"#,
-    r#"{"op":"extract_urls"}"#,
+    r#"{"op":"extract_urls"},"#,
+    r#"{"op":"defang","params":["style"],"styles":["square","round"]},"#,
+    r#"{"op":"refang"},"#,
+    r#"{"op":"clean_urls"}"#,
     r#"]}"#,
 );
 

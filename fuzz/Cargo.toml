@@ -42,3 +42,17 @@ path = "fuzz_targets/transform_pipeline.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "defang"
+path = "fuzz_targets/defang.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "clean_urls"
+path = "fuzz_targets/clean_urls.rs"
+test = false
+doc = false
+bench = false

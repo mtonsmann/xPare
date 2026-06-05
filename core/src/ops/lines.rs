@@ -345,7 +345,9 @@ pub fn extract_urls(input: &str) -> String {
 
 /// Trim a small, fixed set of surrounding punctuation/brackets/quotes from a token.
 /// Operates on `char` boundaries via `trim_matches`, so it is panic-free.
-fn trim_token_punct(token: &str) -> &str {
+///
+/// `pub(crate)` so the defang/url-clean ops share the exact same tokenization edge.
+pub(crate) fn trim_token_punct(token: &str) -> &str {
     token.trim_matches(|c: char| {
         matches!(
             c,
@@ -355,7 +357,7 @@ fn trim_token_punct(token: &str) -> &str {
 }
 
 /// Email heuristic: see [`extract_emails`] for the documented rule.
-fn is_email(token: &str) -> bool {
+pub(crate) fn is_email(token: &str) -> bool {
     // Exactly one '@', non-empty local part, domain with an interior '.'.
     let mut parts = token.split('@');
     let local = match parts.next() {
@@ -380,7 +382,7 @@ fn is_email(token: &str) -> bool {
 }
 
 /// URL heuristic: see [`extract_urls`] for the documented rule.
-fn is_url(token: &str) -> bool {
+pub(crate) fn is_url(token: &str) -> bool {
     for prefix in ["http://", "https://", "www."] {
         if let Some(rest) = token.strip_prefix(prefix) {
             if !rest.is_empty() {

@@ -153,6 +153,45 @@ CI, so there is no CI-only logic to drift from and no extra tooling to install. 
 check prints a remediation-oriented message that teaches how to *fix* the violation,
 not how to silence it.
 
+### D12 — Operation taxonomy: rewrites vs reductions, toggles vs commands
+
+Operations divide by **what they do to the buffer**, and the shell surface follows
+from that — it is not a free UI choice.
+
+- **Rewrites** preserve the text and edit it in place (`StripHtml`,
+  `CollapseWhitespace`, `DedupeLines`, and the new `Defang` / `Refang` /
+  `CleanUrls`). They compose additively — each is an independent stage refining the
+  same buffer — and the idempotent ones are safe to run on every clipboard change.
+- **Reductions** replace the buffer with a *derived subset* (`ExtractEmails`,
+  `ExtractUrls`). They do **not** compose (extracting URLs from an email list yields
+  nothing), they are terminal, and silently reducing every copy in continuous mode
+  is never what the user wants.
+
+This dictates two interaction models in the shell:
+
+- **Persistent toggles** — rewrites that make sense always-on. Stored in the ordered
+  `operations` pipeline, eligible for continuous mode. The menu's *Clean* section.
+- **One-shot commands** — a transient single-op config run on demand, never
+  persisted, never auto-run. *All reductions are commands;* so is `Refang`
+  (re-activating received IOCs is a deliberate act, not a standing policy). The
+  menu's *Extract* section, parallel to "Strip clipboard now".
+
+The **core does not know about this split** — every op stays a plain pipeline entry,
+so the CLI and power users can still compose extraction inside a pipeline. The
+taxonomy is a *shell presentation* contract, with one hard rule: continuous mode
+must refuse to run a reduction.
+
+**Parameters follow Route A — a Settings window, not an expanded menu.**
+`MenuBarExtra(.menu)` is a native AppKit menu and cannot host a text field, so the
+free-text-parameterized ops (`PrefixLines`, `SuffixLines`, `JoinWith`, `SplitOn`)
+and pipeline *ordering* live in a conventional SwiftUI `Settings` scene. Bounded,
+enumerable params (`ChangeCase`'s case, `SortLines`'s two flags, `Defang`'s bracket
+style) stay in the menu as **submenus with radio/checkmark items**. **Why not** make
+the whole menu a `MenuBarExtra(.window)` panel: that buys inline text fields at the
+cost of the crisp, keyboard-driven native-menu behavior on the common path; a
+Settings window keeps the fast path fast and is where macOS users already expect
+typed configuration to live.
+
 ### Other settled choices
 
 - **macOS posture:** App Sandbox + Hardened Runtime, **minimal entitlements**. The
@@ -184,6 +223,10 @@ tests:
 - **Case** (title = capitalize the first char *by position* of each whitespace-
   delimited word; sentence = lowercase then capitalize after `.`/`!`/`?` + space):
   `core/src/ops/case.rs`.
+- **IOC defang/refang** (`Defang`, `Refang` — neutralize/re-activate URLs,
+  hostnames, IPv4/IPv6, and emails): `core/src/ops/defang.rs`.
+- **URL cleaning** (`CleanUrls` — strip tracking/analytics query parameters):
+  `core/src/ops/urls.rs`.
 
 A few decisions worth surfacing here because they are easy to misread as bugs:
 
@@ -199,6 +242,38 @@ A few decisions worth surfacing here because they are easy to misread as bugs:
 - **CRLF handling:** the line model strips a trailing run of `\r` before a `\n`;
   `trim_trailing_whitespace` therefore normalizes CRLF→LF as a documented side
   effect.
+
+### IOC defang/refang and URL cleaning (the agreed contract)
+
+These three rewrites share the existing whitespace-tokenizer + URL/email heuristics
+(see `ops/lines.rs`); they are deliberately not RFC parsers. The exact, frozen rule
+for each lives in its implementing function's doc comment once built — this is the
+design-level contract they must satisfy.
+
+- **`Defang`** rewrites recognized network indicators so they are inert (not
+  auto-linkified, not click-to-execute) while staying human-readable and
+  reversible. Targets: URLs (`http`→`hxxp`, `https`→`hxxps`), hostnames/domains,
+  IPv4, IPv6, and emails. Canonical substitutions follow the de-facto infosec
+  convention — `.`→`[.]`, `://`→`[://]`, `@`→`[@]` — with the bracket style a
+  bounded param (default `[.]`). It is **idempotent by construction**: it matches
+  only *un*-defanged artifacts, so a second pass is a no-op (there are no bare dots
+  left to bracket), which is what makes it safe under continuous mode.
+- **`Refang`** is the documented textual inverse of that substitution set, applied
+  globally — the analyst's "re-activate this received IOC" action. Because it is a
+  global reverse-substitution, `refang(defang(x)) == x` **only when `x` contained no
+  pre-existing defang tokens**; that caveat is documented, not a defect. Per D12 it
+  is surfaced as a one-shot command, never a standing toggle.
+- **`CleanUrls`** strips known tracking/analytics query parameters (`utm_*`,
+  `fbclid`, `gclid`, `msclkid`, …) from URL tokens and reconstructs them, preserving
+  every non-tracking parameter, their order, and any fragment. The denylist is a
+  curated, **baked-in** constant — the core takes no network, so it is a
+  point-in-time snapshot, not a live list. Idempotent (a cleaned URL has nothing
+  left to strip) and order-significant only in that it should run after stripping.
+
+All three are hand-rolled scanners over adversarial input, so they join the
+panic-free regime: proptest (panic-freedom + idempotence + the round-trip property),
+an adversarial corpus, a `cargo fuzz` target each, and the `perf_guard.rs`
+linear-time budget.
 
 ## Performance & large inputs (log-file work)
 
@@ -302,7 +377,16 @@ These are accepted trade-offs, documented so they are not mistaken for defects.
 - **Email/URL extraction is heuristic, not a parser.** `extract_emails` /
   `extract_urls` tokenize on whitespace and apply a documented heuristic (see
   `ops/lines.rs`); they are deliberately not RFC 5322 / RFC 3986 compliant and may
-  accept or reject edge cases a full parser would not.
+  accept or reject edge cases a full parser would not. They are **reductions** (D12):
+  the shell surfaces them as one-shot commands and continuous mode never runs them,
+  but they remain valid pipeline ops for the CLI and power users.
+- **Defang/refang and URL cleaning are heuristic too.** They reuse the same
+  whitespace-tokenizer and URL/email heuristics, not RFC parsers. `Defang` is
+  idempotent by construction; `Refang` is a global reverse-substitution, so
+  `refang(defang(x)) == x` only when `x` held no pre-existing defang tokens; and
+  `CleanUrls` matches a curated, baked-in tracking-parameter denylist that is a
+  point-in-time snapshot (no network, so it cannot self-update). See the IOC
+  contract under *Transform semantics*.
 - **Rich→plain extraction is the shell's best-effort.** The core transforms whatever
   text the shell extracts; choosing the best clipboard representation (preferring
   HTML) is a shell responsibility and is itself heuristic per platform.

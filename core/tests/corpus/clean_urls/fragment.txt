@@ -1,0 +1,3 @@
+https://example.com/doc?utm_source=x#section-2
+https://example.com/q?keep=a?b&utm_source=x#a#b
+plain prose with no url and a stray ? and & here

@@ -1,0 +1,3 @@
+Email me at user@example.com or alert@corp.example.net.
+The C2 was bad-domain.example and the IP 10.0.0.5 (port :443).
+Unicode café résumé — http://münchen.example/path and emoji 🦀 stay safe.

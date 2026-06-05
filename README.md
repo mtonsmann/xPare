@@ -2,8 +2,10 @@
 
 A **memory-safe, plain-text clipboard utility**. SafetyStrip cleans the text on
 your clipboard — coerce rich text to plain, strip HTML and Markdown, normalize
-whitespace, change case, and run line operations — and writes the result back **in
-place**, without your clipboard content ever leaving the process.
+whitespace, change case, run line operations, extract emails/URLs, defang and
+refang network indicators (IOCs), and strip URL tracking parameters — and writes
+the result back **in place**, without your clipboard content ever leaving the
+process.
 
 Its whole reason to exist is trust: the clipboard holds passwords, tokens, PII, and
 source, and the markup it carries is untrusted. So SafetyStrip is built so that
