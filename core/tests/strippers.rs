@@ -44,6 +44,16 @@ mod html_regression {
     }
 
     #[test]
+    fn literal_newline_runs_collapse_to_one_blank_line() {
+        // Source newlines (not just tag-emitted ones) collapse: at most one blank
+        // line survives, matching the documented guarantee (regression).
+        assert_eq!(strip_html("A\n\n\n\nB"), "A\n\nB");
+        assert_eq!(strip_html("<b>a</b>\n\n\n<b>b</b>"), "a\n\nb");
+        // A single source newline is preserved (a blank line == "\n\n" is allowed).
+        assert_eq!(strip_html("line1\nline2"), "line1\nline2");
+    }
+
+    #[test]
     fn br_and_hr_emit_single_newline() {
         assert_eq!(strip_html("a<br>b"), "a\nb");
         assert_eq!(strip_html("a<br/>b"), "a\nb");
@@ -122,6 +132,14 @@ mod html_regression {
         assert_eq!(strip_html("&#65;&#66;&#67;"), "ABC");
         assert_eq!(strip_html("&#x41;&#X42;"), "AB");
         assert_eq!(strip_html("&#128512;"), "\u{1F600}");
+    }
+
+    #[test]
+    fn zero_padded_numeric_entities_decode() {
+        // Leading zeros are skipped rather than counted toward the digit budget, so a
+        // zero-padded but in-range reference still decodes (regression).
+        assert_eq!(strip_html("&#000000065;"), "A");
+        assert_eq!(strip_html("&#x000000041;"), "A");
     }
 
     #[test]

@@ -64,13 +64,16 @@
 //!   unknown name is left **verbatim** (the literal `&name;` text is emitted).
 //! * Malformed entities (`&`, `&;`, `&#;`, `&#x;`, `&#xZZ;`, an unterminated
 //!   `&amp` with no `;`) are emitted **literally**, never panicking. Decoding is
-//!   bounded: a numeric entity reads at most a small fixed number of digits and a
-//!   named entity at most a small fixed number of name characters before giving up
-//!   and emitting the `&` literally.
+//!   bounded: a numeric entity accumulates at most a small fixed number of
+//!   *significant* digits (leading zeros are skipped) and a named entity reads at
+//!   most a small fixed number of name characters before giving up and emitting the
+//!   `&` literally.
 
-/// Maximum number of digits scanned for a numeric character reference before we
-/// give up and treat the `&` as a literal. `0x10FFFF` is 7 hex / 7 decimal digits;
-/// a generous bound that still rejects pathological `&#000…00;` runs in O(1).
+/// Maximum number of *significant* digits accumulated for a numeric character
+/// reference (`0x10FFFF` is 7 hex / 7 decimal digits, so 8 is generous). A value
+/// that exceeds U+10FFFF — or names a surrogate — decodes to U+FFFD. Leading zeros
+/// are skipped (consumed but not counted), so a zero-padded but in-range reference
+/// such as `&#000000065;` still decodes correctly.
 const MAX_NUMERIC_DIGITS: usize = 8;
 
 /// Maximum length of a named-entity *name* (between `&` and `;`) we will attempt to
@@ -141,6 +144,10 @@ pub fn strip_html(input: &str) -> String {
             '&' => {
                 decode_entity_at(input, &mut chars, &mut out);
             }
+            // A literal newline in a text node is structural whitespace: route it
+            // through the same collapser as tag-emitted breaks, so the "at most one
+            // blank line" guarantee holds for source newlines too — not just tags.
+            '\n' => push_newline(&mut out),
             _ => out.push(c),
         }
     }
@@ -409,11 +416,19 @@ fn decode_numeric_entity(chars: &mut Chars<'_>, out: &mut String) {
         chars.next(); // consume 'x'/'X'
     }
     let mut value: u32 = 0;
-    let mut digits = 0usize;
+    let mut digits = 0usize; // significant digits (leading zeros excluded)
+    let mut saw_digit = false; // any digit at all, including leading zeros
     let mut overflow = false;
     while let Some(&(_, c)) = chars.peek() {
         let d = if hex { c.to_digit(16) } else { c.to_digit(10) };
         match d {
+            Some(0) if value == 0 => {
+                // Leading zero: consume it but do not count it toward the budget, so
+                // a zero-padded yet in-range reference like `&#000000065;` decodes to
+                // `A` instead of tripping the "too many digits" overflow guard.
+                saw_digit = true;
+                chars.next();
+            }
             Some(d) if digits < MAX_NUMERIC_DIGITS => {
                 value = value
                     .saturating_mul(if hex { 16 } else { 10 })
@@ -422,11 +437,13 @@ fn decode_numeric_entity(chars: &mut Chars<'_>, out: &mut String) {
                     overflow = true;
                 }
                 digits += 1;
+                saw_digit = true;
                 chars.next();
             }
             Some(_) => {
-                // Too many digits: definitely out of Unicode range.
+                // More significant digits than any scalar can have: out of range.
                 overflow = true;
+                saw_digit = true;
                 chars.next();
                 // Keep consuming remaining digits so we land on the `;`/non-digit.
             }
@@ -437,7 +454,7 @@ fn decode_numeric_entity(chars: &mut Chars<'_>, out: &mut String) {
     if had_semi {
         chars.next(); // consume ';'
     }
-    if digits == 0 {
+    if !saw_digit {
         // `&#;`, `&#x;`, `&#`: malformed → literal.
         out.push('&');
         out.push('#');

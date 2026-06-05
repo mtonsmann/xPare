@@ -49,12 +49,21 @@
 //! with a `\n`; rows are tight. So `| a | b |` over a header + one body row yields
 //! `a\tb\nc\td`.
 //!
-//! ## Embedded raw HTML — no chaining needed
+//! ## Embedded raw HTML — tags removed, but NOT a sanitizer on its own
 //! `Html` (block) and `InlineHtml` events carry raw HTML fragments. We feed each
 //! fragment through [`super::html::strip_html`] to extract its text (we own both
-//! files, so this reuse is natural). **Because of this, callers do not need to
-//! chain StripMarkdown → StripHtml to clean Markdown that embeds HTML:** a single
-//! StripMarkdown already removes embedded tags.
+//! files, so this reuse is natural), so embedded HTML **tags** are removed.
+//!
+//! This is **not** a substitute for [`super::html::strip_html`] on untrusted input.
+//! `pulldown-cmark` reparses the text *between* inline HTML tags as ordinary
+//! Markdown, so for inline raw-text elements (`<script>`/`<style>`) the body arrives
+//! as separate `Text` events and survives — e.g.
+//! `before <script>evil()</script> after` → `before evil() after`. Only block-level
+//! raw HTML (on its own line, blank-separated) is dropped wholesale. **To neutralize
+//! scripts/styles in untrusted HTML, run `StripHtml`** (the shell does this on the
+//! clipboard's HTML representation); the canonical sanitization order is
+//! `StripHtml → StripMarkdown`. See the `script_body_is_strip_htmls_responsibility`
+//! regression test in `core/tests/strippers.rs`.
 
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
