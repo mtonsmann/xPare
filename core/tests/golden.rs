@@ -54,6 +54,20 @@ fn collapse_whitespace_empty() {
     assert_eq!(run(Operation::CollapseWhitespace, ""), "");
 }
 
+#[test]
+fn collapse_whitespace_already_collapsed_text_is_identity() {
+    let input = "alpha beta\ncarriage\rreturn\nunicode\u{00a0}\u{00a0}space";
+    assert_eq!(run(Operation::CollapseWhitespace, input), input);
+}
+
+#[test]
+fn collapse_whitespace_collapses_tabs_after_single_spaces() {
+    assert_eq!(
+        run(Operation::CollapseWhitespace, "alpha \t beta\tgamma"),
+        "alpha beta gamma"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // trim_trailing_whitespace
 // ---------------------------------------------------------------------------

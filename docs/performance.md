@@ -36,34 +36,45 @@ make bench-large     # heavy log files up to 256 MB
 ## Local baseline
 
 Measured 2026-06-05 on **Apple M5 Pro, 18 cores, 48 GB, arm64**, via
-`make perf PERF_MIB=128 PERF_SAMPLES=5` (median of 5), on the shipped code **with
-pipeline intermediate zeroization** (see the cost section below). Re-measure on each
-machine; do not assume another machine's numbers. Read each transform row relative to
-this machine's own roofline controls (byte-copy ≈ 54 GiB/s is the practical
+`make perf PERF_MIB=128 PERF_SAMPLES=5` (median of 5), on the current code **with
+pipeline intermediate zeroization** and the W1 byte-oriented
+`collapse_whitespace` path (see the cost section below). Re-measure on each machine;
+do not assume another machine's numbers. Read each transform row relative to this
+machine's own roofline controls (byte-copy ≈ 25 GiB/s in this run is the practical
 memory-traffic anchor; byte-scan is lower because the shipped release profile is
 `opt-level = "s"` — size-optimized — leaving the scalar scan loop unvectorized).
 
 | Scenario | Median | Throughput |
 |----------|-------:|-----------:|
-| roofline-byte-scan | 0.033s | 3908.7 MiB/s |
-| roofline-byte-copy | 0.002s | 55280.6 MiB/s |
-| strip-html-plain (no `<`/`&`) | 0.298s | 430.2 MiB/s |
-| strip-html-heavy | 0.335s | 382.3 MiB/s |
-| strip-markdown-heavy | 0.793s | 161.4 MiB/s |
-| collapse-whitespace | 0.222s | 576.4 MiB/s |
-| trim-trailing | 0.228s | 560.7 MiB/s |
-| remove-blank-lines | 0.146s | 874.3 MiB/s |
-| unwrap-lines | 0.182s | 702.9 MiB/s |
-| case-lower-ascii | 0.622s | 205.7 MiB/s |
-| case-sentence-unicode | 0.968s | 132.3 MiB/s |
-| dedupe-lines-repeated | 0.155s | 823.5 MiB/s |
-| sort-lines | 0.197s | 649.6 MiB/s |
-| **default-log** (html+md+collapse+trim+blank) | 1.024s | **125.0 MiB/s** |
-| **full-menu-log** (+dedupe+unwrap+lowercase) | 1.182s | **108.3 MiB/s** |
-| **lossy-utf8-log** (invalid UTF-8, default pipeline) | 1.050s | **122.1 MiB/s** |
+| roofline-byte-scan | 0.036s | 3567.2 MiB/s |
+| roofline-byte-copy | 0.005s | 25687.4 MiB/s |
+| strip-html-plain (no `<`/`&`) | 0.310s | 413.5 MiB/s |
+| strip-html-heavy | 0.390s | 328.1 MiB/s |
+| strip-html-sparse-log | 0.313s | 408.3 MiB/s |
+| strip-markdown-heavy | 1.164s | 109.9 MiB/s |
+| strip-markdown-sparse-log | 0.254s | 503.6 MiB/s |
+| collapse-whitespace | 0.187s | 685.0 MiB/s |
+| trim-trailing | 0.276s | 464.2 MiB/s |
+| remove-blank-lines | 0.175s | 733.4 MiB/s |
+| unwrap-lines | 0.191s | 669.4 MiB/s |
+| case-lower-ascii | 0.671s | 190.8 MiB/s |
+| case-sentence-unicode | 1.074s | 119.2 MiB/s |
+| dedupe-lines-repeated | 0.180s | 710.1 MiB/s |
+| dedupe-lines-unique | 0.282s | 453.9 MiB/s |
+| sort-lines | 0.244s | 523.7 MiB/s |
+| html-markdown-trim-log | 0.770s | 166.2 MiB/s |
+| full-menu-without-markdown | 1.063s | 120.4 MiB/s |
+| full-menu-without-collapse | 1.074s | 119.2 MiB/s |
+| full-menu-without-dedupe | 1.912s | 66.9 MiB/s |
+| full-menu-without-case | 1.263s | 101.4 MiB/s |
+| **default-log** (html+md+collapse+trim+blank) | 1.098s | **116.6 MiB/s** |
+| **full-menu-log** (+dedupe+unwrap+lowercase) | 1.251s | **102.3 MiB/s** |
+| **lossy-utf8-log** (invalid UTF-8, default pipeline) | 1.101s | **116.5 MiB/s** |
 
-Slow lanes (optimization targets): Unicode sentence-case and Markdown stripping are
-the slowest single ops. End-to-end pipelines sit at ~108–125 MiB/s. (For reference,
+Slow lanes (optimization targets): Markdown stripping, Unicode sentence-case, and
+unique-line dedupe are the slowest single-op rows. End-to-end pipelines sit at
+~102–117 MiB/s. The decomposition rows show the lowercase/dedupe tail dominates the
+full-menu log path on this generated corpus. (For reference,
 the upstream FormatStripper track reported ~177/131 MiB/s default/full-menu on an
 Apple M4 — a different machine, codebase, and zeroization posture, so not a
 like-for-like comparison.)

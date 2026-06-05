@@ -30,6 +30,7 @@
 //! `SS_PERF_MIN_MIB_PER_SEC` (optional; if set, the end-to-end scenarios must meet
 //! this floor or the test fails — use only on a calibrated machine).
 
+use std::fmt::Write as _;
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
@@ -93,6 +94,20 @@ fn build_log(target: usize) -> String {
         if n % 8 == 0 {
             out.push('\n');
         }
+        n += 1;
+    }
+    out
+}
+
+/// Log-like text with no duplicate lines, so `dedupe_lines` measures the expensive
+/// "remember everything" path instead of the highly-collapsing repeated-line path.
+fn build_unique_log(target: usize) -> String {
+    let mut out = String::with_capacity(target + 128);
+    let mut n: u64 = 0;
+    while out.len() < target {
+        out.push_str("2026-06-05T00:00:00Z INFO request_id=");
+        let _ = write!(out, "{n:016x}");
+        out.push_str(" service=api latency_ms=42 msg=request completed\n");
         n += 1;
     }
     out
@@ -312,8 +327,26 @@ fn throughput_baseline() {
         &mut failures,
     );
     bench_transform(
+        "strip-html-sparse-log",
+        &raw,
+        &cfg(vec![Operation::StripHtml]),
+        n,
+        false,
+        floor,
+        &mut failures,
+    );
+    bench_transform(
         "strip-markdown-heavy",
         &markdown,
+        &cfg(vec![Operation::StripMarkdown]),
+        n,
+        false,
+        floor,
+        &mut failures,
+    );
+    bench_transform(
+        "strip-markdown-sparse-log",
+        &raw,
         &cfg(vec![Operation::StripMarkdown]),
         n,
         false,
@@ -387,6 +420,18 @@ fn throughput_baseline() {
         floor,
         &mut failures,
     );
+    {
+        let unique = build_unique_log(target);
+        bench_transform(
+            "dedupe-lines-unique",
+            &unique,
+            &cfg(vec![Operation::DedupeLines]),
+            n,
+            false,
+            floor,
+            &mut failures,
+        );
+    }
     bench_transform(
         "sort-lines",
         &raw,
@@ -420,6 +465,102 @@ fn throughput_baseline() {
             case: CaseKind::Lower,
         },
     ]);
+    let html_markdown_trim = cfg(vec![
+        Operation::StripHtml,
+        Operation::StripMarkdown,
+        Operation::TrimTrailingWhitespace,
+    ]);
+    let full_menu_without_markdown = cfg(vec![
+        Operation::StripHtml,
+        Operation::CollapseWhitespace,
+        Operation::TrimTrailingWhitespace,
+        Operation::RemoveBlankLines,
+        Operation::DedupeLines,
+        Operation::UnwrapLines,
+        Operation::ChangeCase {
+            case: CaseKind::Lower,
+        },
+    ]);
+    let full_menu_without_collapse = cfg(vec![
+        Operation::StripHtml,
+        Operation::StripMarkdown,
+        Operation::TrimTrailingWhitespace,
+        Operation::RemoveBlankLines,
+        Operation::DedupeLines,
+        Operation::UnwrapLines,
+        Operation::ChangeCase {
+            case: CaseKind::Lower,
+        },
+    ]);
+    let full_menu_without_dedupe = cfg(vec![
+        Operation::StripHtml,
+        Operation::StripMarkdown,
+        Operation::CollapseWhitespace,
+        Operation::TrimTrailingWhitespace,
+        Operation::RemoveBlankLines,
+        Operation::UnwrapLines,
+        Operation::ChangeCase {
+            case: CaseKind::Lower,
+        },
+    ]);
+    let full_menu_without_case = cfg(vec![
+        Operation::StripHtml,
+        Operation::StripMarkdown,
+        Operation::CollapseWhitespace,
+        Operation::TrimTrailingWhitespace,
+        Operation::RemoveBlankLines,
+        Operation::DedupeLines,
+        Operation::UnwrapLines,
+    ]);
+
+    // Pipeline decomposition rows: not gated, but useful for choosing the next wave
+    // after a baseline because they isolate which passes dominate the end-to-end
+    // scenarios on the same generated log buffer.
+    bench_transform(
+        "html-markdown-trim-log",
+        &raw,
+        &html_markdown_trim,
+        n,
+        false,
+        floor,
+        &mut failures,
+    );
+    bench_transform(
+        "full-menu-without-markdown",
+        &raw,
+        &full_menu_without_markdown,
+        n,
+        false,
+        floor,
+        &mut failures,
+    );
+    bench_transform(
+        "full-menu-without-collapse",
+        &raw,
+        &full_menu_without_collapse,
+        n,
+        false,
+        floor,
+        &mut failures,
+    );
+    bench_transform(
+        "full-menu-without-dedupe",
+        &raw,
+        &full_menu_without_dedupe,
+        n,
+        false,
+        floor,
+        &mut failures,
+    );
+    bench_transform(
+        "full-menu-without-case",
+        &raw,
+        &full_menu_without_case,
+        n,
+        false,
+        floor,
+        &mut failures,
+    );
 
     bench_transform(
         "default-log",
