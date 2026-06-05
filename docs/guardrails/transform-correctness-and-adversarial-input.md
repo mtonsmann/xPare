@@ -15,10 +15,16 @@ hangs, stays deterministic, neutralizes active content."
    indexing by an input-derived value, no slicing a `&str` at a byte offset that
    could fall off a UTF-8 boundary. Iterate by `char` / `char_indices` (the
    strippers do) and use checked lookups (`str::get`, `.position()`).
-2. **Stay linear-time with bounded lookahead.** A clipboard paste can be large and
-   hostile; an O(n²) scan or unbounded backtracking is a denial-of-service. The HTML
-   stripper makes one forward pass; entity and close-tag lookahead are explicitly
-   bounded (`MAX_NUMERIC_DIGITS`, `MAX_ENTITY_NAME_LEN`, a single forward `find`).
+2. **Stay linear-time with bounded lookahead *and lookback*.** A clipboard paste can
+   be large and hostile; an O(n²) scan or unbounded backtracking is a
+   denial-of-service. The HTML stripper makes one forward pass; every lookahead/
+   lookback is explicitly bounded (`MAX_NUMERIC_DIGITS`, `MAX_ENTITY_NAME_LEN`,
+   `NEWLINE_LOOKBACK`, a single forward `find`). `NEWLINE_LOOKBACK` exists because an
+   *unbounded backward whitespace scan* in newline-collapsing was once a real O(n²)
+   (input `"   …   <br><br>…"`, invisible to the fuzzer's 4 KB default cap);
+   `core/tests/perf_guard.rs` keeps that shape as a permanent linear-time guard.
+   **Watch repeated/backward scans of the output buffer** — they are the easy way to
+   reintroduce super-linearity.
 3. **Be deterministic.** Same `(input, config)` ⇒ same output, with no dependence on
    environment, time, locale, or hash-set iteration order. (`dedupe_lines` uses a
    `HashSet` for membership only and emits in original order — copy that pattern.)
@@ -62,6 +68,10 @@ hangs, stays deterministic, neutralizes active content."
   `cargo +nightly fuzz run strip_html | strip_markdown | transform_pipeline`. Commit
   any crashing input found under `fuzz/` so it replays as a regression. (CI runs a
   short best-effort fuzz smoke; the required signal is the property/corpus tests.)
+- **Performance regression guard:** `cargo test -p safetystrip-core --test perf_guard`
+  runs large pathological inputs through the strippers/pipeline under a generous time
+  budget; a super-linear regression fails it. Part of `cargo xtask ci`. For
+  measurement (not pass/fail), `cargo bench -p safetystrip-core` (or `make bench`).
 - **Lints:** `cargo clippy -p safetystrip-core --all-targets -- -D warnings`,
   `cargo fmt`.
 

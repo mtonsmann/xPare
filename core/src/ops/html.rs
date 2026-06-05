@@ -158,18 +158,34 @@ pub fn strip_html(input: &str) -> String {
 /// A char-indices iterator we can advance and peek without re-borrowing the string.
 type Chars<'a> = std::iter::Peekable<std::str::CharIndices<'a>>;
 
+/// How far back [`push_newline`] looks past spaces/tabs to find existing newlines.
+/// Bounding this keeps the scan O(1) per call: without a cap, input like
+/// `"   …   <br><br>…"` (a long whitespace run followed by many block breaks) would
+/// re-scan the whole run on every break — overall O(n²), a denial-of-service vector
+/// on adversarial input. A small window covers any realistic gap between a newline
+/// and the buffer end; past it we treat the buffer as not newline-terminated and
+/// emit one (the safe direction — at worst an extra newline a later op can collapse).
+const NEWLINE_LOOKBACK: usize = 64;
+
 /// Push a `\n`, collapsing runs so at most one blank line (`"\n\n"`) ever forms.
 fn push_newline(out: &mut String) {
-    // Count how many newlines already trail `out`, ignoring intervening spaces/tabs
-    // (spaces before a forced break are noise). We allow `\n\n` but not `\n\n\n`.
-    let trailing_newlines = out
-        .as_bytes()
-        .iter()
-        .rev()
-        .take_while(|&&b| b == b'\n' || b == b' ' || b == b'\t')
-        .filter(|&&b| b == b'\n')
-        .count();
-    if trailing_newlines < 2 {
+    // Count trailing newlines, skipping intervening spaces/tabs (spaces before a
+    // forced break are noise), but BOUNDED so a pathological whitespace run cannot
+    // make this scan super-linear. Stop early once we have the two we cap at.
+    let mut newlines = 0usize;
+    for &b in out.as_bytes().iter().rev().take(NEWLINE_LOOKBACK) {
+        match b {
+            b'\n' => {
+                newlines += 1;
+                if newlines >= 2 {
+                    break;
+                }
+            }
+            b' ' | b'\t' => {}
+            _ => break,
+        }
+    }
+    if newlines < 2 {
         out.push('\n');
     }
 }
