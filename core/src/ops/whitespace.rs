@@ -5,9 +5,10 @@
 //! Line model (shared across `ops::whitespace` and `ops::lines`): the text is a
 //! sequence of `\n`-separated lines. A `\r` immediately preceding a `\n` is treated
 //! as part of the line ending (CRLF), and a `\r` is *not* itself a line separator
-//! anywhere else — only `\n` splits lines. These operations work intra-line by
-//! iterating over `char`s, so they never panic on adversarial input (no indexing
-//! into byte offsets that might fall on a UTF-8 boundary), and run in linear time.
+//! anywhere else — only `\n` splits lines. Unicode-sensitive trimming iterates by
+//! `char`; ASCII-only collapse scans bytes for `' '`/`'\t'`, which cannot split a
+//! multi-byte UTF-8 character. The operations never panic on adversarial input and
+//! run in linear time.
 
 /// Collapse each maximal run of spaces/tabs into a single space.
 ///
@@ -27,21 +28,37 @@
 ///   untouched on purpose; "whitespace" here means the ASCII space/tab a wrapped
 ///   clipboard paste actually produces. (Documented heuristic; see DESIGN.md.)
 pub fn collapse_whitespace(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
+    let bytes = input.as_bytes();
+    let mut out: Option<Vec<u8>> = None;
     let mut in_run = false;
-    for ch in input.chars() {
-        if ch == ' ' || ch == '\t' {
+    for (i, &byte) in bytes.iter().enumerate() {
+        if byte == b' ' || byte == b'\t' {
             if !in_run {
-                out.push(' ');
+                if let Some(out) = &mut out {
+                    out.push(b' ');
+                } else if byte == b'\t' {
+                    let mut started = Vec::with_capacity(input.len());
+                    started.extend_from_slice(&bytes[..i]);
+                    started.push(b' ');
+                    out = Some(started);
+                }
                 in_run = true;
-            }
-            // else: inside an existing run — drop the character.
+            } else if out.is_none() {
+                let mut started = Vec::with_capacity(input.len());
+                started.extend_from_slice(&bytes[..i]);
+                out = Some(started);
+            } // else: inside an existing run — drop the character.
         } else {
             in_run = false;
-            out.push(ch);
+            if let Some(out) = &mut out {
+                out.push(byte);
+            }
         }
     }
-    out
+    match out {
+        Some(bytes) => String::from_utf8(bytes).unwrap_or_else(|_| input.to_string()),
+        None => input.to_string(),
+    }
 }
 
 /// Trim trailing whitespace from each line, preserving line breaks and content.

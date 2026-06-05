@@ -63,7 +63,9 @@ current tree (see the decision log); they are listed for continuity.
 - **W1 — Remove copy amplification.** No-op fast paths when an op's trigger bytes
   are absent (HTML with no `<`/`&`, whitespace-collapse with no tab/double-space),
   guarded by golden tests so output stays byte-for-byte identical. *(Partially
-  banked: `strip_html`/`collapse_whitespace` already have marker fast paths.)*
+  banked: `collapse_whitespace` has a byte-oriented fast path; `strip_html` remains
+  open because its newline-collapsing and document-trim semantics make a plaintext
+  shortcut correctness-sensitive.)*
 - **W2 — Stream line ops.** Rewrite `trim_trailing_whitespace`, `remove_blank_lines`,
   `unwrap_lines`, and the line-list ops to stream into one output buffer instead of
   `collect`→`join`. *(Partially banked: `sort_lines` no longer allocates a per-line
@@ -195,4 +197,14 @@ let two agents edit the same file family at once.
   128 MiB: default-log 182.3 → 125.0 MiB/s (−31%), full-menu 162.7 → 108.3 (−33%),
   lossy 175.9 → 122.1 (−31%). Mitigated by returning the final output without an extra
   copy; negligible at clipboard scale. The shipped baseline above now reflects it.
+- 2026-06-05: Ported the useful measurement-only salvage from the obsolete performance
+  branch into `core/tests/throughput.rs`: sparse stripper rows, unique-line dedupe,
+  and pipeline-decomposition rows (`html-markdown-trim-log` and
+  `full-menu-without-*`). No production behavior change.
+- 2026-06-05: W1 accepted for `collapse_whitespace`: rewrite the ASCII space/tab
+  collapse as a safe byte-oriented loop with lazy output allocation. Same-session
+  128 MiB / 5-sample comparison against a temporary `main` worktree on common rows:
+  `collapse-whitespace` 533.2 → 685.0 MiB/s (+28%), `default-log` 111.0 → 116.6
+  (+5%), `full-menu-log` 97.8 → 102.3 (+4.6%), `lossy-utf8-log` 110.7 → 116.5
+  (+5.2%).
 - _Append one entry per accepted optimization: date, scenario, before→after median._
