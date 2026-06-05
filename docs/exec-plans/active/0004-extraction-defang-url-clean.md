@@ -4,7 +4,24 @@ Status: **active** · Started: 2026-06-05
 
 ## Progress / handoff (2026-06-05)
 
-Done on this branch (`claude/vigilant-heisenberg-23d90c`), all green:
+Phases 1, 2, 4 merged to `main` via #4. Phase 3 (macOS shell UX) is on
+`claude/phase3-macos-shell-ux`:
+
+- **Phase 3 — macOS shell UX (DONE on the phase3 branch):** menu restructured into a
+  *Clean* section (the zero-param toggles + `Clean URL trackers`, a `Sort lines`
+  toggle, a `Defang IOCs` toggle, and a `Defang bracket style` inline-`Picker`
+  submenu) and an *Extract / convert* section of one-shot **commands** (Extract
+  emails/URLs, Refang) wired to `StripController.runOnce(operations:)` — a transient
+  config that is never persisted. Continuous mode now drops reductions
+  (`Operation.isReduction`) so it can't silently reduce a copied buffer. A `Settings`
+  scene (`SettingsView.swift`, Route A) hosts the free-text params (prefix/suffix/
+  join/split) + the sort flags. Tests: `runOnceDoesNotPersistToSettings` and
+  `continuousModeSkipsReductions` in `StripControllerTests`. `swift build` passes.
+  Deferred-by-choice: in-menu sort-flag submenu and a drag-to-reorder pipeline list
+  in Settings (noted in the Settings window), plus real `docs/performance.md`
+  numbers and the external-only CI checks (cargo-deny / actionlint / shellcheck).
+
+### Earlier phases (merged in #4), all green:
 
 - **Phase 1 — core ops:** `Defang`/`Refang` (`core/src/ops/defang.rs`) and `CleanUrls`
   (`core/src/ops/urls.rs`) implemented TDD-first, wired into the `Operation` enum,
@@ -20,12 +37,11 @@ Done on this branch (`claude/vigilant-heisenberg-23d90c`), all green:
 - **Phase 4 — integration:** fuzz targets (`fuzz/fuzz_targets/{defang,clean_urls}.rs`
   + `transform_pipeline` `LocalOp` mirror), perf-guard cases, README capability line.
 
-**Remaining: Phase 3 — macOS shell UX** (see § Workstreams, WS-D): menu *Clean*
-toggles (add `SortLines`, `Defang` + style submenu), *Extract* one-shot commands
-(emails/URLs, `Refang`), continuous-mode reduction guard, and the Settings window
-for free-text params (Route A). Deferred-by-choice: real `docs/performance.md`
-throughput numbers (re-measure, don't fabricate) and the external-only CI checks
-(cargo-deny / actionlint / shellcheck), which these changes don't touch.
+**All four phases now implemented** (Phase 3 details above). Deferred-by-choice and
+not blocking: in-menu sort-flag submenu, a drag-to-reorder pipeline list in Settings,
+real `docs/performance.md` throughput numbers (re-measure, don't fabricate), and the
+external-only CI checks (cargo-deny / actionlint / shellcheck), which these changes
+don't touch.
 
 Process note: the parallel-subagent step did **not** auto-merge into this worktree —
 work that must land here has to target `$CLAUDE_PROJECT_DIR` (or be committed by the

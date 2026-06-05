@@ -76,6 +76,17 @@ public enum Operation: Equatable, Sendable {
         case .cleanUrls: return "clean_urls"
         }
     }
+
+    /// A *reduction* (DESIGN.md D12) replaces the buffer with a derived subset rather
+    /// than rewriting it in place. Reductions don't compose and must never run in
+    /// continuous mode — the shell surfaces them as one-shot commands. Everything
+    /// else is a *rewrite* (safe as a persistent, always-on toggle).
+    public var isReduction: Bool {
+        switch self {
+        case .extractEmails, .extractUrls: return true
+        default: return false
+        }
+    }
 }
 
 extension Operation: Codable {

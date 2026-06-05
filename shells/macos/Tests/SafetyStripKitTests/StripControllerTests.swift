@@ -208,4 +208,54 @@ struct StripControllerTests {
         #expect(outcome == .stripped(changed: true))
         #expect(events.isEmpty, "a fast run must not flip the busy indicator")
     }
+
+    /// A one-shot command (`runOnce`) transforms the clipboard but must NOT mutate
+    /// the persisted pipeline — reductions/refang are commands, not toggles (D12).
+    @Test func runOnceDoesNotPersistToSettings() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let pb = FakePasteboard(snapshot:
+            PasteboardSnapshot(text: "see https://a.com/x and y", kind: .plain))
+        let controller = StripController(
+            settings: Settings(mode: .onDemand, operations: [.stripHtml]),
+            pasteboard: pb,
+            defaults: defaults
+        )
+        controller.update(Settings(mode: .onDemand, operations: [.stripHtml])) // persist baseline
+
+        let outcome = await controller.runOnce(operations: [.extractUrls])
+        #expect(outcome == .stripped(changed: true))
+        #expect(pb.writes == ["https://a.com/x"])
+
+        // Neither the in-memory nor the persisted pipeline gained `extract_urls`.
+        #expect(controller.settings.operations == [.stripHtml])
+        #expect(Settings.load(from: defaults).operations == [.stripHtml])
+    }
+
+    /// Continuous mode must refuse to run a reduction even if one is in the pipeline
+    /// (D12): it would silently replace every copied buffer with a derived subset. An
+    /// on-demand trigger still runs it.
+    @Test func continuousModeSkipsReductions() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let pb = FakePasteboard(snapshot:
+            PasteboardSnapshot(text: "see https://a.com/x and y", kind: .plain))
+        let controller = StripController(
+            settings: Settings(mode: .continuous, operations: [.extractUrls]),
+            pasteboard: pb,
+            defaults: defaults
+        )
+
+        // Clipboard-changed trigger → reduction filtered out → buffer left intact.
+        let auto = await controller.stripNow(trigger: .clipboardChanged)
+        #expect(auto == .stripped(changed: false))
+        #expect(pb.writes.isEmpty)
+
+        // Manual trigger → the reduction runs (a deliberate, user-driven action).
+        let manual = await controller.stripNow(trigger: .manual)
+        #expect(manual == .stripped(changed: true))
+        #expect(pb.writes == ["https://a.com/x"])
+    }
 }
