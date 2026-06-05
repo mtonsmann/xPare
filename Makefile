@@ -10,7 +10,7 @@
 CARGO ?= cargo
 .DEFAULT_GOAL := help
 
-.PHONY: help build test lint fmt fmt-check ci checks header bench fuzz app run clean
+.PHONY: help build test lint fmt fmt-check ci checks header bench bench-large fuzz app run clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -44,8 +44,11 @@ checks: ## Run only the structural invariant checks (no build/test)
 header: ## Regenerate the frozen C ABI header
 	$(CARGO) run -p xtask -- gen-header
 
-bench: ## Run the core performance benchmarks (criterion)
-	$(CARGO) bench -p safetystrip-core
+bench: ## Run the quick (clipboard-scale) benchmarks
+	$(CARGO) bench -p safetystrip-core --bench transform
+
+bench-large: ## Run the heavy log-file benchmarks up to 256 MB (slow)
+	$(CARGO) bench -p safetystrip-core --bench transform_large
 
 fuzz: ## Build the fuzz targets (then: cargo +nightly fuzz run <target>)
 	cd fuzz && $(CARGO) +nightly fuzz build

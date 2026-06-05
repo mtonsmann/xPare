@@ -200,6 +200,47 @@ A few decisions worth surfacing here because they are easy to misread as bugs:
   `trim_trailing_whitespace` therefore normalizes CRLF→LF as a documented side
   effect.
 
+## Performance & large inputs (log-file work)
+
+The core is built to handle inputs far larger than a clipboard — e.g. log files in
+the hundreds of MB. Every transform is **linear time** (an O(n²) in `strip_html`'s
+newline collapsing was found by perf testing and fixed by bounding the backward
+scan; `core/tests/perf_guard.rs` guards against regressions, and the fuzzer's 4 KB
+input cap is why scaling bugs must be caught here, not there).
+
+Measured on a 256 MB / 2.05 M-line synthetic log (release build, single op or the
+noted pipeline):
+
+| Operation | Time | Peak RSS |
+|---|---:|---:|
+| `remove_blank_lines` | ~0.24 s | ~0.8 GB |
+| `extract_urls` | ~0.38 s | ~0.5 GB |
+| `sort_lines` (case-sensitive) | ~0.61 s | ~0.8 GB |
+| `strip_html` | ~0.61 s | ~1.0 GB |
+| `dedupe_lines` | ~0.90 s | ~0.9 GB |
+| `collapse → trim → dedupe` | ~1.4 s | ~1.2 GB |
+| `sort_lines` (case-insensitive) | ~2.0 s | ~1.3 GB |
+
+**Memory model.** The pipeline is a fold — `text = op(text)` — so each operation
+allocates a fresh output `String` and the previous one is freed, giving a peak of
+~2× the current text size per step; with the input buffer also live, observed peak
+working set is ~3–5× the input. Two deliberate choices keep that bounded:
+
+- `dedupe_lines` borrows line slices into a `HashSet<&str>` (membership only), so its
+  extra memory is O(number of lines), not O(bytes).
+- `sort_lines` sorts **borrowed slices in place** for the case-sensitive path (no
+  per-line key allocation). Only the case-insensitive path materializes folded keys
+  (~input size extra) — that is the unavoidable cost of Unicode case folding.
+
+**Non-streaming, by contract.** The frozen FFI is `transform(input, config) →
+output` (whole buffers), so the core is not a streaming/line-at-a-time API. For the
+target sizes this is simpler and fast enough; true streaming (bounded memory
+regardless of input size) is noted under *Adopt if the project grows*.
+
+Benchmarks for these sizes live in `core/benches/transform_large.rs`
+(`make bench-large`); a pass/fail 256 MB scaling check is the `--ignored`
+`handles_256mb_log_pipeline` test.
+
 ## Known limitations
 
 These are accepted trade-offs, documented so they are not mistaken for defects.
@@ -251,3 +292,9 @@ maintainer knows they were considered and deferred, not forgotten:
   branch. Not warranted at this size.
 - **Additional platform shells** (Windows/Linux), paste simulation, WASM/iOS, and
   signing/notarization automation — reserved, not built.
+- **A streaming / bounded-memory transform path.** Today the core processes whole
+  buffers (peak working set a small multiple of input — fine up to the ~256 MB log
+  sizes we benchmark). For multi-GB inputs, a line-at-a-time streaming API (and a
+  matching FFI variant) would cap memory regardless of input size. It would be an
+  *additive* boundary (a new ABI entry point), not a change to the existing one, so
+  it does not threaten the frozen contract — deferred until a real need appears.

@@ -98,3 +98,61 @@ fn full_pipeline_on_large_rich_input_stays_linear() {
         input.len()
     );
 }
+
+/// Heavy-input scaling check for log-file work. **Ignored by default**: it allocates
+/// ~256 MB (peak working set ~1 GB) and is not something every CI run should pay for.
+/// Run explicitly:
+///
+/// ```sh
+/// cargo test -p safetystrip-core --test perf_guard -- --ignored
+/// ```
+///
+/// Asserts a realistic 256 MB log-cleanup pipeline (collapse → trim → dedupe → sort)
+/// completes well within a generous linear-time budget. Measured baseline is a few
+/// seconds; a super-linear regression at this size would be minutes. Benchmarks for
+/// throughput live in `core/benches/transform_large.rs`.
+#[test]
+#[ignore = "allocates ~256 MB; run with `--ignored`"]
+fn handles_256mb_log_pipeline() {
+    const TARGET: usize = 256 * 1024 * 1024;
+    let mut input = String::with_capacity(TARGET + 256);
+    let mut i: u64 = 0;
+    while input.len() < TARGET {
+        use std::fmt::Write as _;
+        let _ = writeln!(
+            input,
+            "2026-06-05T12:34:56.{:03}Z INFO [svc] user=u{} ip=10.0.{}.{} status=200 latency_ms={}",
+            i % 1000,
+            i % 500_000,
+            (i / 256) % 256,
+            i % 256,
+            i % 900
+        );
+        i += 1;
+    }
+    let config = Config {
+        version: safetystrip_core::CONFIG_VERSION,
+        operations: vec![
+            Operation::CollapseWhitespace,
+            Operation::TrimTrailingWhitespace,
+            Operation::RemoveBlankLines,
+            Operation::DedupeLines,
+            Operation::SortLines {
+                descending: false,
+                case_insensitive: false,
+            },
+        ],
+    };
+    // Generous: this test runs in debug by default (use `--release` for realistic
+    // timing); the budget only needs to catch a catastrophic super-linear regression,
+    // which at 256 MB would be minutes, not the few seconds this takes.
+    let budget = Duration::from_secs(60);
+    let start = Instant::now();
+    let out = transform(std::hint::black_box(&input), &config);
+    let elapsed = start.elapsed();
+    std::hint::black_box(&out);
+    assert!(
+        elapsed < budget,
+        "256 MB log pipeline took {elapsed:?} (budget {budget:?}) — possible super-linear regression"
+    );
+}

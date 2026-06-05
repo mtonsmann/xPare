@@ -97,13 +97,19 @@ Targets: `strip_html`, `strip_markdown`, `transform_pipeline`.
 ### Benchmarks & the performance guard
 
 ```sh
-cargo bench -p safetystrip-core      # or: make bench
+make bench         # quick clipboard-scale benches  (cargo bench --bench transform)
+make bench-large   # heavy log-file benches up to 256 MB  (--bench transform_large, slow)
 ```
 
 Criterion benchmarks measure the strippers, the default pipeline, and the case
-transforms. Separately, `core/tests/perf_guard.rs` (part of the gate) asserts the
-strippers stay **linear** on large adversarial inputs, so a super-linear regression
-fails the suite rather than shipping a denial-of-service.
+transforms (`transform`), plus line-oriented log ops sized up to **256 MB**
+(`transform_large`). The core is linear and handles hundreds of MB — a 256 MB log
+runs each op in ~0.2–2 s (see [DESIGN.md](DESIGN.md#performance--large-inputs-log-file-work)).
+
+Two pass/fail guards back the measurements: `core/tests/perf_guard.rs` (in the gate)
+asserts the strippers stay **linear** on large adversarial inputs, and its
+`--ignored` `handles_256mb_log_pipeline` test validates a full 256 MB pipeline on
+demand (`cargo test -p safetystrip-core --test perf_guard -- --ignored`).
 
 ### Build and run the macOS shell
 

@@ -22,3 +22,9 @@ criterion = { workspace = true }
 [[bench]]
 name = "transform"
 harness = false
+
+# Heavy "log file" benchmarks up to 256 MB. Separate target so the quick `transform`
+# bench stays fast; run with `cargo bench -p safetystrip-core --bench transform_large`.
+[[bench]]
+name = "transform_large"
+harness = false

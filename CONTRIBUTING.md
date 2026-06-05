@@ -37,8 +37,9 @@ own (e.g. `cargo xtask check-abi`) for a fast inner loop.
 A root `Makefile` wraps the common commands for convenience — `make help` lists
 them. It is a thin layer that **delegates** to the canonical commands (so there is
 no second source of truth): `make ci` is exactly `cargo xtask ci`, `make checks`
-runs the structural checks, `make bench` runs the benchmarks, `make app`/`make run`
-build/launch the macOS shell. Use them or the underlying commands interchangeably.
+runs the structural checks, `make bench` / `make bench-large` run the quick /
+256 MB benchmarks, `make app`/`make run` build/launch the macOS shell. Use them or
+the underlying commands interchangeably.
 
 ## Run checks that match the risk of the change
 
