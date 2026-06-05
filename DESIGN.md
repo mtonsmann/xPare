@@ -4,7 +4,7 @@ This is the *why* behind SafetyStrip. [`ARCHITECTURE.md`](ARCHITECTURE.md) is th
 map (what lives where, the boundary, the invariants); this document records the
 settled decisions and their rationale, how the threat model shaped them, what the
 known limitations are, and what is deliberately out of scope until the project
-grows. The decision log mirrors `docs/exec-plans/active/0001-initial-rearch.md`.
+grows. The decision log mirrors `docs/exec-plans/completed/0001-initial-rearch.md`.
 
 ## Threat model
 
@@ -402,7 +402,9 @@ These are accepted trade-offs, documented so they are not mistaken for defects.
 ## Adopt if the project grows
 
 Explicitly **out of scope now** per the kickoff brief — listed so a future
-maintainer knows they were considered and deferred, not forgotten:
+maintainer knows they were considered and deferred, not forgotten. (These are the
+*strategic* deferrals; smaller feature/task-level items punted from individual exec
+plans are collected in [`docs/deferred-work.md`](docs/deferred-work.md).)
 
 - **Recurring documentation-GC agents** — automated passes that prune/refresh docs.
   The doc set is small and hand-maintained today.
