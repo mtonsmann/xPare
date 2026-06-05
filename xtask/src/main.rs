@@ -307,6 +307,8 @@ fn normal_dep_closure<'a>(meta: &'a Metadata, start: &[&'a str]) -> BTreeSet<&'a
 ///   `syn`, `unicode-ident`, `unicode-xid`.
 /// * pure formatting / data helpers: `itoa`, `ryu`, `zmij` (float formatting),
 ///   `memchr`, `bitflags`, `unicase`.
+/// * `zeroize` — best-effort wiping of clipboard-derived pipeline intermediates
+///   (alloc feature only; no transitive crates, no OS/IO/network surface).
 ///
 /// Derived by running `cargo metadata` against the pinned dependency ranges and
 /// then frozen here. If `cargo update` legitimately introduces a new *pure-data*
@@ -335,6 +337,9 @@ const CORE_DEP_ALLOWLIST: &[&str] = &[
     "memchr",
     "bitflags",
     "unicase",
+    // best-effort heap zeroization of clipboard-derived pipeline intermediates
+    // (alloc feature only; no transitive crates, no OS/IO/network surface).
+    "zeroize",
 ];
 
 /// Assert that every crate in the core's transitive normal-dependency tree is on
