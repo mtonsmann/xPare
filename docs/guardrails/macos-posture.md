@@ -1,0 +1,86 @@
+# Guardrail: macOS posture
+
+**When to consult:** anything in `shells/macos/` that touches the sandbox,
+entitlements, the global hotkey, the pasteboard, or the continuous-mode poller.
+Pair with [shell-contract](shell-contract.md) and
+[privacy-and-data-handling](privacy-and-data-handling.md).
+
+The macOS shell runs with the **least privilege a clipboard utility can**. A
+clipboard tool asking for broad permissions is exactly the kind of thing a user
+should distrust, so the posture is deliberately minimal and is checked mechanically.
+
+## The rules
+
+### Sandbox & Hardened Runtime
+
+1. **App Sandbox is on.** The entitlements file must contain
+   `com.apple.security.app-sandbox` set to `<true/>`.
+2. **Hardened Runtime is on** for the shipped app.
+3. **The entitlements file is minimal: ONLY `app-sandbox = true`.** Reading and
+   writing the pasteboard needs **no** entitlement, so none is requested. The
+   following are **forbidden** (the `check-entitlements` task rejects them):
+   - any `com.apple.security.network.*` (no network — clipboard data must never be
+     exfiltratable),
+   - any `com.apple.security.device.*` (camera, mic, USB, input-monitoring, …),
+   - any `com.apple.security.personal-information.*` (address book, calendar, …),
+   - any `com.apple.security.files.*` (broad file access),
+   - `com.apple.security.automation.apple-events` (no scripting other apps),
+   - the code-signing-weakening entitlements
+     (`cs.disable-library-validation`, `cs.allow-unsigned-executable-memory`,
+     `cs.allow-dyld-environment-variables`),
+   - anything Accessibility / input-monitoring / post-event related, however
+     namespaced.
+
+   The checked-in entitlements file lives at
+   `shells/macos/SafetyStrip.entitlements` (the path `check-entitlements` reads).
+
+### Hotkey
+
+4. **Use Carbon `RegisterEventHotKey`** for the global hotkey (default **⌥⌘V**).
+   **Do not** use `CGEventTap` or a global `NSEvent` monitor: those require the
+   Accessibility or Input Monitoring TCC grants. `RegisterEventHotKey` registers one
+   specific chord and needs neither, which is the whole point.
+
+### Pasteboard
+
+5. **In-place rewrite only.** Read `NSPasteboard.general`, extract the best text
+   representation (prefer the HTML rep → core `StripHtml`), transform via the core,
+   and write the result back to the same pasteboard. **Never** simulate a paste
+   (synthesizing Cmd-V) — that needs Accessibility and can target the wrong app.
+6. **No persistence or logging of pasteboard content** — see
+   [privacy-and-data-handling](privacy-and-data-handling.md). Free the core's output
+   buffer with `ss_buffer_free` (it is zeroized on free).
+
+### Continuous mode
+
+7. **Owned poller on `changeCount`, fully torn down when off.** Continuous mode polls
+   `NSPasteboard.general.changeCount` on a **500 ms** default interval. When the mode
+   is disabled the timer/poller object must be invalidated **and** niled — no loop
+   runs when the feature is off. On-demand mode (the default) does no polling at all.
+
+## Why (short form)
+
+Every avoided permission is a permission the user never has to grant and an attack
+surface the app never has. The sandbox with no network entitlement is the OS-level
+backstop for the "no exfiltration" promise; refusing Accessibility/Input-Monitoring
+keeps SafetyStrip from being the kind of input-watching tool it is meant to protect
+you from. Full rationale: [`DESIGN.md`](../../DESIGN.md) (D8, D9) and
+[`SECURITY.md`](../../SECURITY.md).
+
+## Enforcing checks
+
+- `cargo xtask check-entitlements` — reads `shells/macos/SafetyStrip.entitlements`,
+  **requires** `app-sandbox = true`, and **fails** on any banned key/prefix above. A
+  missing file is a failure (the entitlements file is a required deliverable). The
+  check is a portable XML scan (no `plutil`), so it runs on the Linux CI gate too.
+- The macOS build smoke (`swift build`) runs best-effort on macOS CI.
+
+## What a PR must call out
+
+- **Any new entitlement** — this is a posture change; justify it, and update this
+  guardrail and `SECURITY.md`. (Expect strong resistance: the intended file is
+  *only* app-sandbox.)
+- Any change to the hotkey registration mechanism (must remain Accessibility-free).
+- Any change to pasteboard read/write that could persist, log, or copy content, or
+  that introduces paste simulation.
+- Any change to the poller's lifecycle (it must stay fully torn down when off).

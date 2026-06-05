@@ -1,0 +1,91 @@
+# Security & privacy posture
+
+SafetyStrip handles the **clipboard** — passwords, API tokens, private keys, PII,
+and proprietary source pass through it routinely, alongside untrusted HTML/Markdown
+markup. The entire design exists to make one promise credible: **your clipboard
+content never leaves the process, never gets persisted, and cannot corrupt the tool
+that touches it.**
+
+This document states the posture and — crucially — how each part is **enforced**,
+not merely intended. For the rationale and threat model see [`DESIGN.md`](DESIGN.md);
+for the boundary and module map see [`ARCHITECTURE.md`](ARCHITECTURE.md).
+
+## Posture at a glance
+
+| Property | Statement | Enforced by |
+|---|---|---|
+| **No network** | No code path can open a socket — not in the core, not in any crate that could be linked or run at build time | `cargo xtask check-no-network` (banlist over the whole workspace tree); macOS App Sandbox grants **no** network entitlement |
+| **No persistence of content** | Clipboard text is never written to a file, database, or any durable store | No filesystem dependency in the core (`check-core-deps`); the only disk I/O anywhere is the CLI reading a *config* file (never content) |
+| **No logging of content** | Clipboard text can never reach a log/console sink | Core denies `print!`/`println!`/`eprint*`/`dbg!` at compile time (`#![deny(...)]`); no logging crate is a dependency; the CLI sends *diagnostics* to stderr and *only transformed text* to stdout |
+| **In-memory only + wipe** | Content lives in memory for the duration of a transform and is wiped from the buffer that crosses the boundary | `ss_buffer_free` zeroizes the returned buffer before freeing it (`zeroize` crate) |
+| **Memory safety** | The untrusted-input parser cannot be memory-unsafe | `#![forbid(unsafe_code)]` in the core + `cargo xtask check-unsafe-forbid`; all `unsafe` is isolated to the tiny `core-ffi` shim, which uses `catch_unwind` so a panic is never UB across FFI |
+| **No telemetry / analytics** | The tool phones home to no one | Same mechanisms as "no network" + "no persistence" — there is no code that could |
+| **Minimal OS privilege** | The macOS shell requests the least it can | App Sandbox + Hardened Runtime; entitlements file is *only* `app-sandbox = true`, verified by `cargo xtask check-entitlements`; no Accessibility / Input Monitoring (hotkey uses Carbon `RegisterEventHotKey`); in-place clipboard rewrite only, never paste simulation |
+| **Stable, auditable boundary** | The core/shell contract is small and frozen | Checked-in C header + `cargo xtask check-abi` (drift fails CI) |
+
+Every check above is part of `cargo xtask ci`, which CI runs verbatim
+(`.github/workflows/ci.yml`). A regression in any property fails the build.
+
+## The trust boundary
+
+The privacy guarantee rests on a single architectural line: **the core is the only
+thing that parses untrusted content, and it has no way to talk to the outside
+world.**
+
+- The **core** (`safetystrip-core`) has no OS, filesystem, network, logging, or
+  global mutable state. It cannot exfiltrate, persist, or log — there is no API in
+  its dependency tree that could. This is enforced by a strict transitive
+  dependency allowlist (`check-core-deps`), not by convention.
+- The **shell** is the only component with OS access (clipboard, hotkey, UI). It is
+  small, platform-specific, and sandboxed, and it owns the read → call-core →
+  write-back-in-place flow.
+- The **FFI shim** (`core-ffi`) is the only crate with `unsafe`. It is intentionally
+  tiny so it can be audited in one sitting; it validates every pointer, lossy-decodes
+  input so adversarial bytes can never make it fail, wraps the core call in
+  `catch_unwind`, and zeroizes freed buffers.
+
+See the boundary diagram in [`ARCHITECTURE.md`](ARCHITECTURE.md#the-trust-boundary).
+
+## Handling of adversarial input
+
+Clipboard markup is attacker-influenced, so the core treats all input as hostile:
+
+- **Lossy UTF-8 decoding** — invalid bytes become U+FFFD instead of an error, so no
+  input can make a transform fail.
+- **Never panics, never hangs** — the hand-rolled HTML parser iterates by `char` on
+  UTF-8 boundaries, runs in linear time with only bounded lookahead, and is proven
+  panic-free by `cargo fuzz` targets, property tests, and a checked-in adversarial
+  corpus. A panic, were one to occur, is caught at the FFI boundary and returned as
+  `SS_STATUS_ERR_INTERNAL` rather than unwinding into the host (which would be UB).
+- **Active content is neutralized by `StripHtml`** — `<script>`/`<style>` bodies are
+  dropped entirely and all tags removed. The shell feeds the clipboard's HTML
+  representation through `StripHtml`; the canonical sanitization order is
+  `StripHtml` → `StripMarkdown`. See
+  [the transform guardrail](docs/guardrails/transform-correctness-and-adversarial-input.md).
+
+## Known limitations (security-relevant)
+
+These are documented honestly in [`DESIGN.md`](DESIGN.md#known-limitations); the
+security-relevant ones:
+
+- **Zeroization is best-effort.** The output buffer that crosses the FFI is wiped,
+  but intermediate `String` allocations during a multi-step pipeline may be
+  reallocated by the allocator and are not individually scrubbed. The OS clipboard
+  itself is outside our control once the shell writes back.
+- **`StripMarkdown` alone is not a sanitizer** for hostile `<script>` content — use
+  `StripHtml` → `StripMarkdown`.
+
+## Reporting a vulnerability
+
+This repository is the system of record. If you find a security issue —
+particularly anything that could cause clipboard content to leave the process, be
+persisted/logged, or a way to make the core panic, hang, or read out of bounds —
+open an issue (or, for sensitive reports, contact the maintainers privately) and
+clearly mark it as a security report. A reproducing input for a core
+panic/hang/OOB is the most valuable thing you can include; it becomes a regression
+in the corpus.
+
+A change that alters any property in the table above is a **posture change**: it
+must be called out explicitly in the PR, justified, and reflected here and in the
+relevant guardrail before it can land. The corresponding `xtask` check must be
+updated to *match* the new posture — never weakened to hide a regression.

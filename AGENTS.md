@@ -20,13 +20,23 @@ explicit instruction and a PR call-out:
 `docs/guardrails/`. This file is only a map — keep it short and route to the
 guardrails rather than inlining their content.
 
-## Bootstrap (first run)
+## Knowledge base
 
-On a clean repository, the docs and checks referenced below do not exist yet —
-they are the deliverable, not a precondition. Create them per the kickoff brief
-before relying on the operating loop, and do not block on their absence. Until
-the CI checks exist, the surfaces named above are guidance, not enforcement;
-encode them as failing checks early.
+The knowledge base is live. Start from the map and the guardrail for your change
+class:
+
+- `ARCHITECTURE.md` — repository map, the core/shell trust boundary, data flow,
+  and the enforced-invariants table.
+- `DESIGN.md` — every settled decision with rationale, the threat model, known
+  limitations, and what is deferred until the project grows.
+- `SECURITY.md` — the privacy/data-handling posture and how each property is
+  enforced.
+- `docs/guardrails/` — focused rules per change class (linked from each workflow
+  section below).
+
+The invariants named above are enforced by `cargo xtask ci` (see
+`CONTRIBUTING.md`), which CI runs verbatim. Keep checks green by fixing the code,
+not by weakening the check.
 
 ## Operating Loop
 
