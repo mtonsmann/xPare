@@ -1,0 +1,136 @@
+# SafetyStrip CI.
+#
+# The portable gate is `cargo xtask ci` (see xtask/src/main.rs): fmt --check,
+# clippy -D warnings, the full test suite, and every structural invariant check
+# (unsafe-forbid, core-deps allowlist, no-network banlist, frozen ABI header,
+# minimal macOS entitlements). Running the *same* command in CI as locally keeps
+# the invariants honest — there is no CI-only logic to drift from.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Treat warnings as hard errors everywhere (clippy also gets -D warnings below).
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  # ----------------------------------------------------------------------------
+  # Primary gate: the whole portable check suite on Linux.
+  # ----------------------------------------------------------------------------
+  xtask-ci:
+    name: xtask ci (fmt + clippy + test + invariants)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Install the pinned stable toolchain. dtolnay/rust-toolchain honors
+      # rust-toolchain.toml's channel; we add clippy + rustfmt explicitly because
+      # `cargo xtask ci` shells out to both.
+      - name: Install Rust (pinned stable + clippy + rustfmt)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      # Cache the cargo registry, git db, and target dir keyed on the lockfile.
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      # Single source of truth: the same command an engineer runs locally.
+      # This runs fmt --check, clippy -D warnings, test --workspace, then
+      # check-unsafe-forbid, check-core-deps, check-no-network, check-abi, and
+      # check-entitlements (a missing entitlements file FAILS — it is a deliverable).
+      - name: cargo xtask ci
+        run: cargo run -p xtask -- ci
+
+  # ----------------------------------------------------------------------------
+  # Best-effort macOS shell build: compile the FFI staticlib and `swift build`
+  # the macOS shell. continue-on-error because the CI image may lack full Xcode
+  # (the repo ships on Command-Line-Tools-only environments); this job is a
+  # smoke signal, not a required gate.
+  # ----------------------------------------------------------------------------
+  macos-shell:
+    name: macOS shell smoke (FFI staticlib + swift build)
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (pinned stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      # The Swift shell links this staticlib over the frozen C ABI.
+      - name: Build FFI staticlib (release)
+        run: cargo build -p safetystrip-ffi --release
+
+      # Compile the Swift shell sources. `swift build` works under
+      # Command-Line-Tools; producing a signed .app needs full Xcode and is out
+      # of scope for CI. Skipped gracefully if the shell sources are not present.
+      - name: swift build (macOS shell)
+        run: |
+          if [ -f shells/macos/Package.swift ]; then
+            swift build --package-path shells/macos
+          else
+            echo "shells/macos/Package.swift not present yet — skipping swift build."
+          fi
+
+  # ----------------------------------------------------------------------------
+  # Nightly fuzz smoke: run each cargo-fuzz target for a few seconds to catch
+  # regressions in the never-panics invariant. continue-on-error so a nightly
+  # toolchain/libFuzzer hiccup never blocks merges; the property/corpus tests in
+  # `cargo xtask ci` are the required signal.
+  # ----------------------------------------------------------------------------
+  fuzz-smoke:
+    name: fuzz smoke (nightly, best-effort)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      # `fuzz/` is its own workspace, so commands run from that directory. A short
+      # time budget per target keeps this a smoke test, not a fuzzing campaign.
+      - name: Run fuzz targets briefly
+        working-directory: fuzz
+        run: |
+          for target in strip_html strip_markdown transform_pipeline; do
+            echo "::group::fuzz $target"
+            cargo +nightly fuzz run "$target" -- -max_total_time=30
+            echo "::endgroup::"
+          done
