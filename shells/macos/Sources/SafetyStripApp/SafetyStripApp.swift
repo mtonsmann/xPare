@@ -266,6 +266,9 @@ final class AppModel: ObservableObject {
 /// The contents of the menu-bar dropdown.
 private struct MenuContent: View {
     @ObservedObject var model: AppModel
+    // Programmatic Settings opener — `SettingsLink` does not reliably surface the
+    // window for an accessory (`LSUIElement`) menu-bar app; see the Settings button.
+    @Environment(\.openSettings) private var openSettings
 
     /// Zero-parameter rewrite ops exposed as simple on/off toggles in the *Clean*
     /// section. Parameterized rewrites (`sort`, `defang`) and the free-text ops are
@@ -319,19 +322,7 @@ private struct MenuContent: View {
             get: { model.isDefangEnabled },
             set: { model.setDefang(enabled: $0) }
         ))
-        // Bounded-choice param as a native submenu: a nested Menu whose inline Picker
-        // renders the two styles as a radio group with a checkmark on the active one.
-        Menu("Defang bracket style") {
-            Picker("Defang bracket style", selection: Binding(
-                get: { model.defangStyle },
-                set: { model.setDefangStyle($0) }
-            )) {
-                Text("Square  [.]").tag(BracketStyle.square)
-                Text("Round  (.)").tag(BracketStyle.round)
-            }
-            .pickerStyle(.inline)
-        }
-        .disabled(!model.isDefangEnabled)
+        // (Defang's bracket style is a parameter, so it lives in the Settings window.)
 
         Divider()
 
@@ -352,10 +343,14 @@ private struct MenuContent: View {
 
         Divider()
 
-        // The Settings scene already registers the standard ⌘, — don't double-bind it.
-        SettingsLink {
-            Text("Settings…")
+        // Activate first: an accessory (LSUIElement) app must become active or the
+        // Settings window opens behind everything / not at all. `openSettings` is more
+        // reliable than `SettingsLink` for a programmatic open from a menu-bar app.
+        Button("Settings…") {
+            NSApp.activate(ignoringOtherApps: true)
+            openSettings()
         }
+        .keyboardShortcut(",", modifiers: [.command])
 
         Button("Quit SafetyStrip") {
             NSApplication.shared.terminate(nil)

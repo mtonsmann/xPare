@@ -19,6 +19,22 @@ struct SettingsView: View {
                 }
             }
 
+            Section("Defang") {
+                Picker("Bracket style", selection: Binding(
+                    get: { model.defangStyle },
+                    set: { model.setDefangStyle($0) }
+                )) {
+                    Text("Square  [.]").tag(BracketStyle.square)
+                    Text("Round  (.)").tag(BracketStyle.round)
+                }
+                .disabled(!model.isDefangEnabled)
+                if !model.isDefangEnabled {
+                    Text("Turn on “Defang IOCs” in the menu to choose a style.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             Section("Sort lines") {
                 Toggle("Descending", isOn: Binding(
                     get: { model.sortFlags().descending },

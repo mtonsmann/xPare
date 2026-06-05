@@ -9,13 +9,16 @@ Phases 1, 2, 4 merged to `main` via #4. Phase 3 (macOS shell UX) is on
 
 - **Phase 3 — macOS shell UX (DONE on the phase3 branch):** menu restructured into a
   *Clean* section (the zero-param toggles + `Clean URL trackers`, a `Sort lines`
-  toggle, a `Defang IOCs` toggle, and a `Defang bracket style` inline-`Picker`
-  submenu) and an *Extract / convert* section of one-shot **commands** (Extract
-  emails/URLs, Refang) wired to `StripController.runOnce(operations:)` — a transient
-  config that is never persisted. Continuous mode now drops reductions
-  (`Operation.isReduction`) so it can't silently reduce a copied buffer. A `Settings`
-  scene (`SettingsView.swift`, Route A) hosts the free-text params (prefix/suffix/
-  join/split) + the sort flags. Tests: `runOnceDoesNotPersistToSettings` and
+  toggle, a `Defang IOCs` toggle) and an *Extract / convert* section of one-shot
+  **commands** (Extract emails/URLs, Refang) wired to
+  `StripController.runOnce(operations:)` — a transient config that is never
+  persisted. Continuous mode now drops reductions (`Operation.isReduction`) so it
+  can't silently reduce a copied buffer. A `Settings` scene (`SettingsView.swift`,
+  Route A) hosts the free-text params (prefix/suffix/join/split), the `Defang`
+  bracket style, and the sort flags; it is opened by activating the app then calling
+  the `openSettings` action (an accessory/`LSUIElement` app needs the activate, and
+  `SettingsLink` doesn't reliably surface the window). Tests:
+  `runOnceDoesNotPersistToSettings` and
   `continuousModeSkipsReductions` in `StripControllerTests`. `swift build` passes.
   Deferred-by-choice: in-menu sort-flag submenu and a drag-to-reorder pipeline list
   in Settings (noted in the Settings window), plus real `docs/performance.md`
