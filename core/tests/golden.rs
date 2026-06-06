@@ -112,6 +112,24 @@ fn trim_trailing_unicode_whitespace_trimmed() {
     );
 }
 
+#[test]
+fn trim_trailing_unicode_whitespace_before_newline() {
+    assert_eq!(
+        run(Operation::TrimTrailingWhitespace, "a\u{00a0}\nb\u{2003}\n"),
+        "a\nb\n"
+    );
+}
+
+#[test]
+fn trim_trailing_multi_cr_and_final_cr() {
+    assert_eq!(run(Operation::TrimTrailingWhitespace, "a\r\r\nb\r"), "a\nb");
+}
+
+#[test]
+fn trim_trailing_all_blank_preserves_newlines() {
+    assert_eq!(run(Operation::TrimTrailingWhitespace, "  \n\t\n"), "\n\n");
+}
+
 // ---------------------------------------------------------------------------
 // remove_blank_lines
 // ---------------------------------------------------------------------------

@@ -70,7 +70,8 @@ current tree (see the decision log); they are listed for continuity.
   `unwrap_lines`, and the line-list ops to stream into one output buffer instead of
   `collect`→`join`. *(Partially banked: `sort_lines` no longer allocates a per-line
   key on the case-sensitive path, and shared line joining pre-sizes its output from
-  known borrowed line lengths.)*
+  known borrowed line lengths; `trim_trailing_whitespace` trims borrowed input
+  slices instead of buffering each line.)*
 - **W3 — Fuse compatible passes.** A planner that fuses adjacent ops (e.g. line-ending
   normalization + a line op, or collapse + trim where ordering permits) without
   changing visible semantics or the public config. Golden-tested fused-vs-unfused.
@@ -270,4 +271,14 @@ let two agents edit the same file family at once.
   109.4 → 112.2 (+2.6%), `full-menu-log` 96.4 → 98.7 (+2.4%), `lossy-utf8-log`
   109.9 → 111.8 (+1.7%). No ABI, dependency, zeroization, ordering, or privacy
   posture change.
+- 2026-06-06: W2b accepted for `trim_trailing_whitespace`: the op now slices the
+  original input at newline boundaries and trims borrowed line slices, removing the
+  per-line scratch `String` while preserving Unicode trailing trim, CRLF-to-LF
+  behavior, multi-CR trimming, final-CR trimming, and all-blank newline preservation.
+  Two same-size runs were taken because the first had unrelated row noise; the
+  confirming 128 MiB / 5-sample run after W4b showed `trim-trailing`
+  486.9 → 557.9 MiB/s (+14.6%), `html-markdown-trim-log` 152.6 → 159.0 (+4.2%),
+  `default-log` 112.2 → 115.7 (+3.1%), `full-menu-log` 98.7 → 101.6 (+2.9%),
+  and `lossy-utf8-log` 111.8 → 115.4 (+3.2%). No ABI, dependency, zeroization,
+  ordering, or privacy posture change.
 - _Append one entry per accepted optimization: date, scenario, before→after median._
