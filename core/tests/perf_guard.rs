@@ -108,19 +108,16 @@ fn ioc_ops_stay_linear() {
 #[test]
 fn full_pipeline_on_large_rich_input_stays_linear() {
     let input = "<p>Hello <b>world</b> &amp; friends</p>\n  spaced   out  \n".repeat(2_000);
-    let config = Config {
-        version: safetystrip_core::CONFIG_VERSION,
-        operations: vec![
-            Operation::StripHtml,
-            Operation::StripMarkdown,
-            Operation::CollapseWhitespace,
-            Operation::TrimTrailingWhitespace,
-            Operation::RemoveBlankLines,
-            Operation::ChangeCase {
-                case: CaseKind::Title,
-            },
-        ],
-    };
+    let config = Config::as_given(vec![
+        Operation::StripHtml,
+        Operation::StripMarkdown,
+        Operation::CollapseWhitespace,
+        Operation::TrimTrailingWhitespace,
+        Operation::RemoveBlankLines,
+        Operation::ChangeCase {
+            case: CaseKind::Title,
+        },
+    ]);
     let start = Instant::now();
     let out = transform(std::hint::black_box(&input), &config);
     let elapsed = start.elapsed();
@@ -163,19 +160,16 @@ fn handles_256mb_log_pipeline() {
         );
         i += 1;
     }
-    let config = Config {
-        version: safetystrip_core::CONFIG_VERSION,
-        operations: vec![
-            Operation::CollapseWhitespace,
-            Operation::TrimTrailingWhitespace,
-            Operation::RemoveBlankLines,
-            Operation::DedupeLines,
-            Operation::SortLines {
-                descending: false,
-                case_insensitive: false,
-            },
-        ],
-    };
+    let config = Config::as_given(vec![
+        Operation::CollapseWhitespace,
+        Operation::TrimTrailingWhitespace,
+        Operation::RemoveBlankLines,
+        Operation::DedupeLines,
+        Operation::SortLines {
+            descending: false,
+            case_insensitive: false,
+        },
+    ]);
     // Generous: this test runs in debug by default (use `--release` for realistic
     // timing); the budget only needs to catch a catastrophic super-linear regression,
     // which at 256 MB would be minutes, not the few seconds this takes.

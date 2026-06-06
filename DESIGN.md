@@ -56,14 +56,18 @@ out). See [the FFI guardrail](docs/guardrails/ffi-boundary-and-abi-stability.md)
 
 ### D3 — Config is versioned JSON: an ordered list of operations
 
-A `Config` is `{ "version": 1, "operations": [ ... ] }`, where each operation is an
-internally-tagged object keyed on `op` (e.g. `{"op":"strip_html"}`,
-`{"op":"change_case","case":"title"}`). **Why ordered and explicit:** transform
-order is semantically significant (`StripHtml` then `StripMarkdown` is not the same
-as the reverse), so the core never reorders — the pipeline applies operations
-exactly as given. Versioning lets a shell detect a capability mismatch
-deterministically (`parse_config` rejects any version other than `CONFIG_VERSION`).
-Adding a transform is a new enum variant plus a pipeline arm — zero ABI change.
+A `Config` is `{ "version": 2, "operations": [ ... ], "ordering": "canonical" }`,
+where each operation is an internally-tagged object keyed on `op` (e.g.
+`{"op":"strip_html"}`, `{"op":"change_case","case":"title"}`). **Why ordered and
+explicit:** transform order is semantically significant (`StripHtml` then
+`StripMarkdown` is not the same as the reverse). By default the core applies a
+**documented canonical order** (`ordering: "canonical"`, see [D13](#d13--canonical-pipeline-ordering));
+`ordering: "as_given"` runs the operations in exactly the order provided. Either way
+the core is deterministic and never *silently* reorders — the order it uses is fully
+specified by the config. Versioning lets a shell detect a capability mismatch
+deterministically (`parse_config` rejects any version other than `CONFIG_VERSION`);
+**v2** added the `ordering` field. Adding a transform is a new enum variant plus a
+pipeline arm — zero ABI change.
 
 ### D4 — Stateless `repr(C)` error model, lossy input decoding
 
@@ -191,6 +195,38 @@ the whole menu a `MenuBarExtra(.window)` panel: that buys inline text fields at 
 cost of the crisp, keyboard-driven native-menu behavior on the common path; a
 Settings window keeps the fast path fast and is where macOS users already expect
 typed configuration to live.
+
+### D13 — Canonical pipeline ordering
+
+By default the core **reorders** the operations into a documented canonical order
+before running them (`Config.ordering = Canonical`), so a UI that simply toggles ops
+on/off always gets a correct, efficient pipeline without the user reasoning about
+order. `Ordering::AsGiven` runs them exactly as listed. **Why this doesn't betray
+[D3](#d3--config-is-versioned-json-an-ordered-list-of-operations):** the order is
+still fully determined by the config and deterministic — the core never *silently*
+reorders; canonical ordering is explicit, documented, and overridable. This refines,
+rather than reverses, D3, and it bumped `CONFIG_VERSION` to 2 (additive field, no ABI
+change).
+
+The order is a stable sort by a per-op rank (`Operation::canonical_rank`), so any
+genuinely-free pair keeps the user's order. The rank encodes two kinds of rule:
+
+- **Correctness** (order changes output): `StripHtml` < `StripMarkdown` (D6);
+  strippers before everything; `TrimTrailingWhitespace` before `DedupeLines` (so
+  whitespace-only-different lines dedupe); **`CleanUrls` before `Defang`** (defang
+  mangles the URL so `CleanUrls` can no longer recognize it); `UnwrapLines` before
+  `RemoveBlankLines` (blank lines are its paragraph delimiter); `JoinWith` last
+  (it collapses line structure).
+- **Efficiency** (output-identical, one is cheaper): `DedupeLines` before `SortLines`
+  — deduping first shrinks the set the sort must order.
+
+**Where it lives.** The policy is a pure function in the core (not invoked by any op,
+so it can't recurse into `transform`), exercised by a property test that canonical
+output equals manually pre-sorting then running `as_given`. The **CLI** stays the
+explicit tool — it defaults to `as_given` (with `--canonical` to opt in) so existing,
+order-sensitive pipelines are unsurprising — while the **macOS shell** uses canonical
+by default and exposes a "Manual order" (`as_given`) mode with a drag-reorder list for
+the rare case a user wants to place an ambiguous op (e.g. `ChangeCase`) themselves.
 
 ### Other settled choices
 

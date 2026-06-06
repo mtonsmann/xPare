@@ -30,7 +30,7 @@
 //!   cargo +nightly fuzz run transform_pipeline
 use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
-use safetystrip_core::{transform, BracketStyle, CaseKind, Config, Operation, CONFIG_VERSION};
+use safetystrip_core::{transform, BracketStyle, CaseKind, Config, Operation};
 
 /// Cap on the number of operations applied in a single fuzz case. The pipeline is
 /// linear per op, but each op reallocates the whole string, so an unbounded
@@ -161,19 +161,27 @@ impl From<LocalOp> for Operation {
 #[derive(Arbitrary, Debug)]
 struct PipelineInput {
     ops: Vec<LocalOp>,
+    /// Fuzz both ordering modes — canonical reordering and as-given.
+    canonical: bool,
     input: Vec<u8>,
 }
 
 fuzz_target!(|case: PipelineInput| {
-    let PipelineInput { mut ops, input } = case;
+    let PipelineInput {
+        mut ops,
+        canonical,
+        input,
+    } = case;
     // Hard-cap the pipeline length so a single case stays fast (see `MAX_OPS`).
     ops.truncate(MAX_OPS);
 
     // Lossy decode mirrors the FFI boundary: the core only ever sees valid UTF-8.
     let text = String::from_utf8_lossy(&input);
-    let config = Config {
-        version: CONFIG_VERSION,
-        operations: ops.into_iter().map(Operation::from).collect(),
+    let operations: Vec<Operation> = ops.into_iter().map(Operation::from).collect();
+    let config = if canonical {
+        Config::canonical(operations)
+    } else {
+        Config::as_given(operations)
     };
     // Invariant under test: infallible + panic-free for every (input, config).
     let _ = transform(&text, &config);

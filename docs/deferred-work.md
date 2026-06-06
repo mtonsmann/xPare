@@ -33,8 +33,10 @@ Nothing here is committed scope; it's a memory aid for the next maintainer.
 
 - **In-menu sort-flag submenu.** Surface `Sort lines`' *descending* / *case-insensitive*
   flags as a menu submenu; today they live only in the Settings window. (0004 → Phase 3)
-- **Drag-to-reorder pipeline.** Let the user reorder the operation pipeline in the
-  Settings window; today order follows menu/insertion order. (0004 → Phase 3)
+- ~~**Drag-to-reorder pipeline.**~~ **Delivered** by exec-plan 0005 (canonical
+  pipeline ordering): the pipeline now runs in a correct/efficient canonical order by
+  default, and the Settings window's "Manual order" mode provides drag-to-reorder for
+  callers who want exact control.
 - **Measured throughput for `defang` / `clean_urls`.** Add real `make perf` figures for
   the two new ops to [`docs/performance.md`](performance.md). Linearity is already
   guarded by `core/tests/perf_guard.rs`; only the reported numbers are missing.

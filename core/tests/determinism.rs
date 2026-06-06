@@ -14,7 +14,9 @@
 //! and multi-byte / case-expanding Unicode (`ß`, `İ`, `Σ`).
 
 use proptest::prelude::*;
-use safetystrip_core::{transform, BracketStyle, CaseKind, Config, Operation, CONFIG_VERSION};
+use safetystrip_core::{
+    transform, BracketStyle, CaseKind, Config, Operation, Ordering, CONFIG_VERSION,
+};
 
 /// A pool of "interesting" characters plus arbitrary chars, so generated strings hit
 /// the edges of every op while still exploring the whole `char` space.
@@ -88,12 +90,23 @@ fn operation_strategy() -> impl Strategy<Value = Operation> {
     ]
 }
 
-/// A config with an arbitrary ordered pipeline (0..8 ops).
+/// Either ordering mode, so the determinism/panic properties cover canonical
+/// reordering as well as as-given.
+fn ordering_strategy() -> impl Strategy<Value = Ordering> {
+    prop_oneof![Just(Ordering::Canonical), Just(Ordering::AsGiven)]
+}
+
+/// A config with an arbitrary ordered pipeline (0..8 ops) and either ordering mode.
 fn config_strategy() -> impl Strategy<Value = Config> {
-    prop::collection::vec(operation_strategy(), 0..8).prop_map(|operations| Config {
-        version: CONFIG_VERSION,
-        operations,
-    })
+    (
+        prop::collection::vec(operation_strategy(), 0..8),
+        ordering_strategy(),
+    )
+        .prop_map(|(operations, ordering)| Config {
+            version: CONFIG_VERSION,
+            operations,
+            ordering,
+        })
 }
 
 proptest! {
@@ -117,7 +130,7 @@ proptest! {
         input in interesting_string(),
         op in operation_strategy(),
     ) {
-        let cfg = Config { version: CONFIG_VERSION, operations: vec![op] };
+        let cfg = Config::as_given(vec![op]);
         prop_assert_eq!(transform(&input, &cfg), transform(&input, &cfg));
     }
 
@@ -140,7 +153,7 @@ proptest! {
             Operation::Defang { style: BracketStyle::Round },
             Operation::CleanUrls,
         ] {
-            let cfg = Config { version: CONFIG_VERSION, operations: vec![op.clone()] };
+            let cfg = Config::as_given(vec![op.clone()]);
             let once = transform(&input, &cfg);
             let twice = transform(&once, &cfg);
             prop_assert_eq!(&once, &twice);
@@ -153,7 +166,7 @@ proptest! {
         // collapse: tabs are gone and no run of two-or-more ASCII spaces survives.
         let collapsed = transform(
             &input,
-            &Config { version: CONFIG_VERSION, operations: vec![Operation::CollapseWhitespace] },
+            &Config::as_given(vec![Operation::CollapseWhitespace]),
         );
         prop_assert!(!collapsed.contains("  "), "collapse left a double space");
         prop_assert!(!collapsed.contains('\t'), "collapse left a tab");
@@ -161,7 +174,7 @@ proptest! {
         // trim: no line ends with an ASCII space or tab.
         let trimmed = transform(
             &input,
-            &Config { version: CONFIG_VERSION, operations: vec![Operation::TrimTrailingWhitespace] },
+            &Config::as_given(vec![Operation::TrimTrailingWhitespace]),
         );
         for line in trimmed.split('\n') {
             prop_assert!(!line.ends_with(' '));
@@ -173,7 +186,7 @@ proptest! {
         // checking the content lines.
         let no_blanks = transform(
             &input,
-            &Config { version: CONFIG_VERSION, operations: vec![Operation::RemoveBlankLines] },
+            &Config::as_given(vec![Operation::RemoveBlankLines]),
         );
         let body = no_blanks.strip_suffix('\n').unwrap_or(&no_blanks);
         if !body.is_empty() {
@@ -187,10 +200,7 @@ proptest! {
 
         // extract_emails / extract_urls: every output line is non-empty.
         for op in [Operation::ExtractEmails, Operation::ExtractUrls] {
-            let extracted = transform(
-                &input,
-                &Config { version: CONFIG_VERSION, operations: vec![op] },
-            );
+            let extracted = transform(&input, &Config::as_given(vec![op]));
             if !extracted.is_empty() {
                 for line in extracted.split('\n') {
                     prop_assert!(!line.is_empty());

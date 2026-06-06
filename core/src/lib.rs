@@ -22,7 +22,7 @@ pub mod ops;
 mod pipeline;
 
 pub use config::{
-    parse_config, BracketStyle, CaseKind, Config, ConfigError, Operation, CONFIG_VERSION,
+    parse_config, BracketStyle, CaseKind, Config, ConfigError, Operation, Ordering, CONFIG_VERSION,
 };
 pub use pipeline::transform;
 
@@ -36,7 +36,7 @@ pub use pipeline::transform;
 pub const CAPABILITIES_JSON: &str = concat!(
     r#"{"name":"safetystrip-core","version":""#,
     env!("CARGO_PKG_VERSION"),
-    r#"","config_version":1,"operations":["#,
+    r#"","config_version":2,"ordering":["canonical","as_given"],"operations":["#,
     r#"{"op":"strip_html"},"#,
     r#"{"op":"strip_markdown"},"#,
     r#"{"op":"collapse_whitespace"},"#,

@@ -190,6 +190,26 @@ final class AppModel: ObservableObject {
         commit(ops)
     }
 
+    // MARK: - Pipeline ordering
+
+    /// True when the user has opted into arranging the pipeline themselves
+    /// (`as_given`); false means the core's canonical order is used.
+    var isManualOrder: Bool { settings.ordering == .asGiven }
+
+    func setManualOrder(_ manual: Bool) {
+        settings.ordering = manual ? .asGiven : .canonical
+        controller.update(settings)
+    }
+
+    /// Reorder the pipeline (only meaningful in manual order). Indices are into the
+    /// current `operations` list, as the Settings reorder list presents them.
+    func moveOperations(from source: IndexSet, to destination: Int) {
+        var ops = settings.operations
+        ops.move(fromOffsets: source, toOffset: destination)
+        settings.operations = ops
+        controller.update(settings)
+    }
+
     // MARK: - One-shot commands (Extract / Refang)
 
     /// Run a transient single-op command against the clipboard (never persisted).

@@ -46,17 +46,40 @@ public struct Settings: Codable, Equatable, Sendable {
     public var hotkey: HotkeyCombo
     /// Poll interval (milliseconds) for continuous mode's change detection.
     public var pollIntervalMs: Int
+    /// How `operations` is ordered before running. `canonical` (default) lets the
+    /// core arrange the pipeline correctly/efficiently; `asGiven` is the "Manual
+    /// order" mode where the user's drag-arranged order is honored exactly.
+    public var ordering: Ordering
 
     public init(
         mode: StripMode = .onDemand,
         operations: [SafetyStripCore.Operation] = Settings.defaultOperations,
         hotkey: HotkeyCombo = .defaultCombo,
-        pollIntervalMs: Int = 500
+        pollIntervalMs: Int = 500,
+        ordering: Ordering = .canonical
     ) {
         self.mode = mode
         self.operations = operations
         self.hotkey = hotkey
         self.pollIntervalMs = pollIntervalMs
+        self.ordering = ordering
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case mode, operations, hotkey, pollIntervalMs, ordering
+    }
+
+    /// Decode tolerantly so a settings blob saved by an older build (missing newer
+    /// fields like `ordering`) upgrades to defaults rather than failing to load.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        mode = try c.decodeIfPresent(StripMode.self, forKey: .mode) ?? .onDemand
+        operations =
+            try c.decodeIfPresent([SafetyStripCore.Operation].self, forKey: .operations)
+            ?? Settings.defaultOperations
+        hotkey = try c.decodeIfPresent(HotkeyCombo.self, forKey: .hotkey) ?? .defaultCombo
+        pollIntervalMs = try c.decodeIfPresent(Int.self, forKey: .pollIntervalMs) ?? 500
+        ordering = try c.decodeIfPresent(Ordering.self, forKey: .ordering) ?? .canonical
     }
 
     /// A sensible starting pipeline: coerce rich text to plain (HTML strip is
@@ -70,7 +93,7 @@ public struct Settings: Codable, Equatable, Sendable {
 
     /// Build the ``TransformConfig`` to hand the core from the current settings.
     public func transformConfig() -> TransformConfig {
-        TransformConfig(operations: operations)
+        TransformConfig(operations: operations, ordering: ordering)
     }
 }
 

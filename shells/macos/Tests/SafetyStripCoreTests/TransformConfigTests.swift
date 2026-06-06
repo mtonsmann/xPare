@@ -34,7 +34,7 @@ import Foundation
         let json = try config.encodedJSON()
 
         let expected = """
-        {"version":1,"operations":[{"op":"strip_html"},{"op":"change_case","case":"title"},{"op":"collapse_whitespace"}]}
+        {"version":2,"operations":[{"op":"strip_html"},{"op":"change_case","case":"title"},{"op":"collapse_whitespace"}],"ordering":"canonical"}
         """
 
         // Compare structurally (key order within objects is not significant to
@@ -46,7 +46,7 @@ import Foundation
         let config = TransformConfig(operations: [.dedupeLines, .extractEmails, .extractUrls])
         let json = try config.encodedJSON()
         let expected = """
-        {"version":1,"operations":[{"op":"dedupe_lines"},{"op":"extract_emails"},{"op":"extract_urls"}]}
+        {"version":2,"operations":[{"op":"dedupe_lines"},{"op":"extract_emails"},{"op":"extract_urls"}],"ordering":"canonical"}
         """
         #expect(try jsonObject(json) == jsonObject(expected))
     }
@@ -73,11 +73,11 @@ import Foundation
         ])
         let json = try config.encodedJSON()
         let expected = """
-        {"version":1,"operations":[\
+        {"version":2,"operations":[\
         {"op":"prefix_lines","prefix":"> "},\
         {"op":"suffix_lines","suffix":";"},\
         {"op":"join_with","separator":", "},\
-        {"op":"split_on","delimiter":"|"}]}
+        {"op":"split_on","delimiter":"|"}],"ordering":"canonical"}
         """
         #expect(try jsonObject(json) == jsonObject(expected))
     }
@@ -91,10 +91,10 @@ import Foundation
         ])
         let json = try config.encodedJSON()
         let expected = """
-        {"version":1,"operations":[\
+        {"version":2,"operations":[\
         {"op":"defang","style":"square"},\
         {"op":"refang"},\
-        {"op":"clean_urls"}]}
+        {"op":"clean_urls"}],"ordering":"canonical"}
         """
         #expect(try jsonObject(json) == jsonObject(expected))
     }
@@ -109,7 +109,7 @@ import Foundation
 
     @Test func defangDecodesWithDefaultStyleWhenAbsent() throws {
         // serde defaults a missing `style` to square; the Swift mirror must match.
-        let json = #"{"version":1,"operations":[{"op":"defang"}]}"#
+        let json = #"{"version":2,"operations":[{"op":"defang"}]}"#
         let decoded = try JSONDecoder().decode(TransformConfig.self, from: Data(json.utf8))
         #expect(decoded == TransformConfig(operations: [.defang(style: .square)]))
     }
@@ -138,11 +138,32 @@ import Foundation
     }
 
     @Test func emptyConfigEncodesIdentity() throws {
-        // The bare TransformConfig() is the identity transform: version 1, no ops.
+        // The bare TransformConfig() is the identity transform: version 2, no ops.
         let json = try TransformConfig().encodedJSON()
         let dict = try jsonObject(json)
-        #expect(dict["version"] as? Int == 1)
+        #expect(dict["version"] as? Int == 2)
         #expect((dict["operations"] as? [Any])?.count == 0)
+    }
+
+    @Test func orderingEncodesAndDefaultsToCanonical() throws {
+        // Default ordering is canonical and is always emitted on the wire.
+        let dict = try jsonObject(try TransformConfig(operations: []).encodedJSON())
+        #expect(dict["ordering"] as? String == "canonical")
+
+        // Non-default round-trips on the wire.
+        let asGiven = try jsonObject(
+            try TransformConfig(operations: [], ordering: .asGiven).encodedJSON())
+        #expect(asGiven["ordering"] as? String == "as_given")
+
+        // A config that omits `ordering` decodes to canonical (mirrors serde default).
+        let decoded = try JSONDecoder().decode(
+            TransformConfig.self, from: Data(#"{"version":2,"operations":[]}"#.utf8))
+        #expect(decoded.ordering == .canonical)
+    }
+
+    @Test func allOrderingsRawValues() {
+        #expect(Ordering.canonical.rawValue == "canonical")
+        #expect(Ordering.asGiven.rawValue == "as_given")
     }
 
     @Test func roundTripThroughCodable() throws {

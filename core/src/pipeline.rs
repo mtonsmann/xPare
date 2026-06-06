@@ -19,25 +19,36 @@
 
 use zeroize::Zeroizing;
 
-use crate::config::{Config, Operation};
+use crate::config::{Config, Operation, Ordering};
 use crate::ops;
 
-/// Apply every operation in `config.operations` to `input`, left to right.
+/// Apply the config's operations to `input`.
 ///
-/// Order is significant and exactly as given; the core never reorders. Never
-/// panics on any input (enforced by property tests, an adversarial corpus, and the
-/// fuzz targets). Intermediates are zeroized on drop (see the module docs).
+/// The execution order depends on [`Config::ordering`]: [`Ordering::Canonical`] (the
+/// default) stable-sorts the operations by [`Operation::canonical_rank`] so the result
+/// is correct and efficient regardless of how a UI assembled them;
+/// [`Ordering::AsGiven`] runs them in the exact order provided. Either way `transform`
+/// is deterministic and never panics on any input (enforced by property tests, an
+/// adversarial corpus, and the fuzz targets). Intermediates are zeroized on drop (see
+/// the module docs).
 pub fn transform(input: &str, config: &Config) -> String {
     // Identity pipeline: nothing to wipe, return the single copy directly.
     if config.operations.is_empty() {
         return input.to_string();
     }
+    // Resolve execution order. We sort *references*, never the ops themselves, so a
+    // canonical run clones no operation parameters. `sort_by_key` is a stable sort, so
+    // operations sharing a rank keep their provided order.
+    let mut ordered: Vec<&Operation> = config.operations.iter().collect();
+    if config.ordering == Ordering::Canonical {
+        ordered.sort_by_key(|op| op.canonical_rank());
+    }
     // Each intermediate lives in a Zeroizing buffer, wiped when the next pass replaces
     // it (and the last input is wiped when this function returns). The FINAL output is
     // returned directly — no extra copy — and the core-ffi shim wipes it on free.
     let mut current = Zeroizing::new(input.to_string());
-    let last = config.operations.len() - 1;
-    for (i, op) in config.operations.iter().enumerate() {
+    let last = ordered.len() - 1;
+    for (i, op) in ordered.into_iter().enumerate() {
         let out = apply(&current, op);
         if i == last {
             return out;

@@ -55,11 +55,31 @@ struct SettingsView: View {
                 }
             }
 
-            Section {
-                Text("Operations run top-to-bottom in the order shown in the menu. "
-                    + "Reordering the pipeline is planned but not yet available here.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            Section("Pipeline order") {
+                Toggle("Manual order (drag to arrange)", isOn: Binding(
+                    get: { model.isManualOrder },
+                    set: { model.setManualOrder($0) }
+                ))
+                if model.isManualOrder {
+                    if model.settings.operations.isEmpty {
+                        Text("No operations enabled yet — turn some on in the menu.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        List {
+                            ForEach(model.settings.operations.indices, id: \.self) { i in
+                                Text(opLabel(model.settings.operations[i]))
+                            }
+                            .onMove { from, to in model.moveOperations(from: from, to: to) }
+                        }
+                        .frame(minHeight: 140)
+                    }
+                } else {
+                    Text("Operations run in the recommended canonical order (correct and "
+                        + "efficient). Turn on manual order to arrange them yourself.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .formStyle(.grouped)
@@ -89,5 +109,29 @@ private struct ParamRow: View {
             .frame(width: 150)
             .disabled(!model.paramEnabled(kind))
         }
+    }
+}
+
+/// A short human label for an operation, used in the manual-order reorder list.
+private func opLabel(_ op: SafetyStripCore.Operation) -> String {
+    switch op {
+    case .stripHtml: return "Strip HTML"
+    case .stripMarkdown: return "Strip Markdown"
+    case .collapseWhitespace: return "Collapse whitespace"
+    case .trimTrailingWhitespace: return "Trim trailing whitespace"
+    case .removeBlankLines: return "Remove blank lines"
+    case .unwrapLines: return "Unwrap lines"
+    case .changeCase(let c): return "Change case (\(c.rawValue))"
+    case .sortLines: return "Sort lines"
+    case .dedupeLines: return "Dedupe lines"
+    case .prefixLines(let p): return "Prefix lines (\(p))"
+    case .suffixLines(let s): return "Suffix lines (\(s))"
+    case .joinWith(let s): return "Join with (\(s))"
+    case .splitOn(let d): return "Split on (\(d))"
+    case .extractEmails: return "Extract emails"
+    case .extractUrls: return "Extract URLs"
+    case .defang(let style): return "Defang IOCs (\(style.rawValue))"
+    case .refang: return "Refang"
+    case .cleanUrls: return "Clean URL trackers"
     }
 }
