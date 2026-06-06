@@ -65,9 +65,11 @@ current tree (see the decision log); they are listed for continuity.
   guarded by golden tests so output stays byte-for-byte identical. *(Partially
   banked: `collapse_whitespace` has a byte-oriented fast path; `strip_html` has a
   guarded marker-free text path that still preserves newline-collapsing and
-  document-trim semantics; `strip_markdown` suffix-scans newline bookkeeping and
-  trims final output in place; `transform` borrows caller-owned input for the first
-  pass and only zeroizes operation outputs that feed later passes.)*
+  document-trim semantics; `strip_markdown` suffix-scans newline bookkeeping,
+  trims final output in place, and has a strict ASCII plain/log fast path that
+  preserves soft-break and paragraph behavior; `transform` borrows caller-owned
+  input for the first pass and only zeroizes operation outputs that feed later
+  passes.)*
 - **W2 — Stream line ops.** Rewrite `trim_trailing_whitespace`, `remove_blank_lines`,
   `unwrap_lines`, and the line-list ops to stream into one output buffer instead of
   `collect`→`join`. *(Partially banked: `sort_lines` no longer allocates a per-line
@@ -80,7 +82,13 @@ current tree (see the decision log); they are listed for continuity.
   changing visible semantics or the public config. Golden-tested fused-vs-unfused.
   *(Partially banked: adjacent `TrimTrailingWhitespace` → `RemoveBlankLines` is
   fused inside the pipeline executor, and the common `CollapseWhitespace` →
-  `TrimTrailingWhitespace` → `RemoveBlankLines` suffix is fused when adjacent.)*
+  `TrimTrailingWhitespace` → `RemoveBlankLines` suffix is fused when adjacent; the
+  collapse/trim/blank fusion borrows already-collapse-normalized lines instead of
+  copying them through scratch; adjacent `TrimTrailingWhitespace` →
+  `RemoveBlankLines` → `DedupeLines` is fused without owning dedupe keys; the
+  four-op `CollapseWhitespace` → `TrimTrailingWhitespace` → `RemoveBlankLines` →
+  `DedupeLines` sequence uses that borrowed path when collapse is globally identity;
+  and `StripHtml` → `StripMarkdown` has a guarded ASCII plain/log boundary shortcut.)*
 - **W4 — Byte-oriented fast paths.** ASCII-specialized loops falling back to the
   Unicode-safe path on non-ASCII; byte scans where char boundaries are irrelevant.
   Consider `memchr` only if local benches show a clear gain **and** dependency
@@ -466,4 +474,70 @@ let two agents edit the same file family at once.
   `unwrap-lines` 1423.9 → 2751.9 MiB/s (+93%). No ABI, dependency, zeroization,
   ordering, privacy, or determinism change; the change adds no transform-local
   scratch and only removes intermediate paragraph allocations.
+- 2026-06-06: W3c accepted for the existing
+  `CollapseWhitespace` → `TrimTrailingWhitespace` → `RemoveBlankLines` fusion: each
+  line now first checks whether collapse would be identity (no tab and no run of two
+  or more ASCII spaces) and borrows that line directly when possible. Lines that do
+  need collapsing still use the existing boundary-zeroized scratch with the same
+  wipe-before-growth/drop behavior, so scratch posture improves by reducing
+  clipboard-derived temporary copies. The existing fused-vs-public property test
+  covers equivalence. Parent W2c commit versus branch same-session 128 MiB /
+  5-sample comparison: `default-log` 242.3 → 290.9 MiB/s (+21%),
+  `full-menu-log` 198.4 → 226.7 (+15%), `lossy-utf8-log` 253.4 → 285.4 (+13%),
+  `full-menu-without-markdown` 308.5 → 362.2 (+18%), and
+  `full-menu-without-dedupe` 184.9 → 210.4 (+14%). No ABI, dependency, ordering,
+  privacy, or determinism change.
+- 2026-06-06: W3d accepted narrowly for
+  `TrimTrailingWhitespace` → `RemoveBlankLines` → `DedupeLines`: the fused path
+  trims borrowed line slices, skips blanks, and inserts borrowed dedupe keys into
+  the same `HashSet<&str>` storage class as public `dedupe_lines`, avoiding the
+  cleaned full-buffer intermediate without adding owned clipboard-content scratch.
+  A fused-vs-public property test covers as-given and canonical order. Same-worktree
+  128 MiB / 5-sample comparison after W3c: `full-menu-without-collapse`
+  250.5 → 290.8 MiB/s (+16%). The main `default-log` and `full-menu-log` rows only
+  nudged upward (`default-log` 290.9 → 294.6, `full-menu-log` 226.7 → 230.2), so
+  treat this as a decomposition-row win rather than a new default-pipeline ceiling.
+  No ABI, dependency, zeroization, ordering, privacy, or determinism change.
+- 2026-06-06: W3e accepted for the common full-menu suffix
+  `CollapseWhitespace` → `TrimTrailingWhitespace` → `RemoveBlankLines` →
+  `DedupeLines`: when a whole-input scan proves collapse would be identity, the
+  planner takes the borrowed W3d trim/blank/dedupe path and skips the cleaned
+  intermediate before dedupe. When collapse is required, it falls back to the W3c
+  cleaned output wrapped in `Zeroizing` before calling public `dedupe_lines`, so
+  collapsed dedupe keys never require non-zeroized owned scratch. A fused-vs-public
+  property covers as-given and canonical order. Parent W3d commit versus branch
+  same-session 128 MiB / 5-sample comparison: `full-menu-log` 211.5 → 245.4 MiB/s
+  (+16%), `full-menu-without-markdown` 352.0 → 454.3 (+29%), and
+  `full-menu-without-case` 215.2 → 258.0 (+27%). `default-log` has no dedupe and
+  is not the target for this fusion. No ABI, dependency, zeroization, ordering,
+  privacy, or determinism change.
+- 2026-06-06: W1e accepted for `strip_markdown` plain/log input: before invoking
+  `pulldown-cmark`, Markdown now tries a strict eligibility scanner for marker-free
+  log-like text and renders exactly the parser's plain-text behavior for that subset
+  (soft breaks become spaces, blank-line paragraph separators become `\n\n`, and
+  ASCII document-edge trim is preserved by construction). The fast path rejects
+  non-ASCII input, raw HTML/entities, hard breaks, headings, lists, blockquotes,
+  tables, emphasis, code, links/images, setext/thematic lines, non-intraword
+  underscores, and leading or trailing ASCII line whitespace, then falls back to
+  the parser. Internal
+  property coverage compares eligible generated inputs against the parser helper,
+  and regression goldens pin log hyphens/intraword underscores plus NBSP behavior.
+  Parent W3e commit versus branch same-session 128 MiB / 5-sample comparison:
+  `strip-markdown-sparse-log` 1068.2 → 1185.8 MiB/s (+11%),
+  `html-markdown-trim-log` 331.1 → 374.4 (+13%), `default-log`
+  274.0 → 302.9 (+11%), `full-menu-log` 260.4 → 285.2 (+9.5%), and
+  `lossy-utf8-log` 272.0 → 269.7 (−0.8%). No ABI, dependency, zeroization,
+  ordering, privacy, or determinism change.
+- 2026-06-06: W3f accepted for guarded `StripHtml` → `StripMarkdown` boundary
+  fusion: when the original input is accepted by the ASCII plain/log Markdown
+  helper, the planner returns that exact output and consumes both ops, skipping the
+  marker-free HTML copy/intermediate. Fallback behavior is unchanged. A property
+  test covers as-given and canonical order against the public
+  `strip_html`-then-`strip_markdown` operations. Parent W1e commit versus branch
+  same-session 128 MiB / 5-sample comparison: `html-markdown-trim-log`
+  364.4 → 533.5 MiB/s (+46%), `default-log` 299.7 → 396.7 (+32%),
+  `full-menu-log` 281.9 → 366.4 (+30%), `full-menu-without-case`
+  279.9 → 365.8 (+31%), `full-menu-without-dedupe` 214.7 → 254.9 (+19%),
+  and `lossy-utf8-log` 255.0 → 251.3 (−1.5%). No ABI, dependency, zeroization,
+  ordering, privacy, or determinism change.
 - _Append one entry per accepted optimization: date, scenario, before→after median._

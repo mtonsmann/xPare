@@ -72,6 +72,13 @@ use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 /// See the module documentation for the exact, frozen rules. Deterministic and
 /// panic-free on any input.
 pub fn strip_markdown(input: &str) -> String {
+    if let Some(plain) = strip_plain_log_markdown(input) {
+        return plain;
+    }
+    strip_markdown_parser(input)
+}
+
+fn strip_markdown_parser(input: &str) -> String {
     let options =
         Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
     let parser = Parser::new_ext(input, options);
@@ -154,6 +161,136 @@ pub fn strip_markdown(input: &str) -> String {
     }
 
     normalize(out.into_string())
+}
+
+pub(crate) fn strip_plain_log_markdown(input: &str) -> Option<String> {
+    let mut out = String::with_capacity(input.len());
+    let mut in_paragraph = false;
+    let mut pending_separator = false;
+    let mut wrote_paragraph = false;
+
+    for line in input.split('\n') {
+        match plain_log_line_kind(line)? {
+            PlainLogLineKind::Blank => {
+                if in_paragraph {
+                    in_paragraph = false;
+                    pending_separator = true;
+                }
+            }
+            PlainLogLineKind::Content => {
+                if in_paragraph {
+                    out.push(' ');
+                } else if pending_separator && wrote_paragraph {
+                    out.push_str("\n\n");
+                    pending_separator = false;
+                }
+                out.push_str(line);
+                in_paragraph = true;
+                wrote_paragraph = true;
+            }
+        }
+    }
+
+    Some(out)
+}
+
+enum PlainLogLineKind {
+    Blank,
+    Content,
+}
+
+fn plain_log_line_kind(line: &str) -> Option<PlainLogLineKind> {
+    if line.is_empty() {
+        return Some(PlainLogLineKind::Blank);
+    }
+
+    let bytes = line.as_bytes();
+    let mut all_blank = true;
+    let mut all_dash = true;
+    let mut all_equals = true;
+    for (i, &byte) in bytes.iter().enumerate() {
+        match byte {
+            0x80..=u8::MAX => return None,
+            b' ' | b'\t' => {
+                all_dash = false;
+                all_equals = false;
+            }
+            b'\r' => return None,
+            b'_' => {
+                if !is_intraword_ascii_underscore(bytes, i) {
+                    return None;
+                }
+                all_blank = false;
+                all_dash = false;
+                all_equals = false;
+            }
+            b'-' => {
+                all_blank = false;
+                all_equals = false;
+            }
+            b'=' => {
+                all_blank = false;
+                all_dash = false;
+            }
+            _ if is_plain_log_rejected_byte(byte) => return None,
+            _ => {
+                all_blank = false;
+                all_dash = false;
+                all_equals = false;
+            }
+        }
+    }
+
+    if all_blank {
+        return Some(PlainLogLineKind::Blank);
+    }
+    if matches!(bytes.first(), Some(b' ' | b'\t'))
+        || matches!(bytes.last(), Some(b' ' | b'\t'))
+        || starts_unordered_list_marker(bytes)
+        || starts_ordered_list_marker(bytes)
+        || all_dash
+        || all_equals
+    {
+        return None;
+    }
+    Some(PlainLogLineKind::Content)
+}
+
+fn is_plain_log_rejected_byte(byte: u8) -> bool {
+    matches!(
+        byte,
+        b'&' | b'<'
+            | b'>'
+            | b'`'
+            | b'*'
+            | b'~'
+            | b'['
+            | b']'
+            | b'('
+            | b')'
+            | b'|'
+            | b'\\'
+            | b'#'
+            | b'!'
+    )
+}
+
+fn is_intraword_ascii_underscore(bytes: &[u8], index: usize) -> bool {
+    index > 0
+        && index + 1 < bytes.len()
+        && bytes[index - 1].is_ascii_alphanumeric()
+        && bytes[index + 1].is_ascii_alphanumeric()
+}
+
+fn starts_unordered_list_marker(bytes: &[u8]) -> bool {
+    matches!(bytes.first(), Some(b'-' | b'+')) && matches!(bytes.get(1), Some(b' ' | b'\t'))
+}
+
+fn starts_ordered_list_marker(bytes: &[u8]) -> bool {
+    let digits = bytes.iter().take_while(|b| b.is_ascii_digit()).count();
+    digits > 0
+        && matches!(bytes.get(digits), Some(b'.' | b')'))
+        && matches!(bytes.get(digits + 1), Some(b' ' | b'\t'))
 }
 
 /// "Loose" block tags emit a leading newline at their start (in addition to the
@@ -281,4 +418,32 @@ fn normalize(mut s: String) -> String {
 
 fn is_edge_trim_byte(byte: u8) -> bool {
     matches!(byte, b'\n' | b' ' | b'\t' | b'\r')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn plain_log_token() -> impl Strategy<Value = String> {
+        proptest::string::string_regex("[A-Za-z0-9][A-Za-z0-9:/=-]{0,20}").unwrap()
+    }
+
+    fn plain_log_line() -> impl Strategy<Value = String> {
+        prop::collection::vec(plain_log_token(), 1..8).prop_map(|parts| parts.join(" "))
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+
+        #[test]
+        fn plain_log_fast_path_matches_parser(
+            lines in prop::collection::vec(prop_oneof![Just(String::new()), plain_log_line()], 0..40),
+        ) {
+            let input = lines.join("\n");
+            let fast = strip_plain_log_markdown(&input)
+                .expect("generated input should stay in the plain-log fast path");
+            prop_assert_eq!(fast, strip_markdown_parser(&input));
+        }
+    }
 }

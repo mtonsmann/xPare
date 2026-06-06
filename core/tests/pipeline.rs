@@ -47,6 +47,57 @@ fn collapse_then_trim_then_remove_blank() {
 }
 
 #[test]
+fn collapse_trim_blank_dedupe_keeps_first_identity_log_lines() {
+    let cfg = pipeline(vec![
+        Operation::CollapseWhitespace,
+        Operation::TrimTrailingWhitespace,
+        Operation::RemoveBlankLines,
+        Operation::DedupeLines,
+    ]);
+    let input =
+        "2026-06-06 info alpha_beta\n2026-06-06 info alpha_beta\n2026-06-06 info beta-gamma\n";
+    assert_eq!(
+        transform(input, &cfg),
+        "2026-06-06 info alpha_beta\n2026-06-06 info beta-gamma\n"
+    );
+}
+
+#[test]
+fn collapse_trim_blank_dedupe_dedupes_after_collapse_and_trim() {
+    let cfg = pipeline(vec![
+        Operation::CollapseWhitespace,
+        Operation::TrimTrailingWhitespace,
+        Operation::RemoveBlankLines,
+        Operation::DedupeLines,
+    ]);
+    let input = "alpha   beta\tgamma  \n   \nalpha beta gamma\n";
+    assert_eq!(transform(input, &cfg), "alpha beta gamma\n");
+}
+
+#[test]
+fn collapse_trim_blank_dedupe_handles_crlf_and_multi_cr() {
+    let cfg = pipeline(vec![
+        Operation::CollapseWhitespace,
+        Operation::TrimTrailingWhitespace,
+        Operation::RemoveBlankLines,
+        Operation::DedupeLines,
+    ]);
+    let input = "one\r\r\none  \n\ttwo\r\none\n";
+    assert_eq!(transform(input, &cfg), "one\n two\n");
+}
+
+#[test]
+fn collapse_trim_blank_dedupe_all_blank_is_empty() {
+    let cfg = pipeline(vec![
+        Operation::CollapseWhitespace,
+        Operation::TrimTrailingWhitespace,
+        Operation::RemoveBlankLines,
+        Operation::DedupeLines,
+    ]);
+    assert_eq!(transform("  \n\t\n\r", &cfg), "");
+}
+
+#[test]
 fn order_matters_collapse_before_vs_after_trim() {
     // Demonstrate that ordering is honored: trimming first then collapsing differs
     // from collapsing first then trimming for a line that is all spaces.
