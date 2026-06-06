@@ -31,10 +31,11 @@ Nothing here is committed scope; it's a memory aid for the next maintainer.
 
 ## From exec-plan 0004 — extraction, defang/refang, URL cleaning
 
-- ~~**In-menu sort-flag submenu.**~~ Done — sort is a single "Sort lines" submenu in
-  the menu: one entry whose icon shows on/off and whose contents toggle sort plus its
-  *descending* / *case-insensitive* flags (moved out of the Settings window so each
-  control has one home).
+- ~~**In-menu sort-flag submenu.**~~ Done — sort is a single "Sort lines: <mode>"
+  submenu: one entry whose title shows the active mode, with the modes (Off / A→Z /
+  Z→A / ±ignore-case) as an inline `Picker` so the active one gets the system ✓ (the
+  native Finder "Sort By" idiom). Moved out of the Settings window so each control has
+  one home.
 - ~~**Drag-to-reorder pipeline.**~~ Delivered by exec-plan 0005 (canonical pipeline
   ordering): the pipeline runs in a correct/efficient canonical order by default, and
   the Settings window's "Manual order" mode provides drag-to-reorder for exact control.
