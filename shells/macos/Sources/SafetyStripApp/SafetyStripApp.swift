@@ -186,10 +186,27 @@ final class AppModel: ObservableObject {
         var id: Self { self }
         var label: String {
             switch self {
-            case .emails: return "Mask emails"
-            case .ipv4: return "Mask IPv4 addresses"
-            case .ipv6: return "Mask IPv6 addresses"
+            case .emails: return "Emails"
+            case .ipv4: return "IPv4 addresses"
+            case .ipv6: return "IPv6 addresses"
             }
+        }
+    }
+
+    /// Compact label for the collapsed masking submenu title.
+    var maskSummaryLabel: String {
+        let flags = maskFlags
+        switch (flags.emails, flags.ipv4, flags.ipv6) {
+        case (false, false, false):
+            return "Off"
+        case (true, true, true):
+            return "All"
+        default:
+            var targets: [String] = []
+            if flags.emails { targets.append("Emails") }
+            if flags.ipv4 { targets.append("IPv4") }
+            if flags.ipv6 { targets.append("IPv6") }
+            return targets.joined(separator: ", ")
         }
     }
 
@@ -465,11 +482,13 @@ private struct MenuContent: View {
             set: { model.setDefang(enabled: $0) }
         ))
         // (Defang's bracket style is a parameter, so it lives in the Settings window.)
-        ForEach(AppModel.MaskTarget.allCases) { target in
-            Toggle(target.label, isOn: Binding(
-                get: { model.maskEnabled(target) },
-                set: { model.setMask(target, enabled: $0) }
-            ))
+        Menu("Mask identifiers: \(model.maskSummaryLabel)") {
+            ForEach(AppModel.MaskTarget.allCases) { target in
+                Toggle(target.label, isOn: Binding(
+                    get: { model.maskEnabled(target) },
+                    set: { model.setMask(target, enabled: $0) }
+                ))
+            }
         }
 
         Divider()

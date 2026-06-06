@@ -228,6 +228,14 @@ so the CLI and power users can still compose extraction inside a pipeline. The
 taxonomy is a *shell presentation* contract, with one hard rule: continuous mode
 must refuse to run a reduction.
 
+**The top-level menu stays one row per feature family.** A standalone,
+zero-parameter rewrite can be a simple top-level toggle, but a feature with
+bounded options must expose a single status-bearing row plus a submenu of native
+radio/checkmark items. Examples: `Sort lines: Off` owns the sort mode choices, and
+`Mask identifiers: Emails, IPv4` owns the selected masking targets. Do not add one
+top-level sibling row per flag unless each row is a truly independent workflow;
+menu scanability is part of the product contract, not garnish.
+
 **Parameters follow Route A — a Settings window, not an expanded menu.**
 `MenuBarExtra(.menu)` is a native AppKit menu and cannot host a text field, so the
 free-text-parameterized ops (`PrefixLines`, `SuffixLines`, `JoinWith`, `SplitOn`)
