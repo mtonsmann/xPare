@@ -17,7 +17,7 @@ for the boundary and module map see [`ARCHITECTURE.md`](ARCHITECTURE.md).
 | **No network** | No code path can open a socket — not in the core, not in any crate that could be linked or run at build time | `cargo xtask check-no-network` (banlist over the whole workspace tree); macOS App Sandbox grants **no** network entitlement |
 | **No persistence of content** | Clipboard text is never written to a file, database, or any durable store | No filesystem dependency in the core (`check-core-deps`); the only disk I/O anywhere is the CLI reading a *config* file (never content); `check-no-content-logging` scans for content persistence, and `check-clipboard-safety` keeps real-clipboard exercise out of default targets |
 | **No logging of content** | Clipboard text can never reach a log/console sink | Core denies `print!`/`println!`/`eprint*`/`dbg!` at compile time (`#![deny(...)]`); no logging crate is a dependency; the CLI sends *diagnostics* to stderr and *only transformed text* to stdout; `cargo xtask check-no-content-logging` scans the shipped Rust + Swift source for logging calls on clipboard-derived content |
-| **In-memory only + wipe** | Content lives in memory only for the transform; pipeline intermediates and the buffer that crosses the boundary are wiped after use | The core holds each pipeline intermediate in a `Zeroizing` buffer (wiped on drop); `ss_buffer_free` zeroizes the returned buffer before freeing it (`zeroize` crate) |
+| **In-memory only + wipe** | Content lives in memory only for the transform; pipeline intermediates, transform-local scratch storage, and the buffer that crosses the boundary are wiped before release | The core holds each pipeline intermediate in a `Zeroizing` buffer (wiped on drop); fused pipeline scratch storage is wiped before capacity growth can release old storage and on drop; `ss_buffer_free` zeroizes the returned buffer before freeing it (`zeroize` crate); `cargo xtask check-pipeline-zeroization` blocks the current fused-scratch regression class |
 | **Memory safety** | The untrusted-input parser cannot be memory-unsafe | `#![forbid(unsafe_code)]` in the core + `cargo xtask check-unsafe-forbid`; all `unsafe` is isolated to the tiny `core-ffi` shim, which uses `catch_unwind` so a panic is never UB across FFI |
 | **No telemetry / analytics** | The tool phones home to no one | Same mechanisms as "no network" + "no persistence" — there is no code that could |
 | **Minimal OS privilege** | The macOS shell requests the least it can | App Sandbox + Hardened Runtime; entitlements file is *only* `app-sandbox = true`, verified by `cargo xtask check-entitlements`; official Developer ID releases sign with that file and verify the signed entitlement payload is still minimal; no Accessibility / Input Monitoring (hotkey uses Carbon `RegisterEventHotKey`); in-place clipboard rewrite only, never paste simulation |
@@ -58,6 +58,27 @@ pasteboard race or denial-of-service condition, not as a confidentiality boundar
 can enforce. The enforced guarantees are that SafetyStrip will not exfiltrate,
 persist, log, or memory-unsafely parse the content it is handed.
 
+## Where zeroization matters
+
+Zeroization is a best-effort **persistence** control. It reduces the chance that
+clipboard-derived bytes remain recoverable from SafetyStrip-owned heap storage
+after that storage is no longer needed. It is not an exfiltration control and does
+not defend against an attacker who can read live process memory during a transform.
+
+SafetyStrip enforces zeroization at ownership and last-use boundaries:
+
+- Full pipeline intermediates are wiped when the next operation supersedes them or
+  when the transform returns.
+- Transform-local scratch storage is wiped before capacity growth can release old
+  bytes to the allocator, and again on drop. Allocation-preserving reuse may clear
+  logical length without a hot-path wipe because the storage is still owned by the
+  same transform.
+- The FFI output buffer is wiped when the shell calls `ss_buffer_free`, after the
+  shell has written the transformed text back to the clipboard.
+- The shell's input buffer and the OS clipboard are outside the core/FFI ownership
+  boundary; the shell minimizes lifetime but cannot promise core-owned zeroization
+  for memory it does not own.
+
 ## Handling of adversarial input
 
 Clipboard markup is attacker-influenced, so the core treats all input as hostile:
@@ -87,10 +108,12 @@ Clipboard markup is attacker-influenced, so the core treats all input as hostile
 These are documented honestly in [`DESIGN.md`](DESIGN.md#known-limitations); the
 security-relevant ones:
 
-- **Zeroization is best-effort.** The core now holds each pipeline intermediate in a
-  `Zeroizing` buffer and the FFI wipes the output buffer on free, so clipboard-derived
-  content is scrubbed from the heap after use (at a measured throughput cost on very
-  large inputs — see [`docs/performance.md`](docs/performance.md)). It remains
+- **Zeroization is best-effort.** The core now holds each pipeline intermediate in
+  `Zeroizing` storage, wipes transform-local scratch storage before capacity growth
+  can release old clipboard-derived bytes, and the FFI wipes the output buffer on
+  free. Clipboard-derived content is scrubbed from SafetyStrip-owned heap storage
+  when that storage is no longer needed (at a measured throughput cost on very large
+  inputs — see [`docs/performance.md`](docs/performance.md)). It remains
   *best-effort*: the caller's own input buffer (e.g. the shell's pasteboard read) and
   the OS clipboard itself are outside the core's control, and the allocator may retain
   freed pages briefly before reuse. The invalid-UTF-8 FFI path is covered by this:

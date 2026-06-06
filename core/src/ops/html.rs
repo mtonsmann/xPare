@@ -86,8 +86,15 @@ const MAX_ENTITY_NAME_LEN: usize = 12;
 /// See the module documentation for the exact, frozen stripping rules. Pure,
 /// deterministic, panic-free, and linear in the length of `input`.
 pub fn strip_html(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
     let bytes = input.as_bytes();
+    if !matches!(bytes.first(), Some(b'<' | b'&'))
+        && !bytes.contains(&b'<')
+        && !bytes.contains(&b'&')
+    {
+        return strip_html_plain_text(input);
+    }
+
+    let mut out = String::with_capacity(input.len());
     let mut chars = input.char_indices().peekable();
 
     while let Some((i, c)) = chars.next() {
@@ -155,6 +162,21 @@ pub fn strip_html(input: &str) -> String {
     normalize_trailing(out)
 }
 
+#[inline(never)]
+fn strip_html_plain_text(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut start = 0usize;
+    for (i, &byte) in input.as_bytes().iter().enumerate() {
+        if byte == b'\n' {
+            out.push_str(&input[start..i]);
+            push_newline(&mut out);
+            start = i + 1;
+        }
+    }
+    out.push_str(&input[start..]);
+    normalize_trailing(out)
+}
+
 /// A char-indices iterator we can advance and peek without re-borrowing the string.
 type Chars<'a> = std::iter::Peekable<std::str::CharIndices<'a>>;
 
@@ -190,15 +212,37 @@ fn push_newline(out: &mut String) {
     }
 }
 
-/// Trim leading/trailing whitespace of the whole document and collapse any final
-/// run of blank lines. Cheap: a single allocation only if trimming is needed.
-fn normalize_trailing(s: String) -> String {
-    let trimmed = s.trim_matches(|c: char| c == '\n' || c == ' ' || c == '\t' || c == '\r');
-    if trimmed.len() == s.len() {
-        s
-    } else {
-        trimmed.to_string()
+/// Trim leading/trailing ASCII structural whitespace of the whole document in place.
+fn normalize_trailing(mut s: String) -> String {
+    let (start, end) = {
+        let bytes = s.as_bytes();
+        let start = match bytes.iter().position(|&b| !is_edge_trim_byte(b)) {
+            Some(pos) => pos,
+            None => {
+                s.clear();
+                return s;
+            }
+        };
+        let end = match bytes.iter().rposition(|&b| !is_edge_trim_byte(b)) {
+            Some(pos) => pos + 1,
+            None => {
+                s.clear();
+                return s;
+            }
+        };
+        (start, end)
+    };
+    if end < s.len() {
+        s.truncate(end);
     }
+    if start > 0 {
+        s.drain(..start);
+    }
+    s
+}
+
+fn is_edge_trim_byte(byte: u8) -> bool {
+    matches!(byte, b'\n' | b' ' | b'\t' | b'\r')
 }
 
 /// Skip an HTML comment. We are positioned just after the opening `<`; the `!--`

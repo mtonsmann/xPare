@@ -87,7 +87,9 @@ fn is_blank(content: &str) -> bool {
 /// trailing `'\n'` iff `trailing_newline` is set. Used by the line-preserving ops so
 /// they share one definition of trailing-newline handling.
 fn join_lines(contents: &[&str], trailing_newline: bool) -> String {
-    let mut out = String::new();
+    let body_len: usize = contents.iter().map(|c| c.len()).sum();
+    let separators = contents.len().saturating_sub(1);
+    let mut out = String::with_capacity(body_len + separators + usize::from(trailing_newline));
     for (i, c) in contents.iter().enumerate() {
         if i > 0 {
             out.push('\n');
@@ -219,8 +221,8 @@ fn orient(descending: bool, ord: std::cmp::Ordering) -> std::cmp::Ordering {
 /// * A trailing newline in the input is preserved.
 pub fn dedupe_lines(input: &str) -> String {
     let (lines, trailing_newline) = content_lines(input);
-    let mut seen: HashSet<&str> = HashSet::new();
-    let mut kept: Vec<&str> = Vec::new();
+    let mut seen: HashSet<&str> = HashSet::with_capacity(lines.len());
+    let mut kept: Vec<&str> = Vec::with_capacity(lines.len());
     for line in lines {
         if seen.insert(line) {
             kept.push(line);

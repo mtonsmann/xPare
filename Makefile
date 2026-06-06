@@ -57,6 +57,7 @@ checks: ## Run only the structural invariant checks (no build/test)
 	$(CARGO) run -p xtask -- check-no-network
 	$(CARGO) run -p xtask -- check-entitlements
 	$(CARGO) run -p xtask -- check-no-content-logging
+	$(CARGO) run -p xtask -- check-pipeline-zeroization
 	$(CARGO) run -p xtask -- check-clipboard-safety
 	$(CARGO) run -p xtask -- check-c-ffi-surface
 	$(CARGO) run -p xtask -- check-release-posture

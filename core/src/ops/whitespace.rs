@@ -78,18 +78,15 @@ pub fn collapse_whitespace(input: &str) -> String {
 /// * Leading and interior whitespace is untouched.
 pub fn trim_trailing_whitespace(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
-    // Buffer the current line so we can drop its trailing whitespace before flushing.
-    let mut line = String::new();
-    for ch in input.chars() {
+    let mut line_start = 0usize;
+    for (i, ch) in input.char_indices() {
         if ch == '\n' {
-            push_trimmed_end(&mut out, &line);
+            push_trimmed_end(&mut out, &input[line_start..i]);
             out.push('\n');
-            line.clear();
-        } else {
-            line.push(ch);
+            line_start = i + 1;
         }
     }
-    push_trimmed_end(&mut out, &line);
+    push_trimmed_end(&mut out, &input[line_start..]);
     out
 }
 

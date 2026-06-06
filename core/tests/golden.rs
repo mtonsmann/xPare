@@ -112,6 +112,24 @@ fn trim_trailing_unicode_whitespace_trimmed() {
     );
 }
 
+#[test]
+fn trim_trailing_unicode_whitespace_before_newline() {
+    assert_eq!(
+        run(Operation::TrimTrailingWhitespace, "a\u{00a0}\nb\u{2003}\n"),
+        "a\nb\n"
+    );
+}
+
+#[test]
+fn trim_trailing_multi_cr_and_final_cr() {
+    assert_eq!(run(Operation::TrimTrailingWhitespace, "a\r\r\nb\r"), "a\nb");
+}
+
+#[test]
+fn trim_trailing_all_blank_preserves_newlines() {
+    assert_eq!(run(Operation::TrimTrailingWhitespace, "  \n\t\n"), "\n\n");
+}
+
 // ---------------------------------------------------------------------------
 // remove_blank_lines
 // ---------------------------------------------------------------------------
@@ -183,6 +201,19 @@ fn unwrap_lines_empty_and_all_blank() {
 // ---------------------------------------------------------------------------
 
 #[test]
+fn case_upper_ascii() {
+    assert_eq!(
+        run(
+            Operation::ChangeCase {
+                case: CaseKind::Upper
+            },
+            "abc xyz 123!"
+        ),
+        "ABC XYZ 123!"
+    );
+}
+
+#[test]
 fn case_upper_unicode_expanding() {
     // German eszett uppercases to two chars; this is why we use full Unicode mapping.
     assert_eq!(
@@ -197,6 +228,19 @@ fn case_upper_unicode_expanding() {
 }
 
 #[test]
+fn case_lower_ascii() {
+    assert_eq!(
+        run(
+            Operation::ChangeCase {
+                case: CaseKind::Lower
+            },
+            "ABC XYZ 123!"
+        ),
+        "abc xyz 123!"
+    );
+}
+
+#[test]
 fn case_lower_unicode() {
     assert_eq!(
         run(
@@ -206,6 +250,19 @@ fn case_lower_unicode() {
             "GRÜßE"
         ),
         "grüße"
+    );
+}
+
+#[test]
+fn case_lower_unicode_expanding_fallback() {
+    assert_eq!(
+        run(
+            Operation::ChangeCase {
+                case: CaseKind::Lower
+            },
+            "İ"
+        ),
+        "i\u{307}"
     );
 }
 
@@ -332,6 +389,32 @@ fn case_sentence_newline_is_whitespace_after_terminator() {
             "first.\nsecond"
         ),
         "First.\nSecond"
+    );
+}
+
+#[test]
+fn case_sentence_unicode_lowercase_expansion() {
+    assert_eq!(
+        run(
+            Operation::ChangeCase {
+                case: CaseKind::Sentence
+            },
+            "İST. straße"
+        ),
+        "I\u{307}st. Straße"
+    );
+}
+
+#[test]
+fn case_sentence_unicode_uppercase_expansion() {
+    assert_eq!(
+        run(
+            Operation::ChangeCase {
+                case: CaseKind::Sentence
+            },
+            "ßeta. next"
+        ),
+        "SSeta. Next"
     );
 }
 

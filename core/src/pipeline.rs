@@ -9,15 +9,17 @@
 //! The input and every intermediate are clipboard-derived and may hold secrets
 //! (passwords, tokens). Each intermediate is held in a [`Zeroizing`] buffer so its
 //! bytes are wiped from the heap as soon as the next pass supersedes it, rather than
-//! lingering in freed memory until the allocator happens to reuse it. The final
-//! result is returned directly (the caller owns it, so no extra copy is made); the
-//! `core-ffi` shim zeroizes that output buffer when the caller frees it. So every
-//! buffer except the caller-owned result is wiped after use. The measurable cost is
-//! the per-intermediate wipe — tens of percent of throughput on 100+ MiB inputs, but
-//! negligible at clipboard scale (sub-MiB), where the absolute time is microseconds
-//! either way. Quantified in `docs/performance.md`.
+//! lingering in freed memory until the allocator happens to reuse it. Transform-local
+//! scratch buffers are wiped on drop and before capacity growth could release old
+//! storage; they are not wiped on every reuse while the allocation remains owned by
+//! the transform. The final result is returned directly (the caller owns it, so no
+//! extra copy is made); the `core-ffi` shim zeroizes that output buffer when the
+//! caller frees it. So every buffer except the caller-owned result is wiped after
+//! use. The measurable cost is the per-intermediate wipe — tens of percent of
+//! throughput on 100+ MiB inputs, but negligible at clipboard scale (sub-MiB), where
+//! the absolute time is microseconds either way. Quantified in `docs/performance.md`.
 
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::config::{Config, Operation, Ordering};
 use crate::ops;
@@ -47,15 +49,35 @@ pub fn transform(input: &str, config: &Config) -> String {
     // it (and the last input is wiped when this function returns). The FINAL output is
     // returned directly — no extra copy — and the core-ffi shim wipes it on free.
     let mut current = Zeroizing::new(input.to_string());
-    let last = ordered.len() - 1;
-    for (i, op) in ordered.into_iter().enumerate() {
-        let out = apply(&current, op);
-        if i == last {
+    let mut i = 0usize;
+    while i < ordered.len() {
+        let (out, consumed) = apply_next(&current, &ordered[i..]);
+        i += consumed;
+        if i == ordered.len() {
             return out;
         }
         current = Zeroizing::new(out);
     }
-    unreachable!("operations is non-empty, so the loop returns at i == last")
+    unreachable!("operations is non-empty, so the loop returns after the final op")
+}
+
+/// Dispatch one pipeline step, optionally fusing adjacent operations whose combined
+/// behavior is byte-for-byte identical but avoids a zeroized intermediate.
+fn apply_next(text: &str, ops: &[&Operation]) -> (String, usize) {
+    if ops.len() >= 3
+        && matches!(ops[0], Operation::CollapseWhitespace)
+        && matches!(ops[1], Operation::TrimTrailingWhitespace)
+        && matches!(ops[2], Operation::RemoveBlankLines)
+    {
+        return (collapse_trim_then_remove_blank_lines(text), 3);
+    }
+    if ops.len() >= 2
+        && matches!(ops[0], Operation::TrimTrailingWhitespace)
+        && matches!(ops[1], Operation::RemoveBlankLines)
+    {
+        return (trim_trailing_then_remove_blank_lines(text), 2);
+    }
+    (apply(text, ops[0]), 1)
 }
 
 /// Dispatch a single operation to its implementation in [`crate::ops`].
@@ -82,5 +104,146 @@ fn apply(text: &str, op: &Operation) -> String {
         Operation::Defang { style } => ops::defang::defang(text, *style),
         Operation::Refang => ops::defang::refang(text),
         Operation::CleanUrls => ops::urls::clean_urls(text),
+    }
+}
+
+/// Fused `TrimTrailingWhitespace` followed by `RemoveBlankLines`.
+///
+/// This is an internal W3 planner optimization only: it preserves the exact visible
+/// behavior of applying the two public ops in sequence, but saves one allocation,
+/// one full pass over the intermediate, and one zeroized intermediate drop.
+fn trim_trailing_then_remove_blank_lines(input: &str) -> String {
+    let mut preserve_trailing_newline = input.ends_with('\n');
+    let mut out = String::with_capacity(input.len());
+    let mut wrote_line = false;
+    let mut saw_newline = false;
+    let mut start = 0usize;
+    for (i, ch) in input.char_indices() {
+        if ch == '\n' {
+            saw_newline = true;
+            push_trimmed_nonblank_line(&mut out, &input[start..i], &mut wrote_line);
+            start = i + 1;
+        }
+    }
+    if !preserve_trailing_newline {
+        let final_line = trim_non_newline_whitespace_end(&input[start..]);
+        if final_line.chars().all(char::is_whitespace) {
+            preserve_trailing_newline = saw_newline;
+        } else {
+            push_nonblank_line(&mut out, final_line, &mut wrote_line);
+        }
+    }
+    if preserve_trailing_newline && wrote_line {
+        out.push('\n');
+    }
+    out
+}
+
+fn push_trimmed_nonblank_line(out: &mut String, line: &str, wrote_line: &mut bool) {
+    let trimmed = trim_non_newline_whitespace_end(line);
+    if trimmed.chars().all(char::is_whitespace) {
+        return;
+    }
+    push_nonblank_line(out, trimmed, wrote_line);
+}
+
+fn push_nonblank_line(out: &mut String, line: &str, wrote_line: &mut bool) {
+    if *wrote_line {
+        out.push('\n');
+    }
+    out.push_str(line);
+    *wrote_line = true;
+}
+
+fn trim_non_newline_whitespace_end(line: &str) -> &str {
+    line.trim_end_matches(|c: char| c.is_whitespace() && c != '\n')
+}
+
+/// Fused `CollapseWhitespace` followed by `TrimTrailingWhitespace` and
+/// `RemoveBlankLines`.
+///
+/// This extends the two-op line cleanup fusion to the default pipeline's common
+/// three-op suffix. It keeps a reusable per-line collapse scratch allocation inside
+/// `Zeroizing` storage rather than materializing and zeroizing the full collapse
+/// output before trimming/removing.
+fn collapse_trim_then_remove_blank_lines(input: &str) -> String {
+    let mut preserve_trailing_newline = input.ends_with('\n');
+    let mut out = String::with_capacity(input.len());
+    let mut wrote_line = false;
+    let mut saw_newline = false;
+    let mut start = 0usize;
+    let mut collapsed = Zeroizing::new(Vec::new());
+    for (i, ch) in input.char_indices() {
+        if ch == '\n' {
+            saw_newline = true;
+            push_collapsed_trimmed_nonblank_line(
+                &mut out,
+                &input[start..i],
+                &mut collapsed,
+                &mut wrote_line,
+            );
+            start = i + 1;
+        }
+    }
+    if !preserve_trailing_newline {
+        let final_line = collapse_line(&input[start..], &mut collapsed);
+        let final_line = trim_non_newline_whitespace_end(final_line);
+        if final_line.chars().all(char::is_whitespace) {
+            preserve_trailing_newline = saw_newline;
+        } else {
+            push_nonblank_line(&mut out, final_line, &mut wrote_line);
+        }
+    }
+    if preserve_trailing_newline && wrote_line {
+        out.push('\n');
+    }
+    out
+}
+
+fn push_collapsed_trimmed_nonblank_line(
+    out: &mut String,
+    line: &str,
+    collapsed: &mut Vec<u8>,
+    wrote_line: &mut bool,
+) {
+    let collapsed = collapse_line(line, collapsed);
+    let trimmed = trim_non_newline_whitespace_end(collapsed);
+    if trimmed.chars().all(char::is_whitespace) {
+        return;
+    }
+    push_nonblank_line(out, trimmed, wrote_line);
+}
+
+fn prepare_collapse_scratch(scratch: &mut Vec<u8>, needed: usize) {
+    if needed > scratch.capacity() {
+        // Capacity growth can free the old allocation. Wipe the current allocation
+        // first; otherwise stale clipboard-derived bytes could be left behind in
+        // allocator-owned memory.
+        scratch.zeroize();
+    } else {
+        // The old bytes remain inside this transform-owned allocation and are wiped
+        // by the surrounding `Zeroizing<Vec<u8>>` on drop.
+        scratch.clear();
+    }
+    scratch.reserve(needed);
+}
+
+fn collapse_line<'a>(line: &'a str, scratch: &'a mut Vec<u8>) -> &'a str {
+    prepare_collapse_scratch(scratch, line.len());
+    let mut in_run = false;
+    for &byte in line.as_bytes() {
+        if byte == b' ' || byte == b'\t' {
+            if !in_run {
+                scratch.push(b' ');
+                in_run = true;
+            }
+        } else {
+            in_run = false;
+            scratch.push(byte);
+        }
+    }
+    match std::str::from_utf8(scratch) {
+        Ok(collapsed) => collapsed,
+        Err(_) => line,
     }
 }

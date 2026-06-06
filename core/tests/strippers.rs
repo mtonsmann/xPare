@@ -38,6 +38,19 @@ mod html_regression {
     }
 
     #[test]
+    fn structural_edge_whitespace_is_trimmed() {
+        assert_eq!(strip_html("\n\t hello \r\n"), "hello");
+        assert_eq!(strip_html("\n\n<p>hello</p>\t \r\n"), "hello");
+        assert_eq!(strip_html("\n\t \r"), "");
+    }
+
+    #[test]
+    fn non_ascii_edge_whitespace_is_preserved() {
+        assert_eq!(strip_html("\u{00a0}hello\u{00a0}"), "\u{00a0}hello\u{00a0}");
+        assert_eq!(strip_html("&nbsp;hello&nbsp;"), "\u{00a0}hello\u{00a0}");
+    }
+
+    #[test]
     fn two_blocks_get_one_blank_line() {
         assert_eq!(strip_html("<div>a</div><div>b</div>"), "a\n\nb");
         assert_eq!(strip_html("<p>one</p><p>two</p>"), "one\n\ntwo");
@@ -51,6 +64,15 @@ mod html_regression {
         assert_eq!(strip_html("<b>a</b>\n\n\n<b>b</b>"), "a\n\nb");
         // A single source newline is preserved (a blank line == "\n\n" is allowed).
         assert_eq!(strip_html("line1\nline2"), "line1\nline2");
+    }
+
+    #[test]
+    fn marker_free_text_keeps_html_plain_text_rules() {
+        assert_eq!(
+            strip_html("snowman ☃ > 2\nline two"),
+            "snowman ☃ > 2\nline two"
+        );
+        assert_eq!(strip_html("A\n  \n\nB"), "A\n  \nB");
     }
 
     #[test]
@@ -236,6 +258,20 @@ mod markdown_regression {
     fn headings_become_plain_lines() {
         assert_eq!(strip_markdown("# Title"), "Title");
         assert_eq!(strip_markdown("## Sub\n\nbody"), "Sub\n\nbody");
+    }
+
+    #[test]
+    fn structural_edge_whitespace_is_trimmed() {
+        assert_eq!(strip_markdown("\n\n# Title\n\n"), "Title");
+        assert_eq!(strip_markdown("\n\n- one\n- two\n\n"), "one\ntwo");
+    }
+
+    #[test]
+    fn non_ascii_edge_whitespace_is_preserved() {
+        assert_eq!(
+            strip_markdown("\u{00a0}hello\u{00a0}"),
+            "\u{00a0}hello\u{00a0}"
+        );
     }
 
     #[test]
