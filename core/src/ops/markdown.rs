@@ -163,7 +163,7 @@ fn strip_markdown_parser(input: &str) -> String {
     normalize(out.into_string())
 }
 
-fn strip_plain_log_markdown(input: &str) -> Option<String> {
+pub(crate) fn strip_plain_log_markdown(input: &str) -> Option<String> {
     let mut out = String::with_capacity(input.len());
     let mut in_paragraph = false;
     let mut pending_separator = false;
@@ -210,6 +210,7 @@ fn plain_log_line_kind(line: &str) -> Option<PlainLogLineKind> {
     let mut all_equals = true;
     for (i, &byte) in bytes.iter().enumerate() {
         match byte {
+            0x80..=u8::MAX => return None,
             b' ' | b'\t' => {
                 all_dash = false;
                 all_equals = false;

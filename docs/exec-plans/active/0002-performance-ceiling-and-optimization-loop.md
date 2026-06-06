@@ -66,9 +66,10 @@ current tree (see the decision log); they are listed for continuity.
   banked: `collapse_whitespace` has a byte-oriented fast path; `strip_html` has a
   guarded marker-free text path that still preserves newline-collapsing and
   document-trim semantics; `strip_markdown` suffix-scans newline bookkeeping,
-  trims final output in place, and has a strict plain/log fast path that preserves
-  soft-break and paragraph behavior; `transform` borrows caller-owned input for
-  the first pass and only zeroizes operation outputs that feed later passes.)*
+  trims final output in place, and has a strict ASCII plain/log fast path that
+  preserves soft-break and paragraph behavior; `transform` borrows caller-owned
+  input for the first pass and only zeroizes operation outputs that feed later
+  passes.)*
 - **W2 — Stream line ops.** Rewrite `trim_trailing_whitespace`, `remove_blank_lines`,
   `unwrap_lines`, and the line-list ops to stream into one output buffer instead of
   `collect`→`join`. *(Partially banked: `sort_lines` no longer allocates a per-line
@@ -84,10 +85,10 @@ current tree (see the decision log); they are listed for continuity.
   `TrimTrailingWhitespace` → `RemoveBlankLines` suffix is fused when adjacent; the
   collapse/trim/blank fusion borrows already-collapse-normalized lines instead of
   copying them through scratch; adjacent `TrimTrailingWhitespace` →
-  `RemoveBlankLines` → `DedupeLines` is fused without owning dedupe keys.)*
-  `RemoveBlankLines` → `DedupeLines` is fused without owning dedupe keys, and the
+  `RemoveBlankLines` → `DedupeLines` is fused without owning dedupe keys; the
   four-op `CollapseWhitespace` → `TrimTrailingWhitespace` → `RemoveBlankLines` →
-  `DedupeLines` sequence uses that borrowed path when collapse is globally identity.)*
+  `DedupeLines` sequence uses that borrowed path when collapse is globally identity;
+  and `StripHtml` → `StripMarkdown` has a guarded ASCII plain/log boundary shortcut.)*
 - **W4 — Byte-oriented fast paths.** ASCII-specialized loops falling back to the
   Unicode-safe path on non-ASCII; byte scans where char boundaries are irrelevant.
   Consider `memchr` only if local benches show a clear gain **and** dependency
@@ -515,9 +516,10 @@ let two agents edit the same file family at once.
   log-like text and renders exactly the parser's plain-text behavior for that subset
   (soft breaks become spaces, blank-line paragraph separators become `\n\n`, and
   ASCII document-edge trim is preserved by construction). The fast path rejects
-  raw HTML/entities, hard breaks, headings, lists, blockquotes, tables, emphasis,
-  code, links/images, setext/thematic lines, non-intraword underscores, and leading
-  or trailing ASCII line whitespace, then falls back to the parser. Internal
+  non-ASCII input, raw HTML/entities, hard breaks, headings, lists, blockquotes,
+  tables, emphasis, code, links/images, setext/thematic lines, non-intraword
+  underscores, and leading or trailing ASCII line whitespace, then falls back to
+  the parser. Internal
   property coverage compares eligible generated inputs against the parser helper,
   and regression goldens pin log hyphens/intraword underscores plus NBSP behavior.
   Parent W3e commit versus branch same-session 128 MiB / 5-sample comparison:
@@ -525,5 +527,17 @@ let two agents edit the same file family at once.
   `html-markdown-trim-log` 331.1 → 374.4 (+13%), `default-log`
   274.0 → 302.9 (+11%), `full-menu-log` 260.4 → 285.2 (+9.5%), and
   `lossy-utf8-log` 272.0 → 269.7 (−0.8%). No ABI, dependency, zeroization,
+  ordering, privacy, or determinism change.
+- 2026-06-06: W3f accepted for guarded `StripHtml` → `StripMarkdown` boundary
+  fusion: when the original input is accepted by the ASCII plain/log Markdown
+  helper, the planner returns that exact output and consumes both ops, skipping the
+  marker-free HTML copy/intermediate. Fallback behavior is unchanged. A property
+  test covers as-given and canonical order against the public
+  `strip_html`-then-`strip_markdown` operations. Parent W1e commit versus branch
+  same-session 128 MiB / 5-sample comparison: `html-markdown-trim-log`
+  364.4 → 533.5 MiB/s (+46%), `default-log` 299.7 → 396.7 (+32%),
+  `full-menu-log` 281.9 → 366.4 (+30%), `full-menu-without-case`
+  279.9 → 365.8 (+31%), `full-menu-without-dedupe` 214.7 → 254.9 (+19%),
+  and `lossy-utf8-log` 255.0 → 251.3 (−1.5%). No ABI, dependency, zeroization,
   ordering, privacy, or determinism change.
 - _Append one entry per accepted optimization: date, scenario, before→after median._

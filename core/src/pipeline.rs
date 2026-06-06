@@ -73,6 +73,14 @@ pub fn transform(input: &str, config: &Config) -> String {
 /// Dispatch one pipeline step, optionally fusing adjacent operations whose combined
 /// behavior is byte-for-byte identical but avoids a zeroized intermediate.
 fn apply_next(text: &str, ops: &[&Operation]) -> (String, usize) {
+    if ops.len() >= 2
+        && matches!(ops[0], Operation::StripHtml)
+        && matches!(ops[1], Operation::StripMarkdown)
+    {
+        if let Some(plain) = ops::markdown::strip_plain_log_markdown(text) {
+            return (plain, 2);
+        }
+    }
     if ops.len() >= 4
         && matches!(ops[0], Operation::CollapseWhitespace)
         && matches!(ops[1], Operation::TrimTrailingWhitespace)
