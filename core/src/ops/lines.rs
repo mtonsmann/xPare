@@ -134,34 +134,59 @@ pub fn remove_blank_lines(input: &str) -> String {
 ///   paragraph block). This is intentional and documented — unwrap produces a
 ///   normalized block, not a line list.
 pub fn unwrap_lines(input: &str) -> String {
-    let lines = split_lines(input);
-    // Build a list of paragraphs; each paragraph is the trimmed, space-joined text
-    // of a maximal run of non-blank lines.
-    let mut paragraphs: Vec<String> = Vec::new();
-    let mut current = String::new();
+    let mut out = String::with_capacity(input.len());
     let mut in_paragraph = false;
-    for &line in &lines {
-        if is_blank(line) {
-            if in_paragraph {
-                paragraphs.push(std::mem::take(&mut current));
-                in_paragraph = false;
-            }
-            // Extra blank lines while not in a paragraph are ignored (collapsed).
-        } else {
-            let piece = line.trim();
-            if in_paragraph {
-                current.push(' ');
-                current.push_str(piece);
-            } else {
-                current.push_str(piece);
-                in_paragraph = true;
-            }
+    let mut pending_separator = false;
+    let mut wrote_paragraph = false;
+    let mut start = 0usize;
+    for (i, &b) in input.as_bytes().iter().enumerate() {
+        if b == b'\n' {
+            let line = input[start..i].trim_end_matches('\r');
+            push_unwrapped_line(
+                &mut out,
+                line,
+                &mut in_paragraph,
+                &mut pending_separator,
+                &mut wrote_paragraph,
+            );
+            start = i + 1;
         }
     }
-    if in_paragraph {
-        paragraphs.push(current);
+    push_unwrapped_line(
+        &mut out,
+        &input[start..],
+        &mut in_paragraph,
+        &mut pending_separator,
+        &mut wrote_paragraph,
+    );
+    out
+}
+
+fn push_unwrapped_line(
+    out: &mut String,
+    line: &str,
+    in_paragraph: &mut bool,
+    pending_separator: &mut bool,
+    wrote_paragraph: &mut bool,
+) {
+    let piece = line.trim();
+    if piece.is_empty() {
+        if *in_paragraph {
+            *in_paragraph = false;
+            *pending_separator = true;
+        }
+        return;
     }
-    paragraphs.join("\n\n")
+
+    if *in_paragraph {
+        out.push(' ');
+    } else if *pending_separator && *wrote_paragraph {
+        out.push_str("\n\n");
+        *pending_separator = false;
+    }
+    out.push_str(piece);
+    *in_paragraph = true;
+    *wrote_paragraph = true;
 }
 
 /// Sort lines. `descending` reverses the final order; `case_insensitive` folds case

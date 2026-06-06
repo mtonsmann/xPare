@@ -46,45 +46,45 @@ output pre-sizing for shared line joins, and W4b streaming sentence-case scannin
 W2b borrowed-slice trailing trim, W1b Markdown output bookkeeping/normalization
 cleanup, and W5e streaming URL cleaner token reconstruction plus W5h/W5i URL no-op
 token prefiltering and tracker-key dispatch, W7 speed-tuned release optimization,
-W1d borrowed first-pass pipeline input, plus W3
+W1d borrowed first-pass pipeline input, W2c streaming `unwrap_lines`, plus W3
 `TrimTrailingWhitespace` → `RemoveBlankLines` fusion and W3b `CollapseWhitespace` →
 `TrimTrailingWhitespace` → `RemoveBlankLines` fusion with boundary-zeroized scratch
 (see the cost section below).
 Re-measure on each machine; do not assume another machine's numbers. Read each
-transform row relative to this machine's own roofline controls (byte-copy ≈ 38 GiB/s
-in this run is the practical memory-traffic anchor, though it is noisy at this size;
-byte-scan is now vectorized under the speed-tuned release profile and can exceed the
-copy control because it does less write traffic).
+transform row relative to this machine's own roofline controls (byte-copy is noisy at
+this size and was ≈ 18 GiB/s in this run; byte-scan is vectorized under the
+speed-tuned release profile and can exceed the copy control because it does less
+write traffic).
 
 | Scenario | Median | Throughput |
 |----------|-------:|-----------:|
-| roofline-byte-scan | 0.003s | 44896.6 MiB/s |
-| roofline-byte-copy | 0.003s | 38857.6 MiB/s |
-| strip-html-plain (no `<`/`&`) | 0.041s | 3115.5 MiB/s |
-| strip-html-heavy | 0.231s | 555.1 MiB/s |
-| strip-html-sparse-log | 0.047s | 2702.4 MiB/s |
-| strip-markdown-heavy | 0.701s | 182.6 MiB/s |
-| strip-markdown-sparse-log | 0.118s | 1083.1 MiB/s |
-| collapse-whitespace | 0.118s | 1087.8 MiB/s |
-| trim-trailing | 0.101s | 1263.8 MiB/s |
-| remove-blank-lines | 0.050s | 2582.3 MiB/s |
-| unwrap-lines | 0.084s | 1532.7 MiB/s |
-| case-lower-ascii | 0.010s | 13374.0 MiB/s |
-| case-sentence-unicode | 0.399s | 320.9 MiB/s |
-| dedupe-lines-repeated | 0.070s | 1836.6 MiB/s |
-| dedupe-lines-unique | 0.072s | 1783.8 MiB/s |
-| sort-lines | 0.118s | 1083.7 MiB/s |
-| defang-iocs (URLs/emails/IPs/domains; output grows ~15%) | 0.465s | 275.0 MiB/s |
-| refang-iocs (input is the defanged buffer) | 0.112s | 1323.9 MiB/s |
-| clean-urls-trackers | 0.230s | 556.8 MiB/s |
-| html-markdown-trim-log | 0.408s | 314.1 MiB/s |
-| full-menu-without-markdown | 0.403s | 317.8 MiB/s |
-| full-menu-without-collapse | 0.531s | 241.1 MiB/s |
-| full-menu-without-dedupe | 0.691s | 185.4 MiB/s |
-| full-menu-without-case | 0.632s | 202.6 MiB/s |
-| **default-log** (html+md+collapse+trim+blank) | 0.513s | **249.6 MiB/s** |
-| **full-menu-log** (+dedupe+unwrap+lowercase) | 0.632s | **202.5 MiB/s** |
-| **lossy-utf8-log** (invalid UTF-8, default pipeline) | 0.518s | **247.6 MiB/s** |
+| roofline-byte-scan | 0.003s | 49209.5 MiB/s |
+| roofline-byte-copy | 0.007s | 18324.3 MiB/s |
+| strip-html-plain (no `<`/`&`) | 0.043s | 2997.7 MiB/s |
+| strip-html-heavy | 0.246s | 519.5 MiB/s |
+| strip-html-sparse-log | 0.049s | 2636.3 MiB/s |
+| strip-markdown-heavy | 0.791s | 161.9 MiB/s |
+| strip-markdown-sparse-log | 0.122s | 1049.5 MiB/s |
+| collapse-whitespace | 0.104s | 1225.1 MiB/s |
+| trim-trailing | 0.104s | 1225.5 MiB/s |
+| remove-blank-lines | 0.051s | 2534.4 MiB/s |
+| unwrap-lines | 0.047s | 2751.9 MiB/s |
+| case-lower-ascii | 0.010s | 12481.9 MiB/s |
+| case-sentence-unicode | 0.404s | 317.2 MiB/s |
+| dedupe-lines-repeated | 0.075s | 1695.4 MiB/s |
+| dedupe-lines-unique | 0.078s | 1639.3 MiB/s |
+| sort-lines | 0.126s | 1013.8 MiB/s |
+| defang-iocs (URLs/emails/IPs/domains; output grows ~15%) | 0.487s | 262.6 MiB/s |
+| refang-iocs (input is the defanged buffer) | 0.120s | 1232.4 MiB/s |
+| clean-urls-trackers | 0.234s | 547.0 MiB/s |
+| html-markdown-trim-log | 0.423s | 302.7 MiB/s |
+| full-menu-without-markdown | 0.412s | 310.6 MiB/s |
+| full-menu-without-collapse | 0.546s | 234.5 MiB/s |
+| full-menu-without-dedupe | 0.698s | 183.3 MiB/s |
+| full-menu-without-case | 0.651s | 196.5 MiB/s |
+| **default-log** (html+md+collapse+trim+blank) | 0.528s | **242.4 MiB/s** |
+| **full-menu-log** (+dedupe+unwrap+lowercase) | 0.651s | **196.6 MiB/s** |
+| **lossy-utf8-log** (invalid UTF-8, default pipeline) | 0.543s | **236.1 MiB/s** |
 
 Slow lanes (optimization targets): the remaining slow single-op cluster is heavy
 Markdown stripping and defang. Marker-free HTML is no longer in that slow cluster

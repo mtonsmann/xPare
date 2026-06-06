@@ -109,6 +109,58 @@ fn config_strategy() -> impl Strategy<Value = Config> {
         })
 }
 
+fn reference_unwrap_lines(input: &str) -> String {
+    let mut paragraphs: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut in_paragraph = false;
+    let mut start = 0usize;
+
+    for (i, &b) in input.as_bytes().iter().enumerate() {
+        if b == b'\n' {
+            reference_push_unwrapped_line(
+                input[start..i].trim_end_matches('\r'),
+                &mut paragraphs,
+                &mut current,
+                &mut in_paragraph,
+            );
+            start = i + 1;
+        }
+    }
+    reference_push_unwrapped_line(
+        &input[start..],
+        &mut paragraphs,
+        &mut current,
+        &mut in_paragraph,
+    );
+    if in_paragraph {
+        paragraphs.push(current);
+    }
+    paragraphs.join("\n\n")
+}
+
+fn reference_push_unwrapped_line(
+    line: &str,
+    paragraphs: &mut Vec<String>,
+    current: &mut String,
+    in_paragraph: &mut bool,
+) {
+    let piece = line.trim();
+    if piece.is_empty() {
+        if *in_paragraph {
+            paragraphs.push(std::mem::take(current));
+            *in_paragraph = false;
+        }
+        return;
+    }
+
+    if *in_paragraph {
+        current.push(' ');
+    } else {
+        *in_paragraph = true;
+    }
+    current.push_str(piece);
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(1024))]
 
@@ -132,6 +184,14 @@ proptest! {
     ) {
         let cfg = Config::as_given(vec![op]);
         prop_assert_eq!(transform(&input, &cfg), transform(&input, &cfg));
+    }
+
+    /// `unwrap_lines` is implemented as a streaming state machine; keep it equivalent
+    /// to the previous paragraph-list model across mixed newlines and Unicode seams.
+    #[test]
+    fn unwrap_lines_matches_reference(input in interesting_string()) {
+        let optimized = ops::lines::unwrap_lines(&input);
+        prop_assert_eq!(optimized, reference_unwrap_lines(&input));
     }
 
     /// Idempotent ops stay idempotent on arbitrary input: applying twice equals once.
