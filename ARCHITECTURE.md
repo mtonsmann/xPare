@@ -173,3 +173,7 @@ therefore CI). Fix the code to satisfy the check; never weaken the check.
 
 The single gate that runs all of the above is `cargo xtask ci`; CI runs the exact
 same command (`.github/workflows/ci.yml`). See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+When a review discovers a new issue class, close it through
+[`docs/guardrails/review-finding-closure.md`](docs/guardrails/review-finding-closure.md):
+add the blocker to the owning test/check layer, and update this table if the
+finding creates or changes an enforced invariant.

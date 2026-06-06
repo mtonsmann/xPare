@@ -21,7 +21,7 @@ import Foundation
         #expect(!caps.isEmpty)
         let obj = try JSONSerialization.jsonObject(with: Data(caps.utf8))
         let dict = try #require(obj as? [String: Any])
-        #expect(dict["config_version"] as? Int == 1)
+        #expect(dict["config_version"] as? Int == Int(TransformConfig.schemaVersion))
         #expect(dict["operations"] as? [Any] != nil)
     }
 

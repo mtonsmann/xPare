@@ -43,6 +43,9 @@ allocation-size overflow at the boundary.
    change, regenerate it with `cargo xtask gen-header`. The macOS shell's
    `CSafetyStrip` module re-includes this exact file (it does not copy it), so there
    is one header, not two.
+   `cargo xtask check-c-ffi-surface` also asserts that this remains the only
+   meaningful C-adjacent surface: `dummy.c` stays empty, `shim.h` only includes the
+   generated header, and no unexpected C/C++/Objective-C files appear.
 3. **A real ABI change is a compatibility event.** If you change a signature, a
    struct/enum layout, or the memory-ownership contract, you must:
    - bump `SS_ABI_VERSION` in `core-ffi/src/lib.rs`,
@@ -74,6 +77,9 @@ allocation-size overflow at the boundary.
 
 - `cargo xtask check-abi` — fails CI if the generated header differs from the
   checked-in one (the drift detector). Fast inner loop: run it on its own.
+- `cargo xtask check-c-ffi-surface` — fails CI if handwritten C logic appears, if
+  the SwiftPM shim stops including the generated header as the single source of
+  truth, or if unexpected C/C++/Objective-C/modulemap files are added.
 - `cargo test -p safetystrip-ffi` — ABI round-trip, null-arg handling, ownership.
 - `cargo test -p safetystrip-core` — config serde round-trip + version tests, and
   the `CAPABILITIES_JSON`/`CONFIG_VERSION` consistency test.

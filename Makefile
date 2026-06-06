@@ -58,6 +58,8 @@ checks: ## Run only the structural invariant checks (no build/test)
 	$(CARGO) run -p xtask -- check-entitlements
 	$(CARGO) run -p xtask -- check-no-content-logging
 	$(CARGO) run -p xtask -- check-clipboard-safety
+	$(CARGO) run -p xtask -- check-c-ffi-surface
+	$(CARGO) run -p xtask -- check-release-posture
 
 supply-chain: ## cargo-deny: RustSec advisories + license allowlist + bans + sources
 	$(CARGO) run -p xtask -- check-supply-chain
