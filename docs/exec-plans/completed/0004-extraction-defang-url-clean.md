@@ -1,6 +1,9 @@
 # Exec Plan 0004 — Extraction commands, defang/refang, URL cleaning
 
-Status: **active** · Started: 2026-06-05
+Status: **completed** · Started: 2026-06-05 · Completed: 2026-06-05 (PRs #4, #5)
+
+> Deferred, feature-level items from this plan are tracked in
+> [`docs/deferred-work.md`](../../deferred-work.md) so they survive archival.
 
 ## Progress / handoff (2026-06-05)
 

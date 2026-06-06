@@ -169,6 +169,7 @@ docs/         ARCHITECTURE / DESIGN / SECURITY, guardrails, exec plans
 | [`AGENTS.md`](AGENTS.md) | Short router: classify a change, then jump to the right guardrail |
 | [`docs/performance.md`](docs/performance.md) | What we measure, how to run `make perf`, the local baseline, and the optimization method |
 | [`docs/release-model.md`](docs/release-model.md) | Source vs. unsigned-preview vs. Developer ID releases, and the tag-triggered workflow |
+| [`docs/deferred-work.md`](docs/deferred-work.md) | Tactical backlog: feature/task-level items deferred from completed exec plans |
 | [`docs/guardrails/`](docs/guardrails/) | Focused, actionable rules per change class (transforms, memory safety, FFI/ABI, shells, macOS, privacy, dependencies) |
 
 ## License
