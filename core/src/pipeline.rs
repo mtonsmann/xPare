@@ -68,5 +68,8 @@ fn apply(text: &str, op: &Operation) -> String {
         Operation::SplitOn { delimiter } => ops::lines::split_on(text, delimiter),
         Operation::ExtractEmails => ops::lines::extract_emails(text),
         Operation::ExtractUrls => ops::lines::extract_urls(text),
+        Operation::Defang { style } => ops::defang::defang(text, *style),
+        Operation::Refang => ops::defang::refang(text),
+        Operation::CleanUrls => ops::urls::clean_urls(text),
     }
 }

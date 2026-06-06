@@ -10,6 +10,14 @@ public enum CaseKind: String, Codable, Sendable, CaseIterable {
     case sentence
 }
 
+/// Bracket convention used by `Operation.defang`. Mirrors the Rust `BracketStyle`
+/// enum (`#[serde(rename_all = "snake_case")]`), so the raw values are the exact
+/// JSON strings the core expects.
+public enum BracketStyle: String, Codable, Sendable, CaseIterable {
+    case square
+    case round
+}
+
 /// One transformation step.
 ///
 /// Encodes to the **exact** JSON the Rust core's `Operation` enum expects:
@@ -40,6 +48,11 @@ public enum Operation: Equatable, Sendable {
     case extractEmails
     case extractUrls
 
+    // --- IOC handling (rewrites) ---
+    case defang(style: BracketStyle)
+    case refang
+    case cleanUrls
+
     /// The `"op"` tag string for this variant — the snake_case discriminant.
     public var opTag: String {
         switch self {
@@ -58,6 +71,20 @@ public enum Operation: Equatable, Sendable {
         case .splitOn: return "split_on"
         case .extractEmails: return "extract_emails"
         case .extractUrls: return "extract_urls"
+        case .defang: return "defang"
+        case .refang: return "refang"
+        case .cleanUrls: return "clean_urls"
+        }
+    }
+
+    /// A *reduction* (DESIGN.md D12) replaces the buffer with a derived subset rather
+    /// than rewriting it in place. Reductions don't compose and must never run in
+    /// continuous mode — the shell surfaces them as one-shot commands. Everything
+    /// else is a *rewrite* (safe as a persistent, always-on toggle).
+    public var isReduction: Bool {
+        switch self {
+        case .extractEmails, .extractUrls: return true
+        default: return false
         }
     }
 }
@@ -72,6 +99,7 @@ extension Operation: Codable {
         case suffix
         case separator
         case delimiter
+        case style
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -80,9 +108,13 @@ extension Operation: Codable {
         switch self {
         case .stripHtml, .stripMarkdown, .collapseWhitespace,
              .trimTrailingWhitespace, .removeBlankLines, .unwrapLines,
-             .dedupeLines, .extractEmails, .extractUrls:
+             .dedupeLines, .extractEmails, .extractUrls, .refang, .cleanUrls:
             // No payload — the `op` tag is the whole object.
             break
+        case .defang(let style):
+            // Serde derives `#[serde(default)]` on `style` but always emits it on
+            // serialize; we match that for a stable, explicit wire form.
+            try c.encode(style, forKey: .style)
         case .changeCase(let caseKind):
             try c.encode(caseKind, forKey: .case)
         case .sortLines(let descending, let caseInsensitive):
@@ -128,6 +160,12 @@ extension Operation: Codable {
             self = .splitOn(delimiter: try c.decode(String.self, forKey: .delimiter))
         case "extract_emails": self = .extractEmails
         case "extract_urls": self = .extractUrls
+        case "defang":
+            // `style` is optional on the wire (serde default = square).
+            let style = try c.decodeIfPresent(BracketStyle.self, forKey: .style) ?? .square
+            self = .defang(style: style)
+        case "refang": self = .refang
+        case "clean_urls": self = .cleanUrls
         default:
             throw DecodingError.dataCorruptedError(
                 forKey: .op, in: c,

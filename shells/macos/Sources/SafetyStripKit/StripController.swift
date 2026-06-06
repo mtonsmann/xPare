@@ -111,22 +111,63 @@ public final class StripController {
 
     /// Replace settings, persist them, and re-apply side effects so a mode or
     /// hotkey change takes effect immediately.
+    ///
+    /// Only the side effects whose inputs actually changed are re-applied: the
+    /// common case (toggling/editing operations — e.g. typing in a Settings text
+    /// field) persists the new pipeline but does **not** re-register the global
+    /// hotkey or re-evaluate the monitor, which would otherwise thrash on every
+    /// keystroke.
     public func update(_ newSettings: Settings) {
+        let old = settings
         settings = newSettings
         settings.save(to: defaults)
-        installHotkey()
-        applyMonitorForCurrentMode()
+        if newSettings.hotkey != old.hotkey || hotkey == nil {
+            installHotkey()
+        }
+        if newSettings.mode != old.mode || newSettings.pollIntervalMs != old.pollIntervalMs {
+            applyMonitorForCurrentMode()
+        }
     }
 
     // MARK: - The core action
 
-    /// Read the pasteboard, transform per settings **off the main thread**, and write
-    /// the plain result back in place. Returns an outcome describing what happened (no
-    /// content). The transform runs on a background task so a large input cannot freeze
-    /// the menu-bar UI; if it outlasts `busyThreshold`, `onStrippingChange(true)` fires
-    /// (and `(false)` when it finishes) so the UI can show a "Stripping…" indicator.
+    /// Read the pasteboard, transform per the current **settings** off the main
+    /// thread, and write the plain result back in place. The everyday "Strip now" /
+    /// hotkey / continuous action. Returns a content-free outcome.
     @discardableResult
     public func stripNow(trigger: StripTrigger = .manual) async -> StripOutcome {
+        await perform(trigger: trigger) { self.effectiveConfig(for: $0) }
+    }
+
+    /// Run a **transient** explicit operation list once against the clipboard, without
+    /// touching the persisted settings pipeline. This is how reductions (extract
+    /// emails/URLs) and one-shot rewrites (refang) are surfaced — per DESIGN.md D12
+    /// they are *commands*, not standing toggles, so they must not be saved into
+    /// `settings.operations`. An HTML source is still run through `strip_html` first
+    /// so a reduction sees plain text rather than raw markup.
+    @discardableResult
+    public func runOnce(
+        operations: [SafetyStripCore.Operation],
+        trigger: StripTrigger = .manual
+    ) async -> StripOutcome {
+        await perform(trigger: trigger) { snapshot in
+            var ops = operations
+            if snapshot.kind == .html {
+                ops.removeAll { $0 == .stripHtml }
+                ops.insert(.stripHtml, at: 0)
+            }
+            return TransformConfig(operations: ops)
+        }
+    }
+
+    /// Shared machinery for ``stripNow`` / ``runOnce``: read the best pasteboard
+    /// representation, refuse an oversized clipboard, build the config via
+    /// `makeConfig`, run the transform OFF the main actor (with the threshold-gated
+    /// "Stripping…" signal), and write the result back only when it actually changed.
+    private func perform(
+        trigger: StripTrigger,
+        makeConfig: (PasteboardSnapshot) -> TransformConfig
+    ) async -> StripOutcome {
         if trigger == .clipboardChanged,
            pasteboard.changeCount == lastSelfWriteChangeCount {
             return .stripped(changed: false)
@@ -150,7 +191,14 @@ public final class StripController {
             return .tooLarge(bytes: byteCount)
         }
 
-        let config = effectiveConfig(for: snapshot)
+        var config = makeConfig(snapshot)
+        // D12 guard: continuous mode must NEVER run a reduction — it would silently
+        // replace every copied buffer with a derived subset. Drop any that slipped
+        // into the pipeline (e.g. from older persisted settings). On-demand triggers
+        // (the hotkey, "Strip now", and the one-shot Extract commands) are unaffected.
+        if trigger == .clipboardChanged {
+            config.operations.removeAll(where: { $0.isReduction })
+        }
 
         // Threshold-gated "Stripping…" signal: flip to busy only if the work outlasts
         // `busyThreshold`, so the instant common case never flickers. The task reports

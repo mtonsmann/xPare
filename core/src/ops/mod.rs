@@ -10,7 +10,9 @@
 //! freely as long as they stay pure, panic-free, and deterministic.
 
 pub mod case;
+pub mod defang;
 pub mod html;
 pub mod lines;
 pub mod markdown;
+pub mod urls;
 pub mod whitespace;

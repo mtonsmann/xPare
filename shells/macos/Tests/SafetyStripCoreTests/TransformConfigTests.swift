@@ -82,6 +82,54 @@ import Foundation
         #expect(try jsonObject(json) == jsonObject(expected))
     }
 
+    @Test func iocOpsEncodeToWireSchema() throws {
+        // defang carries its style; refang and clean_urls are bare tags.
+        let config = TransformConfig(operations: [
+            .defang(style: .square),
+            .refang,
+            .cleanUrls,
+        ])
+        let json = try config.encodedJSON()
+        let expected = """
+        {"version":1,"operations":[\
+        {"op":"defang","style":"square"},\
+        {"op":"refang"},\
+        {"op":"clean_urls"}]}
+        """
+        #expect(try jsonObject(json) == jsonObject(expected))
+    }
+
+    @Test func defangRoundStyleEncodes() throws {
+        let json = try TransformConfig(operations: [.defang(style: .round)]).encodedJSON()
+        let dict = try jsonObject(json)
+        let ops = try #require(dict["operations"] as? [[String: Any]])
+        #expect(ops[0]["op"] as? String == "defang")
+        #expect(ops[0]["style"] as? String == "round")
+    }
+
+    @Test func defangDecodesWithDefaultStyleWhenAbsent() throws {
+        // serde defaults a missing `style` to square; the Swift mirror must match.
+        let json = #"{"version":1,"operations":[{"op":"defang"}]}"#
+        let decoded = try JSONDecoder().decode(TransformConfig.self, from: Data(json.utf8))
+        #expect(decoded == TransformConfig(operations: [.defang(style: .square)]))
+    }
+
+    @Test func iocOpsRoundTripThroughCodable() throws {
+        let original = TransformConfig(operations: [
+            .defang(style: .round),
+            .refang,
+            .cleanUrls,
+        ])
+        let json = try original.encodedJSON()
+        let decoded = try JSONDecoder().decode(TransformConfig.self, from: Data(json.utf8))
+        #expect(decoded == original)
+    }
+
+    @Test func allBracketStylesRawValues() {
+        #expect(BracketStyle.square.rawValue == "square")
+        #expect(BracketStyle.round.rawValue == "round")
+    }
+
     @Test func allCaseKindsRawValues() {
         #expect(CaseKind.upper.rawValue == "upper")
         #expect(CaseKind.lower.rawValue == "lower")

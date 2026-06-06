@@ -1,0 +1,3 @@
+https://example.com/path?utm_source=newsletter&utm_medium=email&utm_campaign=spring
+https://shop.example.com/item?fbclid=AAA&gclid=BBB&msclkid=CCC
+http://example.com/?utm_term=shoes&utm_content=ad1

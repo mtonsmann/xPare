@@ -40,41 +40,48 @@ Measured 2026-06-05 on **Apple M5 Pro, 18 cores, 48 GB, arm64**, via
 pipeline intermediate zeroization** and the W1 byte-oriented
 `collapse_whitespace` path (see the cost section below). Re-measure on each machine;
 do not assume another machine's numbers. Read each transform row relative to this
-machine's own roofline controls (byte-copy ≈ 25 GiB/s in this run is the practical
-memory-traffic anchor; byte-scan is lower because the shipped release profile is
+machine's own roofline controls (byte-copy ≈ 55 GiB/s in this run is the practical
+memory-traffic anchor, though it is noisy at this size; byte-scan is lower because the shipped release profile is
 `opt-level = "s"` — size-optimized — leaving the scalar scan loop unvectorized).
 
 | Scenario | Median | Throughput |
 |----------|-------:|-----------:|
-| roofline-byte-scan | 0.036s | 3567.2 MiB/s |
-| roofline-byte-copy | 0.005s | 25687.4 MiB/s |
-| strip-html-plain (no `<`/`&`) | 0.310s | 413.5 MiB/s |
-| strip-html-heavy | 0.390s | 328.1 MiB/s |
-| strip-html-sparse-log | 0.313s | 408.3 MiB/s |
-| strip-markdown-heavy | 1.164s | 109.9 MiB/s |
-| strip-markdown-sparse-log | 0.254s | 503.6 MiB/s |
-| collapse-whitespace | 0.187s | 685.0 MiB/s |
-| trim-trailing | 0.276s | 464.2 MiB/s |
-| remove-blank-lines | 0.175s | 733.4 MiB/s |
-| unwrap-lines | 0.191s | 669.4 MiB/s |
-| case-lower-ascii | 0.671s | 190.8 MiB/s |
-| case-sentence-unicode | 1.074s | 119.2 MiB/s |
-| dedupe-lines-repeated | 0.180s | 710.1 MiB/s |
-| dedupe-lines-unique | 0.282s | 453.9 MiB/s |
-| sort-lines | 0.244s | 523.7 MiB/s |
-| html-markdown-trim-log | 0.770s | 166.2 MiB/s |
-| full-menu-without-markdown | 1.063s | 120.4 MiB/s |
-| full-menu-without-collapse | 1.074s | 119.2 MiB/s |
-| full-menu-without-dedupe | 1.912s | 66.9 MiB/s |
-| full-menu-without-case | 1.263s | 101.4 MiB/s |
-| **default-log** (html+md+collapse+trim+blank) | 1.098s | **116.6 MiB/s** |
-| **full-menu-log** (+dedupe+unwrap+lowercase) | 1.251s | **102.3 MiB/s** |
-| **lossy-utf8-log** (invalid UTF-8, default pipeline) | 1.101s | **116.5 MiB/s** |
+| roofline-byte-scan | 0.032s | 3997.8 MiB/s |
+| roofline-byte-copy | 0.002s | 55887.1 MiB/s |
+| strip-html-plain (no `<`/`&`) | 0.291s | 439.6 MiB/s |
+| strip-html-heavy | 0.338s | 379.2 MiB/s |
+| strip-html-sparse-log | 0.303s | 422.9 MiB/s |
+| strip-markdown-heavy | 0.840s | 152.4 MiB/s |
+| strip-markdown-sparse-log | 0.205s | 623.8 MiB/s |
+| collapse-whitespace | 0.178s | 719.9 MiB/s |
+| trim-trailing | 0.229s | 559.5 MiB/s |
+| remove-blank-lines | 0.160s | 800.6 MiB/s |
+| unwrap-lines | 0.171s | 747.2 MiB/s |
+| case-lower-ascii | 0.685s | 186.8 MiB/s |
+| case-sentence-unicode | 1.012s | 126.4 MiB/s |
+| dedupe-lines-repeated | 0.165s | 773.4 MiB/s |
+| dedupe-lines-unique | 0.266s | 481.6 MiB/s |
+| sort-lines | 0.204s | 627.7 MiB/s |
+| defang-iocs (URLs/emails/IPs/domains; output grows ~15%) | 1.792s | 71.4 MiB/s |
+| refang-iocs (input is the defanged buffer) | 2.848s | 51.9 MiB/s |
+| clean-urls-trackers | 0.401s | 319.0 MiB/s |
+| html-markdown-trim-log | 0.721s | 177.5 MiB/s |
+| full-menu-without-markdown | 0.988s | 129.5 MiB/s |
+| full-menu-without-collapse | 1.004s | 127.4 MiB/s |
+| full-menu-without-dedupe | 1.818s | 70.4 MiB/s |
+| full-menu-without-case | 1.166s | 109.8 MiB/s |
+| **default-log** (html+md+collapse+trim+blank) | 1.019s | **125.7 MiB/s** |
+| **full-menu-log** (+dedupe+unwrap+lowercase) | 1.163s | **110.0 MiB/s** |
+| **lossy-utf8-log** (invalid UTF-8, default pipeline) | 1.014s | **126.5 MiB/s** |
 
-Slow lanes (optimization targets): Markdown stripping, Unicode sentence-case, and
-unique-line dedupe are the slowest single-op rows. End-to-end pipelines sit at
-~102–117 MiB/s. The decomposition rows show the lowercase/dedupe tail dominates the
-full-menu log path on this generated corpus. (For reference,
+Slow lanes (optimization targets): **defang** and **refang** are now the slowest
+single-op rows — each emits (or reverses) multi-character bracket markers around
+every indicator character, so they do the heaviest per-byte work and defang's output
+grows ~15%; refang is slower still because it is a longest-match marker scan over the
+already-expanded buffer. After those come Markdown stripping, Unicode sentence-case,
+and unique-line dedupe. End-to-end clipboard pipelines (which don't include the IOC
+ops) sit at ~110–126 MiB/s. The decomposition rows show the lowercase/dedupe tail
+dominates the full-menu log path on this generated corpus. (For reference,
 the upstream FormatStripper track reported ~177/131 MiB/s default/full-menu on an
 Apple M4 — a different machine, codebase, and zeroization posture, so not a
 like-for-like comparison.)

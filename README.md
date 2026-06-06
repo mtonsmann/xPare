@@ -2,8 +2,10 @@
 
 A **memory-safe, plain-text clipboard utility**. SafetyStrip cleans the text on
 your clipboard — coerce rich text to plain, strip HTML and Markdown, normalize
-whitespace, change case, and run line operations — and writes the result back **in
-place**, without your clipboard content ever leaving the process.
+whitespace, change case, run line operations, extract emails/URLs, defang and
+refang network indicators (IOCs), and strip URL tracking parameters — and writes
+the result back **in place**, without your clipboard content ever leaving the
+process.
 
 Its whole reason to exist is trust: the clipboard holds passwords, tokens, PII, and
 source, and the markup it carries is untrusted. So SafetyStrip is built so that
@@ -167,6 +169,7 @@ docs/         ARCHITECTURE / DESIGN / SECURITY, guardrails, exec plans
 | [`AGENTS.md`](AGENTS.md) | Short router: classify a change, then jump to the right guardrail |
 | [`docs/performance.md`](docs/performance.md) | What we measure, how to run `make perf`, the local baseline, and the optimization method |
 | [`docs/release-model.md`](docs/release-model.md) | Source vs. unsigned-preview vs. Developer ID releases, and the tag-triggered workflow |
+| [`docs/deferred-work.md`](docs/deferred-work.md) | Tactical backlog: feature/task-level items deferred from completed exec plans |
 | [`docs/guardrails/`](docs/guardrails/) | Focused, actionable rules per change class (transforms, memory safety, FFI/ABI, shells, macOS, privacy, dependencies) |
 
 ## License
