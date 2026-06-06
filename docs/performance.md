@@ -38,62 +38,63 @@ make bench-large     # heavy log files up to 256 MB
 Measured 2026-06-06 on **Apple M5 Pro, 18 cores, 48 GB, arm64**, via
 `make perf PERF_MIB=128 PERF_SAMPLES=5` (median of 5), on the current code **with
 pipeline intermediate zeroization** and the W1 byte-oriented
-`collapse_whitespace` path, W4 ASCII Upper/Lower fast paths, and W5b IOC marker
-dispatch plus W5c pre-sized line dedupe containers and W5d defang allocation/marker
-guard cleanup, W2 output pre-sizing for shared line joins, and W4b streaming
-sentence-case scanning, W2b borrowed-slice trailing trim, and W1b Markdown output
-bookkeeping/normalization cleanup, plus W3 `TrimTrailingWhitespace` →
-`RemoveBlankLines` fusion and W3b `CollapseWhitespace` → `TrimTrailingWhitespace`
-→ `RemoveBlankLines` fusion (see the cost section below). Re-measure on each
-machine; do not assume another machine's numbers. Read each transform row relative
-to this machine's own roofline controls (byte-copy ≈ 43 GiB/s in this run is the
-practical memory-traffic anchor, though it is noisy at this size; byte-scan is lower
-because the shipped release profile is `opt-level = "s"` — size-optimized — leaving
-the scalar scan loop unvectorized).
+`collapse_whitespace` path, W1c marker-free HTML text path, W4 ASCII Upper/Lower
+fast paths, and W5b IOC marker dispatch plus W5c pre-sized line dedupe containers
+and W5d defang allocation/marker guard cleanup, W2 output pre-sizing for shared line
+joins, and W4b streaming sentence-case scanning, W2b borrowed-slice trailing trim,
+and W1b Markdown output bookkeeping/normalization cleanup, plus W3
+`TrimTrailingWhitespace` → `RemoveBlankLines` fusion and W3b `CollapseWhitespace` →
+`TrimTrailingWhitespace` → `RemoveBlankLines` fusion (see the cost section below).
+Re-measure on each machine; do not assume another machine's numbers. Read each
+transform row relative to this machine's own roofline controls (byte-copy ≈ 44 GiB/s
+in this run is the practical memory-traffic anchor, though it is noisy at this size;
+byte-scan is lower because the shipped release profile is `opt-level = "s"` —
+size-optimized — leaving the scalar scan loop unvectorized).
 
 | Scenario | Median | Throughput |
 |----------|-------:|-----------:|
-| roofline-byte-scan | 0.032s | 4028.3 MiB/s |
-| roofline-byte-copy | 0.003s | 43968.6 MiB/s |
-| strip-html-plain (no `<`/`&`) | 0.290s | 441.3 MiB/s |
-| strip-html-heavy | 0.372s | 344.4 MiB/s |
-| strip-html-sparse-log | 0.297s | 431.5 MiB/s |
-| strip-markdown-heavy | 0.936s | 136.8 MiB/s |
-| strip-markdown-sparse-log | 0.217s | 590.4 MiB/s |
-| collapse-whitespace | 0.198s | 646.9 MiB/s |
-| trim-trailing | 0.223s | 574.3 MiB/s |
-| remove-blank-lines | 0.147s | 867.8 MiB/s |
-| unwrap-lines | 0.179s | 713.5 MiB/s |
-| case-lower-ascii | 0.107s | 1199.6 MiB/s |
-| case-sentence-unicode | 0.537s | 238.6 MiB/s |
-| dedupe-lines-repeated | 0.166s | 769.8 MiB/s |
-| dedupe-lines-unique | 0.173s | 738.9 MiB/s |
-| sort-lines | 0.222s | 576.3 MiB/s |
-| defang-iocs (URLs/emails/IPs/domains; output grows ~15%) | 0.999s | 128.1 MiB/s |
-| refang-iocs (input is the defanged buffer) | 0.384s | 385.2 MiB/s |
-| clean-urls-trackers | 0.463s | 276.7 MiB/s |
-| html-markdown-trim-log | 0.731s | 175.0 MiB/s |
-| full-menu-without-markdown | 0.718s | 178.2 MiB/s |
-| full-menu-without-collapse | 0.879s | 145.7 MiB/s |
-| full-menu-without-dedupe | 1.047s | 122.2 MiB/s |
-| full-menu-without-case | 0.960s | 133.3 MiB/s |
-| **default-log** (html+md+collapse+trim+blank) | 0.811s | **157.8 MiB/s** |
-| **full-menu-log** (+dedupe+unwrap+lowercase) | 0.959s | **133.4 MiB/s** |
-| **lossy-utf8-log** (invalid UTF-8, default pipeline) | 0.811s | **158.2 MiB/s** |
+| roofline-byte-scan | 0.033s | 3826.6 MiB/s |
+| roofline-byte-copy | 0.003s | 44605.2 MiB/s |
+| strip-html-plain (no `<`/`&`) | 0.134s | 954.1 MiB/s |
+| strip-html-heavy | 0.388s | 329.8 MiB/s |
+| strip-html-sparse-log | 0.149s | 861.1 MiB/s |
+| strip-markdown-heavy | 0.979s | 130.7 MiB/s |
+| strip-markdown-sparse-log | 0.218s | 586.5 MiB/s |
+| collapse-whitespace | 0.178s | 720.7 MiB/s |
+| trim-trailing | 0.223s | 574.0 MiB/s |
+| remove-blank-lines | 0.146s | 876.0 MiB/s |
+| unwrap-lines | 0.182s | 702.4 MiB/s |
+| case-lower-ascii | 0.108s | 1189.9 MiB/s |
+| case-sentence-unicode | 0.537s | 238.5 MiB/s |
+| dedupe-lines-repeated | 0.168s | 760.5 MiB/s |
+| dedupe-lines-unique | 0.174s | 735.9 MiB/s |
+| sort-lines | 0.216s | 591.3 MiB/s |
+| defang-iocs (URLs/emails/IPs/domains; output grows ~15%) | 1.009s | 126.9 MiB/s |
+| refang-iocs (input is the defanged buffer) | 0.397s | 372.2 MiB/s |
+| clean-urls-trackers | 0.473s | 270.6 MiB/s |
+| html-markdown-trim-log | 0.582s | 219.8 MiB/s |
+| full-menu-without-markdown | 0.568s | 225.2 MiB/s |
+| full-menu-without-collapse | 0.726s | 176.2 MiB/s |
+| full-menu-without-dedupe | 0.899s | 142.4 MiB/s |
+| full-menu-without-case | 0.806s | 158.9 MiB/s |
+| **default-log** (html+md+collapse+trim+blank) | 0.657s | **194.9 MiB/s** |
+| **full-menu-log** (+dedupe+unwrap+lowercase) | 0.807s | **158.7 MiB/s** |
+| **lossy-utf8-log** (invalid UTF-8, default pipeline) | 0.663s | **193.5 MiB/s** |
 
 Slow lanes (optimization targets): the remaining slow single-op cluster is heavy
-Markdown stripping and defang. Sparse/log-like Markdown is no longer in that slow
-cluster after W1b's suffix-based newline bookkeeping and in-place edge trim, but
-heavy Markdown still pays parser/event cost. Defang still emits multi-character
-bracket markers around every indicator character and grows output ~15%, but W5d
-removed much of the avoidable token-level overhead. Unicode sentence-case is no
-longer in the same slow cluster after W4b's streaming scanner, which avoids the
-temporary lowercase buffer and per-character uppercase allocations while preserving
-Unicode expansion. End-to-end clipboard pipelines (which don't include the IOC ops)
-sit at ~133–158 MiB/s in this run. The W3 fusions remove the trim/remove-blank
-intermediate and the common collapse/trim/remove suffix from the default path, so
-the remaining decomposition rows now point more strongly at Markdown/HTML parsing
-and the full-menu dedupe/unwrap/lowercase tail than at line cleanup itself.
+Markdown stripping and defang. Marker-free HTML is no longer in that slow cluster
+after W1c's guarded plain-text path, and sparse/log-like Markdown is no longer there
+after W1b's suffix-based newline bookkeeping and in-place edge trim, but heavy
+Markdown still pays parser/event cost. Defang still emits multi-character bracket
+markers around every indicator character and grows output ~15%, but W5d removed
+much of the avoidable token-level overhead. Unicode sentence-case is no longer in
+the same slow cluster after W4b's streaming scanner, which avoids the temporary
+lowercase buffer and per-character uppercase allocations while preserving Unicode
+expansion. End-to-end clipboard pipelines (which don't include the IOC ops) sit at
+~159–195 MiB/s in this run. The W3 fusions remove the trim/remove-blank intermediate
+and the common collapse/trim/remove suffix from the default path, so the remaining
+decomposition rows now point more strongly at Markdown parsing and the full-menu
+dedupe/unwrap/lowercase tail than at marker-free HTML or line cleanup.
 (For reference,
 the upstream FormatStripper track reported ~177/131 MiB/s default/full-menu on an
 Apple M4 — a different machine, codebase, and zeroization posture, so not a

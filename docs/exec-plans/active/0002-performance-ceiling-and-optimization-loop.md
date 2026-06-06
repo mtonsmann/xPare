@@ -63,10 +63,10 @@ current tree (see the decision log); they are listed for continuity.
 - **W1 — Remove copy amplification.** No-op fast paths when an op's trigger bytes
   are absent (HTML with no `<`/`&`, whitespace-collapse with no tab/double-space),
   guarded by golden tests so output stays byte-for-byte identical. *(Partially
-  banked: `collapse_whitespace` has a byte-oriented fast path; `strip_html` remains
-  open because its newline-collapsing and document-trim semantics make a plaintext
-  shortcut correctness-sensitive; `strip_markdown` suffix-scans newline bookkeeping
-  and trims final output in place.)*
+  banked: `collapse_whitespace` has a byte-oriented fast path; `strip_html` has a
+  guarded marker-free text path that still preserves newline-collapsing and
+  document-trim semantics; `strip_markdown` suffix-scans newline bookkeeping and
+  trims final output in place.)*
 - **W2 — Stream line ops.** Rewrite `trim_trailing_whitespace`, `remove_blank_lines`,
   `unwrap_lines`, and the line-list ops to stream into one output buffer instead of
   `collect`→`join`. *(Partially banked: `sort_lines` no longer allocates a per-line
@@ -318,4 +318,22 @@ let two agents edit the same file family at once.
   142.2 → 158.2 (+11%), `full-menu-without-markdown` 160.4 → 178.2 (+11%),
   and `full-menu-without-dedupe` 112.4 → 122.2 (+8.7%). No ABI, dependency,
   zeroization, ordering, or privacy posture change.
+- 2026-06-06: Rejected a private `DedupeLines` → `UnwrapLines` →
+  `ChangeCase(Lower)` full-menu-tail fusion after equivalence proptests passed but
+  the 128 MiB / 5-sample throughput run regressed `full-menu-log`
+  133.4 → 129.7 MiB/s. The synthetic full-menu log dedupes down to a tiny tail, so
+  this does not look like a promising near-term wave without a different workload.
+- 2026-06-06: W1c accepted for marker-free HTML text: `strip_html` now takes a
+  guarded fast path when the input has no `<` or `&`, still routing literal newlines
+  through the existing newline-collapser and trimming only the documented ASCII edge
+  bytes in place. Exact-output tests pin marker-free Unicode/prose, `>` literals,
+  blank-line collapsing, all-edge trimming, and NBSP edge preservation. To avoid
+  thermal/noise drift, the same 128 MiB / 5-sample comparison was run against a
+  temporary clean worktree at the previous checkpoint under current machine
+  conditions: `strip-html-plain` 423.3 → 954.1 MiB/s (+125%),
+  `strip-html-sparse-log` 417.9 → 861.1 (+106%), `strip-html-heavy`
+  332.4 → 329.8 (−0.8%), `html-markdown-trim-log` 173.1 → 219.8 (+27%),
+  `default-log` 156.3 → 194.9 (+25%), `full-menu-log` 132.0 → 158.7 (+20%),
+  and `lossy-utf8-log` 154.6 → 193.5 (+25%). No ABI, dependency, zeroization,
+  ordering, or privacy posture change.
 - _Append one entry per accepted optimization: date, scenario, before→after median._
