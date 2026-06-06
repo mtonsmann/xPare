@@ -33,6 +33,8 @@ class:
   enforced.
 - `docs/guardrails/` — focused rules per change class (linked from each workflow
   section below).
+- `docs/guardrails/review-finding-closure.md` — what to add when a review finds
+  a class of bug that should not come back.
 
 The invariants named above are enforced by `cargo xtask ci` (see
 `CONTRIBUTING.md`), which CI runs verbatim. Keep checks green by fixing the code,
@@ -50,9 +52,12 @@ not by weakening the check.
 5. Add or update focused tests for behavior changes — especially anything that
    affects transform output, the ABI, or the privacy posture. Core changes must
    include adversarial-input coverage.
-6. Run checks that match the risk of the change (see `CONTRIBUTING.md`). If you
+6. If a review, scan, fuzz run, or performance pass found an issue class, follow
+   `docs/guardrails/review-finding-closure.md`: add repeatable regression
+   protection and the relevant docs lesson before closing it.
+7. Run checks that match the risk of the change (see `CONTRIBUTING.md`). If you
    skip a relevant check, explain why in the PR.
-7. Update `ARCHITECTURE.md`, `DESIGN.md`, the relevant guardrail, and the shell
+8. Update `ARCHITECTURE.md`, `DESIGN.md`, the relevant guardrail, and the shell
    contract when the boundary, invariants, posture, or supported transforms
    change.
 
@@ -170,6 +175,9 @@ Consult `ARCHITECTURE.md` and the guardrail for the topic being documented.
 Docs-only PRs may skip core tests when the PR explains why. Still run the
 formatter.
 
+If the docs-only change captures a review lesson, also consult
+`docs/guardrails/review-finding-closure.md`.
+
 ## Pull Requests
 
 - State the change class and any compatibility or posture impact (ABI, privacy,
@@ -177,3 +185,5 @@ formatter.
 - Keep diffs narrow and single-purpose.
 - Update the relevant guardrail and `ARCHITECTURE.md` when invariants or the
   boundary move.
+- For any fixed review finding class, state the mechanical regression protection
+  and the docs lesson added.

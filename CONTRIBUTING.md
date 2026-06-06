@@ -24,11 +24,13 @@ it runs:
 6. `cargo xtask check-no-network` — no network/OS-capable crate anywhere in the tree
 7. `cargo xtask check-no-content-logging` — no shipped line logs/persists clipboard content
 8. `cargo xtask check-clipboard-safety` — default targets never touch the real clipboard
-9. `cargo xtask check-abi` — the checked-in C header matches the FFI source
-10. `cargo xtask check-entitlements` — the macOS entitlements file is minimal
-11. `cargo xtask check-shell` — `shellcheck` over the shell scripts
-12. `cargo xtask check-workflows` — `actionlint` + `zizmor` over `.github/workflows/`
-13. `cargo xtask check-supply-chain` — `cargo-deny`: advisories, licenses, bans, sources
+9. `cargo xtask check-c-ffi-surface` — no unexpected handwritten C/C++/Objective-C surface
+10. `cargo xtask check-abi` — the checked-in C header matches the FFI source
+11. `cargo xtask check-entitlements` — the macOS entitlements file is exactly minimal
+12. `cargo xtask check-release-posture` — official signing cannot broaden entitlements
+13. `cargo xtask check-shell` — `shellcheck` over the shell scripts
+14. `cargo xtask check-workflows` — `actionlint` + `zizmor` over `.github/workflows/`
+15. `cargo xtask check-supply-chain` — `cargo-deny`: advisories, licenses, bans, sources
 
 If any check fails, it prints a remediation-oriented message. **Fix the code so
 the check passes; do not weaken the check.** Each check can also be run on its
@@ -62,11 +64,30 @@ the PR.
 | Change class | What you touched | Run at minimum |
 |---|---|---|
 | **Core transform** | `core/` transform logic, ops, pipeline | `cargo test -p safetystrip-core`, `cargo clippy -p safetystrip-core --all-targets -- -D warnings`, `cargo fmt`, and the relevant fuzz target (below). New behavior needs regression **and** adversarial-input tests; output must stay deterministic. |
-| **FFI boundary / ABI** | `core-ffi/` (incl. `cbindgen.toml`), config serialization, capabilities/version | `cargo xtask check-abi`, `cargo test -p safetystrip-ffi`. An intended ABI change means: bump `SS_ABI_VERSION`, run `cargo xtask gen-header`, and call it out in the PR (confirm a non-Swift shell could still consume the boundary). Adding a transform must **not** change the ABI. |
-| **Shell** | `shells/macos/` (Swift), reserved `windows/`/`linux/` | `cargo build -p safetystrip-ffi --release` then `swift build --package-path shells/macos`. Touching entitlements → `cargo xtask check-entitlements`; touching the build/release shell scripts → `cargo xtask check-shell`. No transform logic belongs in a shell. |
-| **Security / privacy posture** | entitlements, logging, data paths, anything network-adjacent | `cargo xtask check-no-network`, `cargo xtask check-entitlements`, `cargo xtask check-unsafe-forbid`. Any new entitlement, network-capable dependency, or data path is a posture change — justify it in the PR and update `SECURITY.md`. |
+| **FFI boundary / ABI** | `core-ffi/` (incl. `cbindgen.toml`), config serialization, capabilities/version, `CSafetyStrip` shim files | `cargo xtask check-abi`, `cargo xtask check-c-ffi-surface`, `cargo test -p safetystrip-ffi`. An intended ABI change means: bump `SS_ABI_VERSION`, run `cargo xtask gen-header`, and call it out in the PR (confirm a non-Swift shell could still consume the boundary). Adding a transform must **not** change the ABI. |
+| **Shell** | `shells/macos/` (Swift), reserved `windows/`/`linux/` | `cargo build -p safetystrip-ffi --release` then `swift build --package-path shells/macos`. Touching entitlements → `cargo xtask check-entitlements`; touching release signing → `cargo xtask check-release-posture`; touching the build/release shell scripts → `cargo xtask check-shell`. No transform logic belongs in a shell. |
+| **Security / privacy posture** | entitlements, logging, data paths, anything network-adjacent | `cargo xtask check-no-network`, `cargo xtask check-entitlements`, `cargo xtask check-release-posture`, `cargo xtask check-unsafe-forbid`. Any new entitlement, network-capable dependency, or data path is a posture change — justify it in the PR and update `SECURITY.md`. |
 | **Dependencies & CI** | crate versions, `Cargo.toml`/`Cargo.lock`, lints, `xtask`, `.github/workflows/`, shell scripts | `cargo xtask check-core-deps`, `cargo xtask check-no-network`, `cargo xtask check-supply-chain` (any dependency/lockfile change), `cargo xtask check-workflows` (any workflow change), plus `cargo test -p xtask` / `cargo clippy -p xtask --all-targets -- -D warnings` when editing `xtask`. New crates: prefer boring, audited, API-stable ones; a new core dependency must be a pure-data crate (no OS/IO/net) and added to the `xtask` allowlist with justification. |
 | **Docs only** | `README`, `ARCHITECTURE.md`, `DESIGN.md`, `docs/`, runbooks | `cargo fmt --all --check` (still run the formatter). Other checks may be skipped if the PR explains why. |
+
+## Closing review findings
+
+Security scans, ordinary code reviews, fuzzing, CI failures, and performance
+reviews can all uncover a class of issue, not just one bad line. Closing that
+class requires more than the immediate fix.
+
+For each finding class, follow
+[`docs/guardrails/review-finding-closure.md`](docs/guardrails/review-finding-closure.md):
+
+- name the issue class in the PR,
+- add a repeatable blocker at the owning layer,
+- update the relevant guardrail or posture doc with the lesson,
+- run the gate that proves the blocker works.
+
+Use tests for behavior, corpus/property coverage for adversarial input,
+`perf_guard` or the documented benchmark flow for performance, and `xtask` or
+standard linters for structural invariants. If no mechanical blocker is practical,
+document the proof gap and add the strongest repeatable substitute available.
 
 ## Fuzzing (never-panics invariant)
 
@@ -99,4 +120,6 @@ property/corpus tests in `cargo xtask ci`.
   shell code, dependency posture, and formatting.
 - Update the relevant guardrail and `ARCHITECTURE.md` when an invariant or the
   boundary moves.
+- For any security, correctness, or performance finding class fixed by the PR,
+  call out the regression protection and docs lesson added.
 - Make sure `cargo xtask ci` is green.

@@ -172,6 +172,12 @@ CI, so there is no CI-only logic to drift from and no extra tooling to install. 
 check prints a remediation-oriented message that teaches how to *fix* the violation,
 not how to silence it.
 
+When a review finds a new class of security, correctness, or performance issue,
+the fix also adds a repeatable blocker and a short guardrail lesson. **Why:** the
+project treats review findings as new knowledge about an invariant, not as
+one-off cleanup. The workflow is captured in
+[`docs/guardrails/review-finding-closure.md`](docs/guardrails/review-finding-closure.md).
+
 ### D12 — Operation taxonomy: rewrites vs reductions, toggles vs commands
 
 Operations divide by **what they do to the buffer**, and the shell surface follows

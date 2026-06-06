@@ -64,9 +64,10 @@ architecture choice explicit.
    `SAFETYSTRIP_ENABLE_OFFICIAL_RELEASE == 'true'` **and** the Apple secrets are
    present. It re-checks `shells/macos/SafetyStrip.entitlements`, imports the
    Developer ID cert into a temp keychain, stores notary credentials, runs
-   `make dist` (Developer ID sign with the checked App Sandbox entitlements →
-   verify the signed payload is minimal → notarize → staple → zip → checksum →
-   verify) and `make github-release`, then wipes the signing material.
+   `make dist` (Developer ID sign executable and bundle with the checked App
+   Sandbox entitlements → verify both signed payloads are minimal → notarize →
+   staple → zip → checksum → verify) and `make github-release`, then wipes the
+   signing material.
 
 Signing/notary credentials are **never** required for pull-request CI. Absent them,
 CI still builds and tests, but must not publish an artifact as an official binary.
@@ -91,8 +92,9 @@ file is unavailable. `SIGN_ENTITLEMENTS` exists so CI can pass that checked file
 an absolute path; `release.sh` rejects any path that does not resolve to the checked
 file. The signed payload must contain only
 `com.apple.security.app-sandbox = true`. After signing, `release.sh` reads the
-signature back with `codesign -d --entitlements :-` and fails if the signed payload
-is not minimal.
+executable and bundle signatures back with `codesign -d --entitlements :-` and
+fails if either signed payload is not minimal. `cargo xtask check-release-posture`
+checks that this fail-closed release path remains wired into the script.
 
 ## First public binary prerequisites
 

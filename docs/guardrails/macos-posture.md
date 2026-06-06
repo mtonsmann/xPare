@@ -18,7 +18,8 @@ should distrust, so the posture is deliberately minimal and is checked mechanica
 2. **Hardened Runtime is on** for the shipped app.
 3. **The entitlements file is minimal: ONLY `app-sandbox = true`.** Reading and
    writing the pasteboard needs **no** entitlement, so none is requested. The
-   following are **forbidden** (the `check-entitlements` task rejects them):
+   `check-entitlements` task rejects any extra entitlement key; the following
+   classes are called out because they are especially dangerous:
    - any `com.apple.security.network.*` (no network — clipboard data must never be
      exfiltratable),
    - any `com.apple.security.device.*` (camera, mic, USB, input-monitoring, …),
@@ -36,7 +37,9 @@ should distrust, so the posture is deliberately minimal and is checked mechanica
 4. **Official Developer ID releases must use that entitlements file.** Unsigned or
    ad-hoc preview builds are not official binaries. `release.sh dist` defaults to
    `shells/macos/SafetyStrip.entitlements`, rejects alternate resolved paths, signs
-   with it, and verifies the signed payload with `codesign -d --entitlements :-`.
+   the executable and bundle with it, and verifies both signed payloads with
+   `codesign -d --entitlements :-`. `cargo xtask check-release-posture`
+   mechanically checks that the release script still has those fail-closed guards.
 
 ### Hotkey
 
@@ -106,9 +109,13 @@ you from. Full rationale: [`DESIGN.md`](../../DESIGN.md) (D8, D9) and
 ## Enforcing checks
 
 - `cargo xtask check-entitlements` — reads `shells/macos/SafetyStrip.entitlements`,
-  **requires** `app-sandbox = true`, and **fails** on any banned key/prefix above. A
-  missing file is a failure (the entitlements file is a required deliverable). The
-  check is a portable XML scan (no `plutil`), so it runs on the Linux CI gate too.
+  **requires** `app-sandbox = true`, and **fails** on any extra key. A missing file
+  is a failure (the entitlements file is a required deliverable). The check is a
+  portable XML scan (no `plutil`), so it runs on the Linux CI gate too.
+- `cargo xtask check-release-posture` — asserts the official signing path still
+  defaults to the checked entitlements file, rejects alternate resolved
+  `SIGN_ENTITLEMENTS` paths, signs executable and bundle with that file, and
+  verifies both signed entitlement payloads are minimal.
 - `shells/macos/release.sh dist` — resolves the same file by default, rejects
   alternate resolved paths, refuses to sign if it is missing, and verifies that the
   signed payload is still minimal after Developer ID signing.

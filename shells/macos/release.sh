@@ -173,6 +173,7 @@ case "${cmd}" in
             --entitlements "${sign_entitlements}" --sign "${CERT_NAME}" "${APP}"
         codesign --verify --strict --verbose=2 "${EXE}"
         codesign --verify --strict --verbose=2 "${APP}"
+        verify_signed_entitlements "${EXE}"
         verify_signed_entitlements "${APP}"
 
         local_zip="${RELEASE_DIR}/${APP_NAME}-v${version}-notary.zip"

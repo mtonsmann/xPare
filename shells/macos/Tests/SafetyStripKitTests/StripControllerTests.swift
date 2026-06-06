@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import AppKit
 @testable import SafetyStripKit
 @testable import SafetyStripCore
 
@@ -78,6 +79,34 @@ struct StripControllerTests {
         let config = controller.effectiveConfig(for:
             PasteboardSnapshot(text: "<p>**Bold**</p>", kind: .html))
         #expect(config.operations == [.stripHtml, .stripMarkdown, .collapseWhitespace])
+    }
+
+    /// Mechanical guard for the HTML-before-Markdown invariant across likely UI
+    /// operation lists: HTML input always starts with exactly one strip_html.
+    @Test func htmlSourceAlwaysStartsWithSingleStripHtml() throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let operationLists: [[SafetyStripCore.Operation]] = [
+            [],
+            [.stripMarkdown],
+            [.stripHtml],
+            [.stripMarkdown, .stripHtml, .collapseWhitespace, .stripHtml],
+            [.extractUrls, .stripMarkdown, .stripHtml],
+        ]
+
+        for operations in operationLists {
+            let controller = StripController(
+                settings: Settings(mode: .onDemand, operations: operations),
+                pasteboard: FakePasteboard(),
+                defaults: defaults
+            )
+
+            let config = controller.effectiveConfig(for:
+                PasteboardSnapshot(text: "<p>**Bold**</p>", kind: .html))
+            #expect(config.operations.first == .stripHtml)
+            #expect(config.operations.filter { $0 == .stripHtml }.count == 1)
+        }
     }
 
     /// A plain string already equal to the stripped result is not rewritten, so
@@ -183,6 +212,28 @@ struct StripControllerTests {
         #expect(transformer.callCount == 0,
                 "oversized rich representations must not reach the transformer")
         #expect(pb.writes.isEmpty)
+    }
+
+    /// Named pasteboard smoke for the real SystemPasteboard path. This does not
+    /// touch NSPasteboard.general, but verifies raw rich data is refused before
+    /// decode/AppKit materialization or plain fallback.
+    @Test func systemPasteboardRejectsOversizedHtmlRepresentationBeforeFallback() throws {
+        let name = NSPasteboard.Name("SafetyStripTests.\(UUID().uuidString)")
+        let rawPasteboard = NSPasteboard(name: name)
+        rawPasteboard.clearContents()
+        defer { rawPasteboard.clearContents() }
+
+        let htmlData = Data(repeating: 0x41, count: 128)
+        #expect(rawPasteboard.setData(htmlData, forType: .html))
+        #expect(rawPasteboard.setString("plain fallback", forType: .string))
+
+        let pasteboard = SystemPasteboard(pasteboard: rawPasteboard)
+        let result = pasteboard.readBest(maxRepresentationBytes: 16)
+        guard case .tooLarge(let bytes, _) = result else {
+            Issue.record("expected oversized HTML to be refused, got \(result)")
+            return
+        }
+        #expect(bytes == 128)
     }
 
     /// The default ceiling is sane: positive, comfortably above a real clipboard,
@@ -297,6 +348,46 @@ struct StripControllerTests {
                 "stale transform output must not overwrite newer clipboard data")
     }
 
+    /// The shared runOnce path must get the same stale-generation protection as
+    /// stripNow; transient commands must not overwrite newer clipboard data.
+    @Test func staleRunOnceDoesNotOverwriteNewerClipboard() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let blocking = BlockingTransformer(output: "old urls")
+        let pb = FakePasteboard(snapshot:
+            PasteboardSnapshot(text: "https://old.example", kind: .plain))
+        let controller = StripController(
+            settings: Settings(mode: .onDemand, operations: [.stripHtml]),
+            pasteboard: pb,
+            transformer: blocking,
+            defaults: defaults
+        )
+
+        let task = Task { @MainActor in
+            await controller.runOnce(operations: [.extractUrls])
+        }
+        let deadline = Date().addingTimeInterval(1.0)
+        while !blocking.hasStarted, Date() < deadline {
+            await Task.yield()
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        #expect(blocking.hasStarted, "test transformer should have started")
+        if !blocking.hasStarted {
+            blocking.release()
+        }
+
+        let newer = PasteboardSnapshot(text: "new clipboard", kind: .plain)
+        pb.externalSet(newer)
+        blocking.release()
+
+        let outcome = await task.value
+        #expect(outcome == .stripped(changed: false))
+        #expect(pb.snapshot == newer)
+        #expect(pb.writes.isEmpty,
+                "stale runOnce output must not overwrite newer clipboard data")
+    }
+
     /// A SafetyStrip self-write in continuous mode is recognized by generation
     /// and not reprocessed when the monitor reports that same change.
     @Test func continuousSelfWriteGenerationIsSuppressed() async throws {
@@ -327,6 +418,41 @@ struct StripControllerTests {
         #expect(pb.writes == ["clean"])
     }
 
+    /// The monitor callback path suppresses SafetyStrip's own write before it
+    /// reads or transforms that same generation again.
+    @Test func continuousMonitorSuppressesSelfWriteBeforeRead() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let transformer = RecordingTransformer(output: "clean")
+        let pb = FakePasteboard(snapshot:
+            PasteboardSnapshot(text: "<p>dirty</p>", kind: .html))
+        let controller = StripController(
+            settings: Settings(
+                mode: .continuous,
+                operations: [.stripHtml],
+                pollIntervalMs: 10
+            ),
+            pasteboard: pb,
+            transformer: transformer,
+            defaults: defaults
+        )
+        controller.activate()
+        defer { controller.deactivate() }
+
+        let first = await controller.stripNow(trigger: .manual)
+        #expect(first == .stripped(changed: true))
+        #expect(transformer.callCount == 1)
+        #expect(pb.readBestCalls == 1)
+
+        try await Task.sleep(for: .milliseconds(150))
+
+        #expect(transformer.callCount == 1,
+                "monitor-observed self-writes must not be transformed again")
+        #expect(pb.readBestCalls == 1,
+                "monitor-observed self-writes must be suppressed before read")
+    }
+
     /// A one-shot command (`runOnce`) transforms the clipboard but must NOT mutate
     /// the persisted pipeline — reductions/refang are commands, not toggles (D12).
     @Test func runOnceDoesNotPersistToSettings() async throws {
@@ -348,6 +474,31 @@ struct StripControllerTests {
         // The transient command must not mutate the persisted pipeline — `runOnce`
         // never writes settings, so the configured pipeline is untouched.
         #expect(controller.settings.operations == [.stripHtml])
+    }
+
+    /// Transient command configs also force HTML neutralization first and dedupe
+    /// user-provided strip_html before reductions or Markdown stripping run.
+    @Test func runOnceHtmlSourceMovesStripHtmlToFrontWithoutDuplicate() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let transformer = RecordingTransformer(output: "plain")
+        let pb = FakePasteboard(snapshot:
+            PasteboardSnapshot(text: "<p>**https://a.example**</p>", kind: .html))
+        let controller = StripController(
+            settings: Settings(mode: .onDemand, operations: [.collapseWhitespace]),
+            pasteboard: pb,
+            transformer: transformer,
+            defaults: defaults
+        )
+
+        let outcome = await controller.runOnce(
+            operations: [.stripMarkdown, .stripHtml, .extractUrls, .stripHtml]
+        )
+        #expect(outcome == .stripped(changed: true))
+        #expect(transformer.configs == [
+            TransformConfig(operations: [.stripHtml, .stripMarkdown, .extractUrls])
+        ])
     }
 
     /// Continuous mode must refuse to run a reduction even if one is in the pipeline
@@ -381,6 +532,7 @@ private final class RecordingTransformer: Transforming, @unchecked Sendable {
     private let lock = NSLock()
     private let output: String
     private var _callCount = 0
+    private var _configs: [TransformConfig] = []
 
     init(output: String) {
         self.output = output
@@ -392,9 +544,16 @@ private final class RecordingTransformer: Transforming, @unchecked Sendable {
         return _callCount
     }
 
+    var configs: [TransformConfig] {
+        lock.lock()
+        defer { lock.unlock() }
+        return _configs
+    }
+
     func transform(_ input: String, config: TransformConfig) throws -> String {
         lock.lock()
         _callCount += 1
+        _configs.append(config)
         lock.unlock()
         return output
     }

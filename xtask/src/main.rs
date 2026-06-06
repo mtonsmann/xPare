@@ -12,6 +12,8 @@
 //!   check-entitlements  assert the macOS entitlements file is minimal
 //!   check-no-content-logging  assert no clipboard content is logged/persisted
 //!   check-clipboard-safety    assert default targets avoid the real clipboard
+//!   check-c-ffi-surface       assert C/SwiftPM interop stays header-only and tiny
+//!   check-release-posture     assert official signing cannot broaden entitlements
 //!   check-supply-chain  cargo-deny: advisories + licenses + bans + sources
 //!   check-workflows     lint GitHub Actions workflows (actionlint + zizmor)
 //!   check-shell         shellcheck the shell scripts
@@ -35,6 +37,8 @@ fn main() -> ExitCode {
         Some("check-entitlements") => report(check_entitlements()),
         Some("check-no-content-logging") => report(check_no_content_logging()),
         Some("check-clipboard-safety") => report(check_clipboard_safety()),
+        Some("check-c-ffi-surface") => report(check_c_ffi_surface()),
+        Some("check-release-posture") => report(check_release_posture()),
         Some("check-supply-chain") => report(check_supply_chain()),
         Some("check-workflows") => report(check_workflows()),
         Some("check-shell") => report(check_shell()),
@@ -63,6 +67,8 @@ fn usage() {
          \x20 check-entitlements   assert the macOS entitlements file is minimal\n\
          \x20 check-no-content-logging  assert no clipboard content is logged/persisted\n\
          \x20 check-clipboard-safety     assert default targets avoid the real clipboard\n\
+         \x20 check-c-ffi-surface        assert C/SwiftPM interop stays header-only and tiny\n\
+         \x20 check-release-posture      assert official signing cannot broaden entitlements\n\
          \x20 check-supply-chain   cargo-deny: advisories + licenses + bans + sources\n\
          \x20 check-workflows      lint GitHub Actions workflows (actionlint + zizmor)\n\
          \x20 check-shell          shellcheck the shell scripts\n\
@@ -545,10 +551,11 @@ fn validate_entitlements(text: &str) -> Result<(), String> {
     }
 
     // 2. No banned key may appear. We check both exact keys and dangerous prefixes.
+    let keys = entitlement_keys(text);
     let mut hits: Vec<String> = Vec::new();
-    for key in entitlement_keys(text) {
-        if is_banned_entitlement(&key) {
-            hits.push(key);
+    for key in &keys {
+        if is_banned_entitlement(key) {
+            hits.push(key.clone());
         }
     }
     if !hits.is_empty() {
@@ -561,6 +568,20 @@ fn validate_entitlements(text: &str) -> Result<(), String> {
              forbidden by the macOS posture. The intended entitlements file contains ONLY \
              `com.apple.security.app-sandbox` = true.",
             hits.join(", ")
+        ));
+    }
+
+    let mut extras: Vec<String> = keys
+        .into_iter()
+        .filter(|key| key != "com.apple.security.app-sandbox")
+        .collect();
+    extras.sort();
+    extras.dedup();
+    if !extras.is_empty() {
+        return Err(format!(
+            "extra entitlement key(s) present: {}. The intended entitlements file \
+             contains exactly one key: `com.apple.security.app-sandbox` = true.",
+            extras.join(", ")
         ));
     }
 
@@ -653,6 +674,343 @@ fn check_entitlements() -> Result<(), String> {
         path.display()
     );
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// check-release-posture
+// ---------------------------------------------------------------------------
+
+fn release_script_path() -> PathBuf {
+    workspace_root().join("shells/macos/release.sh")
+}
+
+fn require_script_snippet(text: &str, snippet: &str, why: &str, missing: &mut Vec<String>) {
+    if !text.contains(snippet) {
+        missing.push(format!("{why}: missing `{snippet}`"));
+    }
+}
+
+/// Validate the release script's load-bearing entitlement controls by exact
+/// textual assertions. This is intentionally strict: if release signing is
+/// refactored, the guard must be updated in the same PR after proving the new
+/// code still rejects alternate or broader entitlement payloads.
+fn validate_release_posture(release_text: &str, entitlements_text: &str) -> Result<(), String> {
+    validate_entitlements(entitlements_text).map_err(|e| {
+        format!(
+            "checked-in signing entitlements are not exactly minimal, so official \
+             release posture is not enforceable: {e}"
+        )
+    })?;
+
+    let mut missing = Vec::new();
+    require_script_snippet(
+        release_text,
+        r#"DEFAULT_SIGN_ENTITLEMENTS="${SCRIPT_DIR}/SafetyStrip.entitlements""#,
+        "default signing entitlements must be the checked-in plist",
+        &mut missing,
+    );
+    require_script_snippet(
+        release_text,
+        "resolve_sign_entitlements()",
+        "dist must resolve and validate the signing entitlement path",
+        &mut missing,
+    );
+    require_script_snippet(
+        release_text,
+        r#"resolved="$(canonical_path "${path}")""#,
+        "dist must canonicalize the requested signing entitlement path",
+        &mut missing,
+    );
+    require_script_snippet(
+        release_text,
+        r#"default_resolved="$(canonical_path "${DEFAULT_SIGN_ENTITLEMENTS}")""#,
+        "dist must canonicalize the checked signing entitlement path",
+        &mut missing,
+    );
+    require_script_snippet(
+        release_text,
+        r#"[[ "${resolved}" == "${default_resolved}" ]] || die"#,
+        "dist must reject alternate SIGN_ENTITLEMENTS paths",
+        &mut missing,
+    );
+    require_script_snippet(
+        release_text,
+        r#"require_minimal_entitlements "${resolved}" "signing entitlements ${resolved}""#,
+        "dist must verify source entitlements are minimal before signing",
+        &mut missing,
+    );
+    require_script_snippet(
+        release_text,
+        "/usr/libexec/PlistBuddy -c 'Print :com.apple.security.app-sandbox'",
+        "minimal entitlement verification must check app-sandbox=true",
+        &mut missing,
+    );
+    require_script_snippet(
+        release_text,
+        r#"must contain only com.apple.security.app-sandbox=true"#,
+        "minimal entitlement verification must reject extra entitlement keys",
+        &mut missing,
+    );
+    require_script_snippet(
+        release_text,
+        r#"--entitlements "${sign_entitlements}" --sign "${CERT_NAME}" "${EXE}""#,
+        "dist must sign the inner executable with the checked entitlements",
+        &mut missing,
+    );
+    require_script_snippet(
+        release_text,
+        r#"--entitlements "${sign_entitlements}" --sign "${CERT_NAME}" "${APP}""#,
+        "dist must sign the app bundle with the checked entitlements",
+        &mut missing,
+    );
+    require_script_snippet(
+        release_text,
+        r#"verify_signed_entitlements "${EXE}""#,
+        "dist must verify signed entitlements on the executable",
+        &mut missing,
+    );
+    require_script_snippet(
+        release_text,
+        r#"verify_signed_entitlements "${APP}""#,
+        "dist must verify signed entitlements on the app bundle",
+        &mut missing,
+    );
+
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "release entitlement posture guard(s) missing:\n  {}\n\
+             \n\
+             Official Developer ID releases must sign with the checked \
+             app-sandbox-only entitlement file, reject alternate SIGN_ENTITLEMENTS \
+             paths, and verify the signed entitlement payload remains minimal. \
+             Restore these controls or update this check in the same PR with an \
+             equivalent fail-closed proof.",
+            missing.join("\n  ")
+        ))
+    }
+}
+
+fn check_release_posture() -> Result<(), String> {
+    let release_path = release_script_path();
+    let release_text = std::fs::read_to_string(&release_path).map_err(|e| {
+        format!(
+            "check-release-posture: FAIL — could not read {}: {e}",
+            release_path.display()
+        )
+    })?;
+    let entitlements_path = entitlements_path();
+    let entitlements_text = std::fs::read_to_string(&entitlements_path).map_err(|e| {
+        format!(
+            "check-release-posture: FAIL — could not read {}: {e}",
+            entitlements_path.display()
+        )
+    })?;
+
+    validate_release_posture(&release_text, &entitlements_text).map_err(|e| {
+        format!(
+            "check-release-posture: FAIL — {} no longer mechanically preserves \
+             official App Sandbox minimality:\n{e}",
+            release_path.display()
+        )
+    })?;
+
+    println!(
+        "check-release-posture: official signing path rejects alternate entitlements and verifies minimal signed payloads."
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// check-c-ffi-surface
+// ---------------------------------------------------------------------------
+
+const ALLOWED_C_FFI_SURFACE: &[&str] = &[
+    "core-ffi/include/safetystrip.h",
+    "shells/macos/Sources/CSafetyStrip/dummy.c",
+    "shells/macos/Sources/CSafetyStrip/include/module.modulemap",
+    "shells/macos/Sources/CSafetyStrip/include/shim.h",
+];
+
+fn slash_path(path: &std::path::Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn c_ffi_surface_files(root: &std::path::Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    collect_source_files(
+        root,
+        &["c", "cc", "cpp", "cxx", "h", "hpp", "m", "mm", "modulemap"],
+        &mut files,
+    );
+    files.sort();
+    files
+}
+
+fn strip_c_like_comments(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    let mut in_block = false;
+    while let Some(ch) = chars.next() {
+        if in_block {
+            if ch == '*' && chars.peek() == Some(&'/') {
+                chars.next();
+                in_block = false;
+            } else if ch == '\n' {
+                out.push('\n');
+            }
+            continue;
+        }
+
+        if ch == '/' && chars.peek() == Some(&'*') {
+            chars.next();
+            in_block = true;
+            continue;
+        }
+        if ch == '/' && chars.peek() == Some(&'/') {
+            chars.next();
+            for next in chars.by_ref() {
+                if next == '\n' {
+                    out.push('\n');
+                    break;
+                }
+            }
+            continue;
+        }
+        out.push(ch);
+    }
+    out
+}
+
+fn noncomment_lines(text: &str) -> Vec<String> {
+    strip_c_like_comments(text)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn check_file_lines(
+    root: &std::path::Path,
+    rel: &str,
+    expected: &[&str],
+    errors: &mut Vec<String>,
+) {
+    let path = root.join(rel);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) => {
+            errors.push(format!("could not read {rel}: {e}"));
+            return;
+        }
+    };
+    let lines = noncomment_lines(&text);
+    let expected: Vec<String> = expected.iter().map(|line| (*line).to_string()).collect();
+    if lines != expected {
+        errors.push(format!(
+            "{rel} changed executable/non-comment content.\n  expected: {:?}\n  actual:   {:?}",
+            expected, lines
+        ));
+    }
+}
+
+fn check_generated_header_shape(root: &std::path::Path, errors: &mut Vec<String>) {
+    let rel = "core-ffi/include/safetystrip.h";
+    let path = root.join(rel);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) => {
+            errors.push(format!("could not read {rel}: {e}"));
+            return;
+        }
+    };
+    for snippet in [
+        "GENERATED by cbindgen",
+        "#ifndef SAFETYSTRIP_FFI_H",
+        "uint32_t ss_abi_version(void);",
+        "const char *ss_capabilities_json(void);",
+        "enum SsStatus ss_transform(",
+        "void ss_buffer_free(uint8_t *ptr, size_t len);",
+    ] {
+        if !text.contains(snippet) {
+            errors.push(format!(
+                "{rel} is missing expected generated ABI snippet `{snippet}`"
+            ));
+        }
+    }
+}
+
+fn check_c_ffi_surface() -> Result<(), String> {
+    let root = workspace_root();
+    let expected: BTreeSet<String> = ALLOWED_C_FFI_SURFACE
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    let actual: BTreeSet<String> = c_ffi_surface_files(&root)
+        .into_iter()
+        .filter_map(|path| path.strip_prefix(&root).ok().map(slash_path))
+        .collect();
+
+    let mut errors = Vec::new();
+    let unexpected: Vec<_> = actual.difference(&expected).cloned().collect();
+    let missing: Vec<_> = expected.difference(&actual).cloned().collect();
+    if !unexpected.is_empty() {
+        errors.push(format!(
+            "unexpected C/C++/Objective-C/modulemap file(s): {}",
+            unexpected.join(", ")
+        ));
+    }
+    if !missing.is_empty() {
+        errors.push(format!(
+            "expected C/FFI bridge file(s) missing: {}",
+            missing.join(", ")
+        ));
+    }
+
+    check_file_lines(
+        &root,
+        "shells/macos/Sources/CSafetyStrip/dummy.c",
+        &[],
+        &mut errors,
+    );
+    check_file_lines(
+        &root,
+        "shells/macos/Sources/CSafetyStrip/include/shim.h",
+        &[r#"#include "../../../../../core-ffi/include/safetystrip.h""#],
+        &mut errors,
+    );
+    check_file_lines(
+        &root,
+        "shells/macos/Sources/CSafetyStrip/include/module.modulemap",
+        &[
+            "module CSafetyStrip {",
+            r#"header "shim.h""#,
+            "export *",
+            "}",
+        ],
+        &mut errors,
+    );
+    check_generated_header_shape(&root, &mut errors);
+
+    if errors.is_empty() {
+        println!(
+            "check-c-ffi-surface: C/SwiftPM interop is limited to the generated header, shim header, module map, and empty dummy source."
+        );
+        Ok(())
+    } else {
+        Err(format!(
+            "check-c-ffi-surface: FAIL —\n  {}\n\
+             \n\
+             SafetyStrip keeps handwritten C logic out of the project. The only allowed \
+             C-adjacent surface is the cbindgen-generated ABI header, a SwiftPM shim \
+             that includes that header, the module map, and an empty dummy translation \
+             unit required by SwiftPM. Do not add C/C++/Objective-C implementation code \
+             without an explicit compatibility/security review.",
+            errors.join("\n  ")
+        ))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1131,6 +1489,10 @@ fn run_ci() -> ExitCode {
         eprintln!("{msg}");
         return ExitCode::FAILURE;
     }
+    if let Err(msg) = check_c_ffi_surface() {
+        eprintln!("{msg}");
+        return ExitCode::FAILURE;
+    }
 
     // check-abi reuses the existing gen-header(check_only=true) path.
     if gen_header(true) != ExitCode::SUCCESS {
@@ -1150,6 +1512,10 @@ fn run_ci() -> ExitCode {
         return ExitCode::FAILURE;
     }
     if let Err(msg) = check_entitlements() {
+        eprintln!("{msg}");
+        return ExitCode::FAILURE;
+    }
+    if let Err(msg) = check_release_posture() {
         eprintln!("{msg}");
         return ExitCode::FAILURE;
     }
@@ -1320,6 +1686,16 @@ mod tests {
     }
 
     #[test]
+    fn unrecognized_extra_entitlement_is_rejected() {
+        let text = r#"<plist><dict>
+            <key>com.apple.security.app-sandbox</key><true/>
+            <key>com.example.future.extra</key><true/>
+        </dict></plist>"#;
+        let err = validate_entitlements(text).unwrap_err();
+        assert!(err.contains("extra entitlement key"), "got: {err}");
+    }
+
+    #[test]
     fn codesign_weakening_is_banned() {
         for key in [
             "com.apple.security.cs.disable-library-validation",
@@ -1359,6 +1735,66 @@ mod tests {
         assert_eq!(
             entitlement_keys(text),
             vec!["a".to_string(), "b".to_string()]
+        );
+    }
+
+    // --- check-release-posture ---
+
+    #[test]
+    fn current_release_posture_passes() {
+        let root = workspace_root();
+        let release = std::fs::read_to_string(root.join("shells/macos/release.sh")).unwrap();
+        let entitlements =
+            std::fs::read_to_string(root.join("shells/macos/SafetyStrip.entitlements")).unwrap();
+        validate_release_posture(&release, &entitlements).unwrap();
+    }
+
+    #[test]
+    fn release_posture_rejects_missing_alternate_path_guard() {
+        let root = workspace_root();
+        let release = std::fs::read_to_string(root.join("shells/macos/release.sh")).unwrap();
+        let weakened = release.replace(
+            r#"[[ "${resolved}" == "${default_resolved}" ]] || die"#,
+            "# alternate entitlement paths accidentally allowed",
+        );
+        let err = validate_release_posture(&weakened, GOOD_MINIMAL).unwrap_err();
+        assert!(err.contains("alternate SIGN_ENTITLEMENTS"), "got: {err}");
+    }
+
+    #[test]
+    fn release_posture_rejects_missing_signed_entitlement_verification() {
+        let root = workspace_root();
+        let release = std::fs::read_to_string(root.join("shells/macos/release.sh")).unwrap();
+        let weakened = release.replace(
+            r#"verify_signed_entitlements "${EXE}""#,
+            "# executable signed entitlements not verified",
+        );
+        let err = validate_release_posture(&weakened, GOOD_MINIMAL).unwrap_err();
+        assert!(
+            err.contains("executable"),
+            "expected executable verification failure, got: {err}"
+        );
+    }
+
+    // --- check-c-ffi-surface ---
+
+    #[test]
+    fn current_c_ffi_surface_passes() {
+        check_c_ffi_surface().unwrap();
+    }
+
+    #[test]
+    fn c_comment_stripping_leaves_dummy_source_empty() {
+        let text = "/* comment */\n/* multi\nline */\n";
+        assert!(noncomment_lines(text).is_empty());
+    }
+
+    #[test]
+    fn c_comment_stripping_exposes_handwritten_logic() {
+        let text = "/* comment */\nint accidental_symbol(void) { return 1; }\n";
+        assert_eq!(
+            noncomment_lines(text),
+            vec!["int accidental_symbol(void) { return 1; }".to_string()]
         );
     }
 

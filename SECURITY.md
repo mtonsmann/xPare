@@ -126,3 +126,9 @@ A change that alters any property in the table above is a **posture change**: it
 must be called out explicitly in the PR, justified, and reflected here and in the
 relevant guardrail before it can land. The corresponding `xtask` check must be
 updated to *match* the new posture — never weakened to hide a regression.
+
+Security-finding fixes also follow
+[`docs/guardrails/review-finding-closure.md`](docs/guardrails/review-finding-closure.md):
+the issue class needs repeatable regression protection plus a short docs lesson
+so future agents and humans know which invariant was violated and which check now
+protects it.
