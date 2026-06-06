@@ -42,42 +42,43 @@ pipeline intermediate zeroization** and the W1 byte-oriented
 dispatch plus W5c pre-sized line dedupe containers and W5d defang allocation/marker
 guard cleanup, W2 output pre-sizing for shared line joins, and W4b streaming
 sentence-case scanning, W2b borrowed-slice trailing trim, and W1b Markdown output
-bookkeeping/normalization cleanup (see the cost section below). Re-measure on each
-machine; do not assume another machine's numbers. Read each transform row relative
-to this machine's own roofline controls (byte-copy ≈ 36
+bookkeeping/normalization cleanup, plus W3 `TrimTrailingWhitespace` →
+`RemoveBlankLines` fusion (see the cost section below). Re-measure on each machine;
+do not assume another machine's numbers. Read each transform row relative to this
+machine's own roofline controls (byte-copy ≈ 44
 GiB/s in this run is the practical memory-traffic anchor, though it is noisy at this
 size; byte-scan is lower because the shipped release profile is `opt-level = "s"` —
 size-optimized — leaving the scalar scan loop unvectorized).
 
 | Scenario | Median | Throughput |
 |----------|-------:|-----------:|
-| roofline-byte-scan | 0.032s | 4042.3 MiB/s |
-| roofline-byte-copy | 0.004s | 36132.7 MiB/s |
-| strip-html-plain (no `<`/`&`) | 0.292s | 438.2 MiB/s |
-| strip-html-heavy | 0.374s | 342.0 MiB/s |
-| strip-html-sparse-log | 0.297s | 431.0 MiB/s |
-| strip-markdown-heavy | 0.956s | 133.9 MiB/s |
-| strip-markdown-sparse-log | 0.217s | 591.1 MiB/s |
-| collapse-whitespace | 0.195s | 656.4 MiB/s |
-| trim-trailing | 0.222s | 576.0 MiB/s |
-| remove-blank-lines | 0.150s | 852.6 MiB/s |
-| unwrap-lines | 0.181s | 708.5 MiB/s |
-| case-lower-ascii | 0.107s | 1198.4 MiB/s |
-| case-sentence-unicode | 0.548s | 233.7 MiB/s |
-| dedupe-lines-repeated | 0.167s | 767.2 MiB/s |
-| dedupe-lines-unique | 0.174s | 737.3 MiB/s |
-| sort-lines | 0.219s | 584.7 MiB/s |
-| defang-iocs (URLs/emails/IPs/domains; output grows ~15%) | 1.009s | 126.9 MiB/s |
-| refang-iocs (input is the defanged buffer) | 0.388s | 381.4 MiB/s |
-| clean-urls-trackers | 0.468s | 273.6 MiB/s |
-| html-markdown-trim-log | 0.732s | 174.9 MiB/s |
-| full-menu-without-markdown | 0.938s | 136.5 MiB/s |
-| full-menu-without-collapse | 1.011s | 126.7 MiB/s |
-| full-menu-without-dedupe | 1.298s | 98.6 MiB/s |
-| full-menu-without-case | 1.180s | 108.4 MiB/s |
-| **default-log** (html+md+collapse+trim+blank) | 1.026s | **124.7 MiB/s** |
-| **full-menu-log** (+dedupe+unwrap+lowercase) | 1.177s | **108.8 MiB/s** |
-| **lossy-utf8-log** (invalid UTF-8, default pipeline) | 1.036s | **123.8 MiB/s** |
+| roofline-byte-scan | 0.031s | 4070.5 MiB/s |
+| roofline-byte-copy | 0.003s | 44774.8 MiB/s |
+| strip-html-plain (no `<`/`&`) | 0.289s | 442.2 MiB/s |
+| strip-html-heavy | 0.364s | 351.7 MiB/s |
+| strip-html-sparse-log | 0.296s | 433.0 MiB/s |
+| strip-markdown-heavy | 0.930s | 137.7 MiB/s |
+| strip-markdown-sparse-log | 0.215s | 596.6 MiB/s |
+| collapse-whitespace | 0.178s | 717.5 MiB/s |
+| trim-trailing | 0.222s | 575.8 MiB/s |
+| remove-blank-lines | 0.151s | 850.1 MiB/s |
+| unwrap-lines | 0.180s | 712.9 MiB/s |
+| case-lower-ascii | 0.106s | 1202.4 MiB/s |
+| case-sentence-unicode | 0.527s | 242.9 MiB/s |
+| dedupe-lines-repeated | 0.167s | 767.7 MiB/s |
+| dedupe-lines-unique | 0.174s | 737.2 MiB/s |
+| sort-lines | 0.218s | 586.6 MiB/s |
+| defang-iocs (URLs/emails/IPs/domains; output grows ~15%) | 0.987s | 129.6 MiB/s |
+| refang-iocs (input is the defanged buffer) | 0.390s | 379.4 MiB/s |
+| clean-urls-trackers | 0.458s | 279.6 MiB/s |
+| html-markdown-trim-log | 0.730s | 175.4 MiB/s |
+| full-menu-without-markdown | 0.798s | 160.4 MiB/s |
+| full-menu-without-collapse | 0.878s | 145.8 MiB/s |
+| full-menu-without-dedupe | 1.139s | 112.4 MiB/s |
+| full-menu-without-case | 1.050s | 121.9 MiB/s |
+| **default-log** (html+md+collapse+trim+blank) | 0.900s | **142.2 MiB/s** |
+| **full-menu-log** (+dedupe+unwrap+lowercase) | 1.043s | **122.7 MiB/s** |
+| **lossy-utf8-log** (invalid UTF-8, default pipeline) | 0.902s | **142.2 MiB/s** |
 
 Slow lanes (optimization targets): the remaining slow single-op cluster is heavy
 Markdown stripping and defang. Sparse/log-like Markdown is no longer in that slow
@@ -88,9 +89,10 @@ removed much of the avoidable token-level overhead. Unicode sentence-case is no
 longer in the same slow cluster after W4b's streaming scanner, which avoids the
 temporary lowercase buffer and per-character uppercase allocations while preserving
 Unicode expansion. End-to-end clipboard pipelines (which don't include the IOC ops)
-sit at ~109–125 MiB/s in this run. The decomposition rows show the
-lowercase/dedupe/line tail still matters on this generated corpus, but not nearly as
-sharply as before W4/W5c and the W2 shared join/trim pre-sizing and slice rewrites.
+sit at ~123–142 MiB/s in this run. W3 fusion removes one large zeroized intermediate
+from the common default path, so the remaining decomposition rows now point more
+strongly at Markdown/HTML parsing and the full-menu dedupe/unwrap/lowercase tail
+than at the trim/remove-blank pair itself.
 (For reference,
 the upstream FormatStripper track reported ~177/131 MiB/s default/full-menu on an
 Apple M4 — a different machine, codebase, and zeroization posture, so not a

@@ -76,6 +76,8 @@ current tree (see the decision log); they are listed for continuity.
 - **W3 — Fuse compatible passes.** A planner that fuses adjacent ops (e.g. line-ending
   normalization + a line op, or collapse + trim where ordering permits) without
   changing visible semantics or the public config. Golden-tested fused-vs-unfused.
+  *(Partially banked: adjacent `TrimTrailingWhitespace` → `RemoveBlankLines` is
+  fused inside the pipeline executor.)*
 - **W4 — Byte-oriented fast paths.** ASCII-specialized loops falling back to the
   Unicode-safe path on non-ASCII; byte scans where char boundaries are irrelevant.
   Consider `memchr` only if local benches show a clear gain **and** dependency
@@ -294,4 +296,14 @@ let two agents edit the same file family at once.
   115.7 → 124.7 (+7.8%), `full-menu-log` 101.6 → 108.8 (+7.1%), and
   `lossy-utf8-log` 115.4 → 123.8 (+7.3%). No ABI, dependency, zeroization,
   ordering, or privacy posture change.
+- 2026-06-06: W3 accepted for `TrimTrailingWhitespace` → `RemoveBlankLines` fusion:
+  the pipeline executor now consumes that adjacent pair as one private fused pass
+  when canonical ordering places them together or `as_given` specifies them together.
+  A proptest equivalence check compares fused transform output with the public
+  unfused ops, including canonical reordering, and caught/fixed the final-blank-line
+  trailing-newline edge. Same-branch 128 MiB / 5-sample comparison after W1b:
+  `default-log` 124.7 → 142.2 MiB/s (+14%), `full-menu-log` 108.8 → 122.7
+  (+13%), `lossy-utf8-log` 123.8 → 142.2 (+15%), `full-menu-without-markdown`
+  136.5 → 160.4 (+18%), and `full-menu-without-collapse` 126.7 → 145.8 (+15%).
+  No ABI, dependency, zeroization, ordering, or privacy posture change.
 - _Append one entry per accepted optimization: date, scenario, before→after median._

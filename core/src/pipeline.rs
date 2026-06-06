@@ -47,15 +47,28 @@ pub fn transform(input: &str, config: &Config) -> String {
     // it (and the last input is wiped when this function returns). The FINAL output is
     // returned directly — no extra copy — and the core-ffi shim wipes it on free.
     let mut current = Zeroizing::new(input.to_string());
-    let last = ordered.len() - 1;
-    for (i, op) in ordered.into_iter().enumerate() {
-        let out = apply(&current, op);
-        if i == last {
+    let mut i = 0usize;
+    while i < ordered.len() {
+        let (out, consumed) = apply_next(&current, &ordered[i..]);
+        i += consumed;
+        if i == ordered.len() {
             return out;
         }
         current = Zeroizing::new(out);
     }
-    unreachable!("operations is non-empty, so the loop returns at i == last")
+    unreachable!("operations is non-empty, so the loop returns after the final op")
+}
+
+/// Dispatch one pipeline step, optionally fusing adjacent operations whose combined
+/// behavior is byte-for-byte identical but avoids a zeroized intermediate.
+fn apply_next(text: &str, ops: &[&Operation]) -> (String, usize) {
+    if ops.len() >= 2
+        && matches!(ops[0], Operation::TrimTrailingWhitespace)
+        && matches!(ops[1], Operation::RemoveBlankLines)
+    {
+        return (trim_trailing_then_remove_blank_lines(text), 2);
+    }
+    (apply(text, ops[0]), 1)
 }
 
 /// Dispatch a single operation to its implementation in [`crate::ops`].
@@ -83,4 +96,56 @@ fn apply(text: &str, op: &Operation) -> String {
         Operation::Refang => ops::defang::refang(text),
         Operation::CleanUrls => ops::urls::clean_urls(text),
     }
+}
+
+/// Fused `TrimTrailingWhitespace` followed by `RemoveBlankLines`.
+///
+/// This is an internal W3 planner optimization only: it preserves the exact visible
+/// behavior of applying the two public ops in sequence, but saves one allocation,
+/// one full pass over the intermediate, and one zeroized intermediate drop.
+fn trim_trailing_then_remove_blank_lines(input: &str) -> String {
+    let mut preserve_trailing_newline = input.ends_with('\n');
+    let mut out = String::with_capacity(input.len());
+    let mut wrote_line = false;
+    let mut saw_newline = false;
+    let mut start = 0usize;
+    for (i, ch) in input.char_indices() {
+        if ch == '\n' {
+            saw_newline = true;
+            push_trimmed_nonblank_line(&mut out, &input[start..i], &mut wrote_line);
+            start = i + 1;
+        }
+    }
+    if !preserve_trailing_newline {
+        let final_line = trim_non_newline_whitespace_end(&input[start..]);
+        if final_line.chars().all(char::is_whitespace) {
+            preserve_trailing_newline = saw_newline;
+        } else {
+            push_nonblank_line(&mut out, final_line, &mut wrote_line);
+        }
+    }
+    if preserve_trailing_newline && wrote_line {
+        out.push('\n');
+    }
+    out
+}
+
+fn push_trimmed_nonblank_line(out: &mut String, line: &str, wrote_line: &mut bool) {
+    let trimmed = trim_non_newline_whitespace_end(line);
+    if trimmed.chars().all(char::is_whitespace) {
+        return;
+    }
+    push_nonblank_line(out, trimmed, wrote_line);
+}
+
+fn push_nonblank_line(out: &mut String, line: &str, wrote_line: &mut bool) {
+    if *wrote_line {
+        out.push('\n');
+    }
+    out.push_str(line);
+    *wrote_line = true;
+}
+
+fn trim_non_newline_whitespace_end(line: &str) -> &str {
+    line.trim_end_matches(|c: char| c.is_whitespace() && c != '\n')
 }

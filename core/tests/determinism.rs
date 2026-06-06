@@ -15,7 +15,7 @@
 
 use proptest::prelude::*;
 use safetystrip_core::{
-    transform, BracketStyle, CaseKind, Config, Operation, Ordering, CONFIG_VERSION,
+    ops, transform, BracketStyle, CaseKind, Config, Operation, Ordering, CONFIG_VERSION,
 };
 
 /// A pool of "interesting" characters plus arbitrary chars, so generated strings hit
@@ -207,5 +207,31 @@ proptest! {
                 }
             }
         }
+    }
+
+    /// The internal W3 fusion for TrimTrailingWhitespace -> RemoveBlankLines must
+    /// remain byte-for-byte identical to applying the two public operations in order.
+    #[test]
+    fn trim_remove_blank_fusion_matches_public_ops(input in interesting_string()) {
+        let trimmed = ops::whitespace::trim_trailing_whitespace(&input);
+        let reference = ops::lines::remove_blank_lines(&trimmed);
+
+        let as_given = Config::as_given(vec![
+            Operation::TrimTrailingWhitespace,
+            Operation::RemoveBlankLines,
+        ]);
+        let fused_as_given = transform(&input, &as_given);
+        prop_assert_eq!(&fused_as_given, &reference);
+
+        let canonical = Config {
+            version: CONFIG_VERSION,
+            operations: vec![
+                Operation::RemoveBlankLines,
+                Operation::TrimTrailingWhitespace,
+            ],
+            ordering: Ordering::Canonical,
+        };
+        let fused_canonical = transform(&input, &canonical);
+        prop_assert_eq!(&fused_canonical, &reference);
     }
 }
