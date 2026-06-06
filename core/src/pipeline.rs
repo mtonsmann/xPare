@@ -137,6 +137,9 @@ fn apply(text: &str, op: &Operation) -> String {
         Operation::Defang { style } => ops::defang::defang(text, *style),
         Operation::Refang => ops::defang::refang(text),
         Operation::CleanUrls => ops::urls::clean_urls(text),
+        Operation::MaskIdentifiers { emails, ipv4, ipv6 } => {
+            ops::mask::mask_identifiers(text, *emails, *ipv4, *ipv6)
+        }
     }
 }
 

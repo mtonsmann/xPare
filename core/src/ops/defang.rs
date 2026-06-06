@@ -22,9 +22,9 @@
 /// style-agnostic and reverses both regardless of which produced the input.
 pub use crate::config::BracketStyle;
 
-// Token edges and the URL/email heuristics are shared with the extractors so all
-// three agree on what a token (and a URL/email) is — single source of truth.
-use crate::ops::lines::{is_email, is_url, trim_token_punct};
+// Token edges and indicator heuristics are shared across indicator-oriented ops so
+// they agree on what a token (and a URL/email/IP) is — single source of truth.
+use crate::ops::indicators::{is_email, is_ipv4, is_ipv6, is_url, trim_token_punct};
 
 // Inherent helpers on the shared type (same crate, so this is allowed): the bracket
 // chars for a style. Kept here next to the defang logic that uses them.
@@ -304,65 +304,6 @@ fn push_dots_and(out: &mut String, s: &str, at: char, style: BracketStyle) {
             out.push(c);
         }
     }
-}
-
-/// IPv4 classifier: exactly four parts separated by `.`, each a 1–3 digit decimal in
-/// 0..=255. Heuristic but strict enough to avoid matching version strings like
-/// "1.2.3" (only three parts) or "1.2.3.4.5".
-fn is_ipv4(s: &str) -> bool {
-    let mut count = 0usize;
-    for part in s.split('.') {
-        count += 1;
-        if count > 4 {
-            return false;
-        }
-        let bytes = part.as_bytes();
-        if bytes.is_empty() || bytes.len() > 3 {
-            return false;
-        }
-        if !bytes.iter().all(|b| b.is_ascii_digit()) {
-            return false;
-        }
-        // Parse without panicking; all-digit and <=3 chars fits in u16.
-        let mut val: u16 = 0;
-        for &b in bytes {
-            val = val * 10 + u16::from(b - b'0');
-        }
-        if val > 255 {
-            return false;
-        }
-    }
-    count == 4
-}
-
-/// IPv6 classifier (heuristic): a colon-grouped hex address. We accept `s` iff:
-/// * it contains at least two `:` **or** one `::` compression (a single `:` is a
-///   port separator, never IPv6 — this keeps `example.com:8080` and `host:22` out),
-/// * every character is a hex digit or `:` (no dots, no `g`-`z`, no other punct), so
-///   IPv4-mapped forms with embedded dots are intentionally *not* recognized here,
-/// * every `:`-separated group is at most 4 hex digits, and
-/// * there is at most one `::` compression (reject `a::b::c` and `:::`).
-fn is_ipv6(s: &str) -> bool {
-    let colon_count = s.bytes().filter(|&b| b == b':').count();
-    let has_double = s.contains("::");
-    if colon_count < 2 && !has_double {
-        return false;
-    }
-    // Only hex digits and ':' allowed.
-    if !s.chars().all(|c| c == ':' || c.is_ascii_hexdigit()) {
-        return false;
-    }
-    // Each group is <= 4 hex digits (empty groups come from the allowed "::").
-    for group in s.split(':') {
-        if group.len() > 4 {
-            return false;
-        }
-    }
-    // At most one "::" compression.
-    if s.matches("::").count() > 1 {
-        return false;
-    }
-    true
 }
 
 /// Bare-domain classifier (heuristic): a dotted host with at least two labels, every

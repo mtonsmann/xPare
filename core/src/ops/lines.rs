@@ -34,6 +34,8 @@
 
 use std::collections::HashSet;
 
+use crate::ops::indicators::{is_email, is_url, trim_token_punct};
+
 /// Split `input` into line *contents* on `'\n'`, stripping any trailing run of `'\r'`
 /// (CRLF) from each line. The final fragment after the last `'\n'` is always included
 /// (it is empty when the input ends with `'\n'`), and an empty input yields a single
@@ -368,54 +370,4 @@ pub fn extract_urls(input: &str) -> String {
         }
     }
     out.join("\n")
-}
-
-/// Trim a small, fixed set of surrounding punctuation/brackets/quotes from a token.
-/// Operates on `char` boundaries via `trim_matches`, so it is panic-free.
-///
-/// `pub(crate)` so the defang/url-clean ops share the exact same tokenization edge.
-pub(crate) fn trim_token_punct(token: &str) -> &str {
-    token.trim_matches(|c: char| {
-        matches!(
-            c,
-            '<' | '>' | '(' | ')' | '[' | ']' | '{' | '}' | ',' | ';' | ':' | '"' | '\''
-        )
-    })
-}
-
-/// Email heuristic: see [`extract_emails`] for the documented rule.
-pub(crate) fn is_email(token: &str) -> bool {
-    // Exactly one '@', non-empty local part, domain with an interior '.'.
-    let mut parts = token.split('@');
-    let local = match parts.next() {
-        Some(l) => l,
-        None => return false,
-    };
-    let domain = match parts.next() {
-        Some(d) => d,
-        None => return false,
-    };
-    if parts.next().is_some() {
-        // More than one '@'.
-        return false;
-    }
-    if local.is_empty() || domain.is_empty() {
-        return false;
-    }
-    match domain.find('.') {
-        Some(dot) => dot > 0 && dot < domain.len() - 1,
-        None => false,
-    }
-}
-
-/// URL heuristic: see [`extract_urls`] for the documented rule.
-pub(crate) fn is_url(token: &str) -> bool {
-    for prefix in ["http://", "https://", "www."] {
-        if let Some(rest) = token.strip_prefix(prefix) {
-            if !rest.is_empty() {
-                return true;
-            }
-        }
-    }
-    false
 }

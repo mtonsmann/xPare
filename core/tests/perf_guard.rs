@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 use safetystrip_core::ops::defang::{defang, refang};
 use safetystrip_core::ops::html::strip_html;
 use safetystrip_core::ops::markdown::strip_markdown;
+use safetystrip_core::ops::mask::mask_identifiers;
 use safetystrip_core::ops::urls::clean_urls;
 use safetystrip_core::{transform, BracketStyle, CaseKind, Config, Operation};
 
@@ -117,6 +118,18 @@ fn ioc_ops_stay_linear() {
         &"https://e.com/?a=1 ".repeat(n),
         clean_urls,
     );
+    assert_fast("mask_email_flood", &"user@example.test ".repeat(n), |s| {
+        mask_identifiers(s, true, false, false)
+    });
+    assert_fast("mask_ipv4_flood", &"10.0.0.1 ".repeat(n), |s| {
+        mask_identifiers(s, false, true, false)
+    });
+    assert_fast("mask_ipv6_flood", &"2001:db8::1 ".repeat(n), |s| {
+        mask_identifiers(s, false, false, true)
+    });
+    assert_fast("mask_punct_no_match_flood", &"[]{}();,: ".repeat(n), |s| {
+        mask_identifiers(s, true, true, true)
+    });
 }
 
 #[test]

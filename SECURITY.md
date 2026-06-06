@@ -108,6 +108,10 @@ Clipboard markup is attacker-influenced, so the core treats all input as hostile
   bytes. Rich-format extraction itself is still platform work, so the limit is a
   pre-core-transform guard, not a streaming rich-format parser for every native
   format.
+- **Optional masking is an output rewrite, not a new data path** — `MaskIdentifiers`
+  replaces selected email/IPv4/IPv6 tokens with fixed placeholders inside the same
+  pure core pipeline. It adds no network, persistence, logging, entitlement, or
+  telemetry capability and does not change the in-memory-only posture.
 
 ## Known limitations (security-relevant)
 
@@ -142,6 +146,10 @@ security-relevant ones:
   `StripHtml` → `StripMarkdown`.
 - **`HtmlToMarkdown` is not a browser-grade sanitizer or renderer** — it is a
   dependency-free clipboard converter for common copied-web fragments.
+- **Privacy masking is not comprehensive anonymization or DLP.** It is a
+  deterministic, heuristic, token-level rewrite for selected emails and IPs. It does
+  not promise to find every form of PII or to protect against other same-user apps
+  reading the system pasteboard before SafetyStrip rewrites it.
 
 ## Reporting a vulnerability
 

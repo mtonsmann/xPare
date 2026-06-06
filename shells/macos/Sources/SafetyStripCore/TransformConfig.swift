@@ -53,6 +53,7 @@ public enum Operation: Equatable, Sendable {
     case defang(style: BracketStyle)
     case refang
     case cleanUrls
+    case maskIdentifiers(emails: Bool, ipv4: Bool, ipv6: Bool)
 
     /// The `"op"` tag string for this variant — the snake_case discriminant.
     public var opTag: String {
@@ -76,6 +77,7 @@ public enum Operation: Equatable, Sendable {
         case .defang: return "defang"
         case .refang: return "refang"
         case .cleanUrls: return "clean_urls"
+        case .maskIdentifiers: return "mask_identifiers"
         }
     }
 
@@ -102,6 +104,9 @@ extension Operation: Codable {
         case separator
         case delimiter
         case style
+        case emails
+        case ipv4
+        case ipv6
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -132,6 +137,11 @@ extension Operation: Codable {
             try c.encode(separator, forKey: .separator)
         case .splitOn(let delimiter):
             try c.encode(delimiter, forKey: .delimiter)
+        case .maskIdentifiers(let emails, let ipv4, let ipv6):
+            // Serde defaults absent booleans to false but serializes them explicitly.
+            try c.encode(emails, forKey: .emails)
+            try c.encode(ipv4, forKey: .ipv4)
+            try c.encode(ipv6, forKey: .ipv6)
         }
     }
 
@@ -169,6 +179,12 @@ extension Operation: Codable {
             self = .defang(style: style)
         case "refang": self = .refang
         case "clean_urls": self = .cleanUrls
+        case "mask_identifiers":
+            self = .maskIdentifiers(
+                emails: try c.decodeIfPresent(Bool.self, forKey: .emails) ?? false,
+                ipv4: try c.decodeIfPresent(Bool.self, forKey: .ipv4) ?? false,
+                ipv6: try c.decodeIfPresent(Bool.self, forKey: .ipv6) ?? false
+            )
         default:
             throw DecodingError.dataCorruptedError(
                 forKey: .op, in: c,

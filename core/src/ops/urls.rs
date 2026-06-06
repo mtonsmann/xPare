@@ -35,9 +35,9 @@
 //! * **Idempotent:** `clean_urls(clean_urls(x)) == clean_urls(x)`. Percent-encoding
 //!   of surviving values is never altered.
 
-// Token edges and the URL heuristic are shared with the extractors and defang so all
-// agree on what a token (and a URL) is — single source of truth.
-use crate::ops::lines::{is_url, trim_token_punct};
+// Token edges and the URL heuristic are shared with the extractors, defang, and
+// masking so all agree on what a token (and a URL) is — single source of truth.
+use crate::ops::indicators::{is_url, trim_token_punct};
 
 /// Query-parameter keys treated as trackers and removed. Matching is
 /// case-insensitive; an entry ending in `*` matches by prefix.

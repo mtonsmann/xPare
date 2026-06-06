@@ -117,5 +117,13 @@ private func opLabel(_ op: SafetyStripCore.Operation) -> String {
     case .defang(let style): return "Defang IOCs (\(style.rawValue))"
     case .refang: return "Refang"
     case .cleanUrls: return "Clean URL trackers"
+    case .maskIdentifiers(let emails, let ipv4, let ipv6):
+        var targets: [String] = []
+        if emails { targets.append("emails") }
+        if ipv4 { targets.append("IPv4") }
+        if ipv6 { targets.append("IPv6") }
+        return targets.isEmpty
+            ? "Mask identifiers"
+            : "Mask identifiers (\(targets.joined(separator: ", ")))"
     }
 }

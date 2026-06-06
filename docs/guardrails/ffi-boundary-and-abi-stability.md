@@ -60,7 +60,7 @@ allocation-size overflow at the boundary.
    above are sufficient because behavior is data. New capability should almost always
    be a new operation, queried via `ss_capabilities_json`, not a new function.
 5. **Keep config back-compatible or bump `CONFIG_VERSION`.** The config schema is
-   versioned independently (`core/src/config.rs`, currently `1`). An incompatible
+   versioned independently (`core/src/config.rs`, currently `2`). An incompatible
    schema change bumps `CONFIG_VERSION`; `parse_config` rejects mismatched versions
    so a shell detects it deterministically. `CAPABILITIES_JSON`'s `config_version`
    must stay equal to `CONFIG_VERSION` (a unit test enforces this).

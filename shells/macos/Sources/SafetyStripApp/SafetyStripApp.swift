@@ -181,6 +181,37 @@ final class AppModel: ObservableObject {
         commit(ops)
     }
 
+    enum MaskTarget: CaseIterable, Identifiable {
+        case emails, ipv4, ipv6
+        var id: Self { self }
+        var label: String {
+            switch self {
+            case .emails: return "Mask emails"
+            case .ipv4: return "Mask IPv4 addresses"
+            case .ipv6: return "Mask IPv6 addresses"
+            }
+        }
+    }
+
+    func maskEnabled(_ target: MaskTarget) -> Bool {
+        let flags = maskFlags
+        switch target {
+        case .emails: return flags.emails
+        case .ipv4: return flags.ipv4
+        case .ipv6: return flags.ipv6
+        }
+    }
+
+    func setMask(_ target: MaskTarget, enabled: Bool) {
+        var flags = maskFlags
+        switch target {
+        case .emails: flags.emails = enabled
+        case .ipv4: flags.ipv4 = enabled
+        case .ipv6: flags.ipv6 = enabled
+        }
+        setMaskFlags(flags)
+    }
+
     // MARK: - Free-text parameterized ops (Settings window)
 
     /// The four ops whose parameter is free text — they cannot live in a `.menu`
@@ -310,6 +341,39 @@ final class AppModel: ObservableObject {
         return false
     }
 
+    private var maskFlags: (emails: Bool, ipv4: Bool, ipv6: Bool) {
+        for op in settings.operations {
+            if case let .maskIdentifiers(emails, ipv4, ipv6) = op {
+                return (emails, ipv4, ipv6)
+            }
+        }
+        return (false, false, false)
+    }
+
+    private func setMaskFlags(_ flags: (emails: Bool, ipv4: Bool, ipv6: Bool)) {
+        var ops = settings.operations
+        if flags.emails || flags.ipv4 || flags.ipv6 {
+            let newOp = SafetyStripCore.Operation.maskIdentifiers(
+                emails: flags.emails,
+                ipv4: flags.ipv4,
+                ipv6: flags.ipv6
+            )
+            if let idx = ops.firstIndex(where: isMask) {
+                ops[idx] = newOp
+            } else {
+                ops.append(newOp)
+            }
+        } else {
+            ops.removeAll(where: isMask)
+        }
+        commit(ops)
+    }
+
+    private func isMask(_ op: SafetyStripCore.Operation) -> Bool {
+        if case .maskIdentifiers = op { return true }
+        return false
+    }
+
     private func matches(_ kind: ParamOp, _ op: SafetyStripCore.Operation) -> Bool {
         switch (kind, op) {
         case (.prefix, .prefixLines), (.suffix, .suffixLines),
@@ -401,6 +465,12 @@ private struct MenuContent: View {
             set: { model.setDefang(enabled: $0) }
         ))
         // (Defang's bracket style is a parameter, so it lives in the Settings window.)
+        ForEach(AppModel.MaskTarget.allCases) { target in
+            Toggle(target.label, isOn: Binding(
+                get: { model.maskEnabled(target) },
+                set: { model.setMask(target, enabled: $0) }
+            ))
+        }
 
         Divider()
 

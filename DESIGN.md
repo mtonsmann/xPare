@@ -205,12 +205,14 @@ from that — it is not a free UI choice.
 
 - **Rewrites** preserve the text and edit it in place (`StripHtml`,
   `CollapseWhitespace`, `DedupeLines`, and the new `Defang` / `Refang` /
-  `CleanUrls`). They compose additively — each is an independent stage refining the
-  same buffer — and the idempotent ones are safe to run on every clipboard change.
-- **Reductions/conversions** replace the buffer with a derived representation
-  (`ExtractEmails`, `ExtractUrls`, `HtmlToMarkdown`). They do **not** compose
-  predictably as always-on policy, they are terminal user commands, and silently
-  converting every copy in continuous mode is never what the user wants.
+  `CleanUrls` / `MaskIdentifiers`). They compose additively — each is an
+  independent stage refining the same buffer — and the idempotent ones are safe to
+  run on every clipboard change.
+- **Reductions/conversions** replace the buffer with a derived subset or
+  representation (`ExtractEmails`, `ExtractUrls`, `HtmlToMarkdown`). They do **not**
+  compose predictably as always-on policy, they are terminal user commands, and
+  silently reducing or converting every copy in continuous mode is never what the
+  user wants.
 
 This dictates two interaction models in the shell:
 
@@ -231,11 +233,12 @@ must refuse to run a reduction.
 free-text-parameterized ops (`PrefixLines`, `SuffixLines`, `JoinWith`, `SplitOn`)
 and pipeline *ordering* live in a conventional SwiftUI `Settings` scene. Bounded,
 enumerable params (`ChangeCase`'s case, `SortLines`'s two flags, `Defang`'s bracket
-style) stay in the menu as **submenus with radio/checkmark items**. **Why not** make
-the whole menu a `MenuBarExtra(.window)` panel: that buys inline text fields at the
-cost of the crisp, keyboard-driven native-menu behavior on the common path; a
-Settings window keeps the fast path fast and is where macOS users already expect
-typed configuration to live.
+style, `MaskIdentifiers`' selected identifier classes) stay in the menu as
+**submenus with radio/checkmark items**. **Why not** make the whole menu a
+`MenuBarExtra(.window)` panel: that buys inline text fields at the cost of the
+crisp, keyboard-driven native-menu behavior on the common path; a Settings window
+keeps the fast path fast and is where macOS users already expect typed
+configuration to live.
 
 ### D13 — Canonical pipeline ordering
 
@@ -254,10 +257,11 @@ genuinely-free pair keeps the user's order. The rank encodes two kinds of rule:
 
 - **Correctness** (order changes output): `StripHtml` < `StripMarkdown` (D6);
   strippers before everything; `TrimTrailingWhitespace` before `DedupeLines` (so
-  whitespace-only-different lines dedupe); **`CleanUrls` before `Defang`** (defang
-  mangles the URL so `CleanUrls` can no longer recognize it); `UnwrapLines` before
-  `RemoveBlankLines` (blank lines are its paragraph delimiter); `JoinWith` last
-  (it collapses line structure).
+  whitespace-only-different lines dedupe); **`CleanUrls` before `MaskIdentifiers`
+  before `Defang`/extraction** (`CleanUrls` needs intact URLs, then masking removes
+  selected live identifiers before later stages can preserve or derive them);
+  `UnwrapLines` before `RemoveBlankLines` (blank lines are its paragraph delimiter);
+  `JoinWith` last (it collapses line structure).
 - **Efficiency** (output-identical, one is cheaper): `DedupeLines` before `SortLines`
   — deduping first shrinks the set the sort must order.
 
@@ -311,6 +315,8 @@ tests:
   hostnames, IPv4/IPv6, and emails): `core/src/ops/defang.rs`.
 - **URL cleaning** (`CleanUrls` — strip tracking/analytics query parameters):
   `core/src/ops/urls.rs`.
+- **Privacy masking** (`MaskIdentifiers` — replace selected email, IPv4, and IPv6
+  tokens with fixed placeholders): `core/src/ops/mask.rs`.
 
 A few decisions worth surfacing here because they are easy to misread as bugs:
 
@@ -327,12 +333,12 @@ A few decisions worth surfacing here because they are easy to misread as bugs:
   `trim_trailing_whitespace` therefore normalizes CRLF→LF as a documented side
   effect.
 
-### IOC defang/refang and URL cleaning (the agreed contract)
+### IOC defang/refang, URL cleaning, and privacy masking (the agreed contract)
 
-These three rewrites share the existing whitespace-tokenizer + URL/email heuristics
-(see `ops/lines.rs`); they are deliberately not RFC parsers. The exact, frozen rule
-for each lives in its implementing function's doc comment once built — this is the
-design-level contract they must satisfy.
+These rewrites share the existing whitespace-tokenizer and indicator heuristics
+(see `ops/indicators.rs`); they are deliberately not RFC parsers. The exact, frozen
+rule for each lives in its implementing function's doc comment once built — this is
+the design-level contract they must satisfy.
 
 - **`Defang`** rewrites recognized network indicators so they are inert (not
   auto-linkified, not click-to-execute) while staying human-readable and
@@ -353,11 +359,18 @@ design-level contract they must satisfy.
   curated, **baked-in** constant — the core takes no network, so it is a
   point-in-time snapshot, not a live list. Idempotent (a cleaned URL has nothing
   left to strip) and order-significant only in that it should run after stripping.
+- **`MaskIdentifiers`** replaces selected email, IPv4, and IPv6 tokens with fixed
+  placeholders (`[email]`, `[ipv4]`, `[ipv6]`). It is a rewrite, not a reduction, so
+  it is safe as a persistent toggle and in continuous mode. It is deliberately
+  deterministic and idempotent: no random values, hashes, counters, partial masks, or
+  persistent pseudonym maps. Canonical ordering runs URL cleaning first, then masking,
+  then defang/refang and extraction, so the privacy-preserving default masks live
+  identifiers before another op can preserve or derive them.
 
-All three are hand-rolled scanners over adversarial input, so they join the
-panic-free regime: proptest (panic-freedom + idempotence + the round-trip property),
-an adversarial corpus, a `cargo fuzz` target each, and the `perf_guard.rs`
-linear-time budget.
+All four are hand-rolled scanners over adversarial input, so they join the
+panic-free regime: proptest (panic-freedom + idempotence, plus the defang/refang
+round-trip property), an adversarial corpus, a `cargo fuzz` target each, and the
+`perf_guard.rs` linear-time budget.
 
 ## Performance & large inputs (log-file work)
 
@@ -477,6 +490,13 @@ These are accepted trade-offs, documented so they are not mistaken for defects.
   `CleanUrls` matches a curated, baked-in tracking-parameter denylist that is a
   point-in-time snapshot (no network, so it cannot self-update). See the IOC
   contract under *Transform semantics*.
+- **Privacy masking is heuristic token-level masking, not DLP.** `MaskIdentifiers`
+  uses the shared whitespace-token model and fixed email/IPv4/IPv6 classifiers. It
+  masks common clipboard/log shapes, but it does not detect names, phone numbers,
+  postal addresses, secrets, every possible email/IP spelling, or identifiers
+  embedded inside larger non-whitespace strings. It rewrites output only; the
+  original OS clipboard value and same-user pasteboard races remain outside
+  SafetyStrip's confidentiality boundary.
 - **Rich→plain extraction is the shell's best-effort.** The core transforms whatever
   text the shell extracts; choosing the best clipboard representation (preferring
   HTML) is a shell responsibility and is itself heuristic per platform. The macOS

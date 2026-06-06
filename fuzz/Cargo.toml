@@ -56,3 +56,10 @@ path = "fuzz_targets/clean_urls.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "mask_identifiers"
+path = "fuzz_targets/mask_identifiers.rs"
+test = false
+doc = false
+bench = false

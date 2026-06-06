@@ -60,6 +60,8 @@ hangs, stays deterministic, neutralizes active content."
 | Whitespace | `core/src/ops/whitespace.rs` | `collapse_whitespace` only ASCII space/tab, never `\n`; `trim_trailing_whitespace` trims non-newline whitespace per line (CRLF→LF as a side effect) |
 | Lines | `core/src/ops/lines.rs` | the shared line model (split on `\n`, strip trailing `\r` run); trailing-newline round-trip; `unwrap_lines` → clean paragraph block, no trailing newline; heuristic email/URL extraction |
 | Case | `core/src/ops/case.rs` | full-Unicode mappings; **positional** title case (`3RD`→`3rd`, `(HELLO)`→`(hello)`); sentence = lowercase then capitalize after `.`/`!`/`?` + whitespace |
+| Indicators | `core/src/ops/indicators.rs` | shared token-edge + email/URL/IP heuristics; heuristic, not RFC validators; keep extraction, IOC cleanup, URL cleaning, and masking in sync |
+| Masking | `core/src/ops/mask.rs` | token-level email/IPv4/IPv6 masking; fixed placeholders `[email]` / `[ipv4]` / `[ipv6]`; deterministic and idempotent; not comprehensive anonymization |
 
 ## Enforcing checks
 
@@ -67,7 +69,8 @@ hangs, stays deterministic, neutralizes active content."
   needs both a regression test (the right answer) **and** adversarial-input coverage.
 - **Determinism property test:** `transform(x,c) == transform(x,c)`.
 - **Fuzzing (never-panics):** run the target(s) covering what you changed —
-  `cargo +nightly fuzz run strip_html | strip_markdown | transform_pipeline`. Commit
+  `cargo +nightly fuzz run strip_html | strip_markdown | defang | clean_urls |
+  mask_identifiers | transform_pipeline`. Commit
   any crashing input found under `fuzz/` so it replays as a regression. (CI runs a
   short best-effort fuzz smoke; the required signal is the property/corpus tests.)
 - **Performance regression guard:** `cargo test -p safetystrip-core --test perf_guard`

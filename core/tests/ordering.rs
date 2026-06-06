@@ -13,6 +13,14 @@ fn defang() -> Operation {
     Operation::Defang { style: SQ }
 }
 
+fn mask_all() -> Operation {
+    Operation::MaskIdentifiers {
+        emails: true,
+        ipv4: true,
+        ipv6: true,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Correctness orderings
 // ---------------------------------------------------------------------------
@@ -48,6 +56,24 @@ fn canonical_runs_clean_urls_before_defang() {
             &Config::as_given(vec![defang(), Operation::CleanUrls])
         ),
         "hxxps[://]e[.]com/?utm_source=x"
+    );
+}
+
+/// Privacy masking runs before defang and reductions in canonical order. That keeps
+/// masking privacy-preserving by default even if callers list it late.
+#[test]
+fn canonical_runs_masking_before_defang_and_extractors() {
+    let input = "user@example.test 10.0.0.1";
+    assert_eq!(
+        transform(input, &Config::canonical(vec![defang(), mask_all()])),
+        "[email] [ipv4]"
+    );
+    assert_eq!(
+        transform(
+            input,
+            &Config::canonical(vec![Operation::ExtractEmails, mask_all()])
+        ),
+        ""
     );
 }
 
@@ -132,6 +158,7 @@ fn op_strategy() -> impl Strategy<Value = Operation> {
         Just(Operation::RemoveBlankLines),
         Just(Operation::DedupeLines),
         Just(Operation::CleanUrls),
+        Just(mask_all()),
         Just(defang()),
         Just(Operation::SortLines {
             descending: false,

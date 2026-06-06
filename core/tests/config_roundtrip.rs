@@ -63,6 +63,11 @@ fn all_operations() -> Vec<Operation> {
         },
         Operation::Refang,
         Operation::CleanUrls,
+        Operation::MaskIdentifiers {
+            emails: true,
+            ipv4: true,
+            ipv6: false,
+        },
     ]
 }
 
@@ -231,6 +236,12 @@ fn operation_strategy() -> impl Strategy<Value = Operation> {
         s.prop_map(|delimiter| Operation::SplitOn { delimiter }),
         Just(Operation::ExtractEmails),
         Just(Operation::ExtractUrls),
+        prop_oneof![Just(BracketStyle::Square), Just(BracketStyle::Round)]
+            .prop_map(|style| Operation::Defang { style }),
+        Just(Operation::Refang),
+        Just(Operation::CleanUrls),
+        (any::<bool>(), any::<bool>(), any::<bool>())
+            .prop_map(|(emails, ipv4, ipv6)| { Operation::MaskIdentifiers { emails, ipv4, ipv6 } }),
     ]
 }
 
