@@ -39,53 +39,54 @@ Measured 2026-06-06 on **Apple M5 Pro, 18 cores, 48 GB, arm64**, via
 `make perf PERF_MIB=128 PERF_SAMPLES=5` (median of 5), on the current code **with
 pipeline intermediate zeroization** and the W1 byte-oriented
 `collapse_whitespace` path, W4 ASCII Upper/Lower fast paths, and W5b IOC marker
-dispatch (see the cost section below). Re-measure on each machine; do not assume
-another machine's numbers. Read each transform row relative to this machine's own
-roofline controls (byte-copy ≈ 36
+dispatch plus W5c pre-sized line dedupe containers (see the cost section below).
+Re-measure on each machine; do not assume another machine's numbers. Read each
+transform row relative to this machine's own roofline controls (byte-copy ≈ 35
 GiB/s in this run is the practical memory-traffic anchor, though it is noisy at this
 size; byte-scan is lower because the shipped release profile is `opt-level = "s"` —
 size-optimized — leaving the scalar scan loop unvectorized).
 
 | Scenario | Median | Throughput |
 |----------|-------:|-----------:|
-| roofline-byte-scan | 0.032s | 3978.8 MiB/s |
-| roofline-byte-copy | 0.003s | 36746.4 MiB/s |
-| strip-html-plain (no `<`/`&`) | 0.294s | 434.8 MiB/s |
-| strip-html-heavy | 0.369s | 347.0 MiB/s |
-| strip-html-sparse-log | 0.299s | 427.5 MiB/s |
-| strip-markdown-heavy | 1.107s | 115.6 MiB/s |
-| strip-markdown-sparse-log | 0.346s | 370.0 MiB/s |
-| collapse-whitespace | 0.197s | 651.2 MiB/s |
-| trim-trailing | 0.264s | 484.3 MiB/s |
-| remove-blank-lines | 0.162s | 787.9 MiB/s |
-| unwrap-lines | 0.182s | 703.0 MiB/s |
-| case-lower-ascii | 0.108s | 1186.0 MiB/s |
-| case-sentence-unicode | 1.066s | 120.0 MiB/s |
-| dedupe-lines-repeated | 0.168s | 761.1 MiB/s |
-| dedupe-lines-unique | 0.261s | 490.1 MiB/s |
-| sort-lines | 0.228s | 560.8 MiB/s |
-| defang-iocs (URLs/emails/IPs/domains; output grows ~15%) | 2.045s | 62.6 MiB/s |
-| refang-iocs (input is the defanged buffer) | 0.390s | 378.7 MiB/s |
-| clean-urls-trackers | 0.464s | 276.0 MiB/s |
-| html-markdown-trim-log | 0.834s | 153.4 MiB/s |
-| full-menu-without-markdown | 1.020s | 125.5 MiB/s |
+| roofline-byte-scan | 0.033s | 3834.2 MiB/s |
+| roofline-byte-copy | 0.004s | 35572.0 MiB/s |
+| strip-html-plain (no `<`/`&`) | 0.299s | 427.4 MiB/s |
+| strip-html-heavy | 0.372s | 343.8 MiB/s |
+| strip-html-sparse-log | 0.303s | 422.4 MiB/s |
+| strip-markdown-heavy | 1.169s | 109.5 MiB/s |
+| strip-markdown-sparse-log | 0.344s | 372.0 MiB/s |
+| collapse-whitespace | 0.181s | 707.7 MiB/s |
+| trim-trailing | 0.267s | 479.4 MiB/s |
+| remove-blank-lines | 0.165s | 777.3 MiB/s |
+| unwrap-lines | 0.182s | 703.6 MiB/s |
+| case-lower-ascii | 0.108s | 1182.0 MiB/s |
+| case-sentence-unicode | 1.052s | 121.7 MiB/s |
+| dedupe-lines-repeated | 0.168s | 763.6 MiB/s |
+| dedupe-lines-unique | 0.188s | 680.3 MiB/s |
+| sort-lines | 0.222s | 576.0 MiB/s |
+| defang-iocs (URLs/emails/IPs/domains; output grows ~15%) | 2.057s | 62.2 MiB/s |
+| refang-iocs (input is the defanged buffer) | 0.394s | 375.7 MiB/s |
+| clean-urls-trackers | 0.467s | 274.3 MiB/s |
+| html-markdown-trim-log | 0.847s | 151.1 MiB/s |
+| full-menu-without-markdown | 1.012s | 126.5 MiB/s |
 | full-menu-without-collapse | 1.149s | 111.4 MiB/s |
-| full-menu-without-dedupe | 1.425s | 89.8 MiB/s |
-| full-menu-without-case | 1.323s | 96.7 MiB/s |
-| **default-log** (html+md+collapse+trim+blank) | 1.174s | **109.0 MiB/s** |
-| **full-menu-log** (+dedupe+unwrap+lowercase) | 1.320s | **97.0 MiB/s** |
-| **lossy-utf8-log** (invalid UTF-8, default pipeline) | 1.171s | **109.5 MiB/s** |
+| full-menu-without-dedupe | 1.417s | 90.4 MiB/s |
+| full-menu-without-case | 1.319s | 97.1 MiB/s |
+| **default-log** (html+md+collapse+trim+blank) | 1.165s | **109.9 MiB/s** |
+| **full-menu-log** (+dedupe+unwrap+lowercase) | 1.324s | **96.7 MiB/s** |
+| **lossy-utf8-log** (invalid UTF-8, default pipeline) | 1.163s | **110.2 MiB/s** |
 
 Slow lanes (optimization targets): **defang** is now the slowest single-op row — it
 emits multi-character bracket markers around every indicator character and its
 output grows ~15%. Refang is no longer in the same slow lane after W5b's first-byte
 marker dispatch. After defang come Markdown stripping, Unicode sentence-case, and
-unique-line dedupe. ASCII lowercase is no longer a slow lane after the W4 fast path;
-the full-menu tail is now dominated more by dedupe/unwrap and zeroized multi-pass
-cost than by lowercase itself. End-to-end clipboard pipelines (which don't include
-the IOC ops) sit at ~97–110 MiB/s in this run. The decomposition rows show the
-lowercase/dedupe tail still matters on this generated corpus, but not nearly as
-sharply as before W4. (For reference,
+URL cleaning. Unique-line dedupe is no longer in that slow cluster after W5c's
+pre-sized containers. ASCII lowercase is no longer a slow lane after the W4 fast
+path; the full-menu tail is now dominated more by zeroized multi-pass cost and
+non-dedupe line/markdown work than by lowercase itself. End-to-end clipboard
+pipelines (which don't include the IOC ops) sit at ~97–110 MiB/s in this run. The
+decomposition rows show the lowercase/dedupe tail still matters on this generated
+corpus, but not nearly as sharply as before W4/W5c. (For reference,
 the upstream FormatStripper track reported ~177/131 MiB/s default/full-menu on an
 Apple M4 — a different machine, codebase, and zeroization posture, so not a
 like-for-like comparison.)
@@ -133,7 +134,8 @@ large inputs and accepts the weaker hygiene, reverting `pipeline.rs` to a plain
 
 See the exec-plan's wave list. Highest-confidence remaining items: stream the
 remaining `collect`→`join` line ops (W2), fuse compatible adjacent passes (W3), and
-ASCII fast paths with a Unicode fallback (W4). A speed-tuned `opt-level = 3` profile
+additional ASCII fast paths with Unicode fallbacks where semantics allow (W4). A
+speed-tuned `opt-level = 3` profile
 would likely lift the scalar-bound rows (scan, case, markdown) at a binary-size cost
 — evaluate per the acceptance rules. Each change must clear ≥ 5% median gain with no
 > 3% regression and all guardrails green.

@@ -80,7 +80,9 @@ current tree (see the decision log); they are listed for continuity.
   ASCII fast paths with full Unicode fallback.)*
 - **W5 — Dedupe-specific.** Bench repeated/unique/long/adversarial lines separately;
   preserve exact first-occurrence semantics; consider pre-sizing the `HashSet`. Do
-  **not** switch to a weaker hasher (adversarial-input risk).
+  **not** switch to a weaker hasher (adversarial-input risk). *(Partially banked:
+  `dedupe_lines` pre-sizes the membership set and kept-line vector from the known
+  line count.)*
 - **W5b — IOC-specific.** Defang/refang and URL cleaning are measured as separate
   synthetic rows. Keep the documented token/marker heuristics exact, avoid new parser
   dependencies, and favor bounded byte dispatch over repeated replacement or
@@ -230,4 +232,11 @@ let two agents edit the same file family at once.
   `clean-urls-trackers` 259.6 → 276.0 (+6.3%), `full-menu-log` 93.0 → 97.0
   (+4.3%), `default-log` 108.1 → 109.0 (+0.8%). No ABI, dependency, zeroization,
   ordering, or privacy posture change.
+- 2026-06-06: W5 accepted for unique-line dedupe allocation: `dedupe_lines` now
+  pre-sizes the `HashSet` and kept-line `Vec` from the already-known line count,
+  preserving first-occurrence output order and deterministic visible output.
+  Same-branch 128 MiB / 5-sample comparison after W5b: `dedupe-lines-unique`
+  490.1 → 680.3 MiB/s (+39%), `dedupe-lines-repeated` 761.1 → 763.6 (+0.3%),
+  `default-log` 109.0 → 109.9 (+0.8%), `full-menu-log` 97.0 → 96.7 (−0.3%).
+  No ABI, dependency, zeroization, ordering, or privacy posture change.
 - _Append one entry per accepted optimization: date, scenario, before→after median._
