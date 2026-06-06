@@ -99,7 +99,8 @@ current tree (see the decision log); they are listed for continuity.
   expensive idempotence checks, streams transformed cores directly into the final
   output, and skips no-op tokens that contain none of the bytes any handled
   indicator needs; `clean_urls` streams URL token reconstruction into the final
-  output instead of allocating per-token rebuilt strings.)*
+  output instead of allocating per-token rebuilt strings and skips no-op prose
+  tokens that cannot expose a URL prefix after punctuation trimming.)*
 - **W6 — Shell responsiveness** (macOS): measure Swift↔Rust copies separately; move
   large transforms off the main actor while keeping pasteboard reads/writes on it;
   re-check `changeCount` before commit; keep `NSPasteboard.general` opt-in. Land the
@@ -392,4 +393,14 @@ let two agents edit the same file family at once.
   312.7 → 304.0). No ABI, dependency, zeroization, ordering, or privacy posture
   change; the change removes classifier work on ordinary prose tokens and adds no
   transform-local scratch.
+- 2026-06-06: W5h accepted for `clean_urls`: non-whitespace tokens now skip
+  punctuation trimming and URL-prefix checks when the first byte after the fixed
+  ASCII trim-punctuation set is not lowercase `h` or `w`. This is an exact no-op
+  prefilter because the only recognized URL prefixes are `http://`, `https://`, and
+  `www.`. Same-worktree 128 MiB / 5-sample comparison after W5g:
+  `clean-urls-trackers` 312.7 → 331.9 MiB/s (+6.1%). The op is not part of
+  `default-log` or `full-menu-log`; nearby IOC rows stayed within the −3% rule
+  (`defang-iocs` 187.1 → 188.9, `refang-iocs` 369.9 → 369.3). No ABI, dependency,
+  zeroization, ordering, or privacy posture change; the change removes trim/prefix
+  work on ordinary prose tokens and adds no transform-local scratch.
 - _Append one entry per accepted optimization: date, scenario, before→after median._

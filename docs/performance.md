@@ -44,7 +44,7 @@ and W5d/W5f/W5g defang allocation/marker guard cleanup, streaming token
 reconstruction, and no-op token prefiltering, W2 output pre-sizing for shared line
 joins, and W4b streaming sentence-case scanning, W2b borrowed-slice trailing trim,
 W1b Markdown output bookkeeping/normalization cleanup, and W5e streaming URL
-cleaner token reconstruction, plus W3
+cleaner token reconstruction plus W5h URL no-op token prefiltering, plus W3
 `TrimTrailingWhitespace` → `RemoveBlankLines` fusion and W3b `CollapseWhitespace` →
 `TrimTrailingWhitespace` → `RemoveBlankLines` fusion with boundary-zeroized scratch
 (see the cost section below).
@@ -74,7 +74,7 @@ size-optimized — leaving the scalar scan loop unvectorized).
 | sort-lines | 0.214s | 596.9 MiB/s |
 | defang-iocs (URLs/emails/IPs/domains; output grows ~15%) | 0.684s | 187.1 MiB/s |
 | refang-iocs (input is the defanged buffer) | 0.400s | 369.9 MiB/s |
-| clean-urls-trackers | 0.409s | 312.7 MiB/s |
+| clean-urls-trackers | 0.386s | 331.9 MiB/s |
 | html-markdown-trim-log | 0.571s | 224.0 MiB/s |
 | full-menu-without-markdown | 0.564s | 226.9 MiB/s |
 | full-menu-without-collapse | 0.723s | 177.0 MiB/s |
@@ -96,8 +96,10 @@ which avoids the temporary lowercase buffer and per-character uppercase allocati
 while preserving Unicode expansion. Clean URL stripping now streams URL token
 reconstruction directly into
 the final output, so it avoids per-token temporary strings and an intermediate
-survivor list. End-to-end clipboard pipelines (which don't include the IOC ops) sit
-at ~159–195 MiB/s in this run. The W3 fusions remove the trim/remove-blank
+survivor list, and skips trim/prefix work for prose tokens that cannot expose a
+URL prefix after punctuation trimming. End-to-end clipboard pipelines (which don't
+include the IOC ops) sit at ~159–195 MiB/s in this run. The W3 fusions remove the
+trim/remove-blank
 intermediate and the common collapse/trim/remove suffix from the default path. The
 W3b fused collapse scratch is transform-local `Zeroizing` storage: it is wiped
 before capacity growth can release old bytes and on drop, but allocation-preserving

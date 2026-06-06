@@ -135,6 +135,10 @@ pub fn clean_urls(input: &str) -> String {
 
 /// Append a single non-whitespace token, cleaning URL candidates in place.
 fn push_clean_token(out: &mut String, token: &str) {
+    if !can_trim_to_url_prefix(token) {
+        out.push_str(token);
+        return;
+    }
     let trimmed = trim_token_punct(token);
     if !is_url(trimmed) {
         out.push_str(token);
@@ -151,6 +155,25 @@ fn push_clean_token(out: &mut String, token: &str) {
     out.push_str(prefix);
     push_clean_url_core(out, trimmed);
     out.push_str(suffix);
+}
+
+/// A URL candidate must start with lowercase `h` or `w` after trimming the fixed
+/// ASCII edge punctuation set. Tokens that fail this necessary condition are exact
+/// no-ops, so avoid the heavier trim/prefix work.
+fn can_trim_to_url_prefix(token: &str) -> bool {
+    let mut idx = 0usize;
+    let bytes = token.as_bytes();
+    while idx < bytes.len() && is_token_trim_byte(bytes[idx]) {
+        idx += 1;
+    }
+    matches!(bytes.get(idx), Some(b'h' | b'w'))
+}
+
+fn is_token_trim_byte(byte: u8) -> bool {
+    matches!(
+        byte,
+        b'<' | b'>' | b'(' | b')' | b'[' | b']' | b'{' | b'}' | b',' | b';' | b':' | b'"' | b'\''
+    )
 }
 
 /// Clean the URL "core" (punctuation already trimmed): split base/query/fragment,
