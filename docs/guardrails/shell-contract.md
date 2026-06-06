@@ -61,6 +61,9 @@ new platform.
    (release the result; it is zeroized on free). Build the `config_json` from the
    user's chosen pipeline. The canonical sanitization config is
    **`StripHtml` → `StripMarkdown`**.
+   One-shot conversion commands may intentionally choose a different representation:
+   `HtmlToMarkdown` consumes the raw HTML representation directly so structure is not
+   destroyed before conversion.
 8. **Off-thread transform (UI responsiveness).** `ss_transform` is synchronous and,
    on large inputs (e.g. a multi-hundred-MB log pasted onto the clipboard), can take
    ~1 s or more — far too long to run on the UI/event thread. Run the transform **off

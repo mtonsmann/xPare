@@ -254,8 +254,10 @@ final class AppModel: ObservableObject {
     // MARK: - One-shot commands (Extract / Refang)
 
     /// Run a transient single-op command against the clipboard (never persisted).
-    /// Reductions (extract emails/URLs) and refang are surfaced this way per D12.
-    func runCommand(_ op: SafetyStripCore.Operation, label: String) {
+    /// Reductions/conversions and refang are surfaced this way per D12.
+    func runCommand(_ op: SafetyStripCore.Operation,
+                    label: String,
+                    notApplicableStatus: String? = nil) {
         Task { @MainActor in
             switch await controller.runOnce(operations: [op]) {
             case .stripped(let changed):
@@ -264,6 +266,8 @@ final class AppModel: ObservableObject {
                 lastStatus = "Clipboard empty"
             case .failed:
                 lastStatus = "\(label) failed"
+            case .notApplicable:
+                lastStatus = notApplicableStatus ?? "\(label): not applicable"
             case .tooLarge(let bytes):
                 lastStatus = "Clipboard too large (\(bytes / (1024 * 1024)) MB)"
             }
@@ -281,6 +285,8 @@ final class AppModel: ObservableObject {
                 lastStatus = "Clipboard empty"
             case .failed:
                 lastStatus = "Could not strip"
+            case .notApplicable:
+                lastStatus = "Nothing to strip"
             case .tooLarge(let bytes):
                 lastStatus = "Clipboard too large (\(bytes / (1024 * 1024)) MB)"
             }
@@ -406,6 +412,12 @@ private struct MenuContent: View {
         .disabled(model.isStripping)
         Button("Extract URLs") {
             model.runCommand(.extractUrls, label: "Extracted URLs")
+        }
+        .disabled(model.isStripping)
+        Button("Convert HTML to Markdown") {
+            model.runCommand(.htmlToMarkdown,
+                             label: "Converted to Markdown",
+                             notApplicableStatus: "No HTML content")
         }
         .disabled(model.isStripping)
         Button("Refang clipboard") {

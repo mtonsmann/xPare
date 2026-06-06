@@ -162,6 +162,28 @@ pub fn strip_html(input: &str) -> String {
     normalize_trailing(out)
 }
 
+/// Decode the same curated HTML entity set used by [`strip_html`] without treating
+/// tags or structural newlines specially.
+///
+/// This is shared by text-preserving converters that still need SafetyStrip's
+/// bounded, panic-free entity behavior. Unknown or malformed entities are emitted
+/// literally, matching the stripper contract.
+pub(crate) fn decode_entities(input: &str) -> String {
+    if !input.as_bytes().contains(&b'&') {
+        return input.to_string();
+    }
+    let mut out = String::with_capacity(input.len());
+    let mut chars = input.char_indices().peekable();
+    while let Some((_, c)) = chars.next() {
+        if c == '&' {
+            decode_entity_at(input, &mut chars, &mut out);
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 #[inline(never)]
 fn strip_html_plain_text(input: &str) -> String {
     let mut out = String::with_capacity(input.len());

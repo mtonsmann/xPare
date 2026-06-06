@@ -95,6 +95,8 @@ pub enum Operation {
     StripHtml,
     /// Strip Markdown formatting → plain text.
     StripMarkdown,
+    /// Convert common copied-web HTML structure → Markdown plain text.
+    HtmlToMarkdown,
     /// Collapse runs of spaces/tabs to a single space.
     CollapseWhitespace,
     /// Trim trailing whitespace from each line.
@@ -159,22 +161,23 @@ impl Operation {
         match self {
             Operation::StripHtml => 1,
             Operation::StripMarkdown => 2,
-            Operation::SplitOn { .. } => 3,
-            Operation::UnwrapLines => 4,
-            Operation::CollapseWhitespace => 5,
-            Operation::TrimTrailingWhitespace => 6,
-            Operation::CleanUrls => 7,
-            Operation::Defang { .. } => 8,
-            Operation::Refang => 9,
-            Operation::ExtractEmails => 10,
-            Operation::ExtractUrls => 11,
-            Operation::RemoveBlankLines => 12,
-            Operation::DedupeLines => 13,
-            Operation::SortLines { .. } => 14,
-            Operation::ChangeCase { .. } => 15,
-            Operation::PrefixLines { .. } => 16,
-            Operation::SuffixLines { .. } => 17,
-            Operation::JoinWith { .. } => 18,
+            Operation::HtmlToMarkdown => 3,
+            Operation::SplitOn { .. } => 4,
+            Operation::UnwrapLines => 5,
+            Operation::CollapseWhitespace => 6,
+            Operation::TrimTrailingWhitespace => 7,
+            Operation::CleanUrls => 8,
+            Operation::Defang { .. } => 9,
+            Operation::Refang => 10,
+            Operation::ExtractEmails => 11,
+            Operation::ExtractUrls => 12,
+            Operation::RemoveBlankLines => 13,
+            Operation::DedupeLines => 14,
+            Operation::SortLines { .. } => 15,
+            Operation::ChangeCase { .. } => 16,
+            Operation::PrefixLines { .. } => 17,
+            Operation::SuffixLines { .. } => 18,
+            Operation::JoinWith { .. } => 19,
         }
     }
 }

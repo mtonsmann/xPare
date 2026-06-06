@@ -2,8 +2,8 @@
 
 SafetyStrip is a memory-safe, plain-text clipboard utility. It strips formatting
 and noise out of clipboard text — coerce rich text to plain, strip HTML/Markdown,
-normalize whitespace, change case, line operations — without the clipboard
-content ever leaving the process.
+convert copied HTML to Markdown, normalize whitespace, change case, line
+operations — without the clipboard content ever leaving the process.
 
 It is built as **two components separated by a frozen, language-neutral C ABI**:
 
@@ -37,11 +37,12 @@ invariants.
 | File | Responsibility |
 |---|---|
 | `core/src/lib.rs` | Crate root. Declares `#![forbid(unsafe_code)]` and the `print*`/`dbg!` denies. Re-exports the public API and holds `CAPABILITIES_JSON` (the static self-description). |
-| `core/src/config.rs` | The `Config` / `Operation` / `CaseKind` schema and `parse_config`. This is the data that crosses the FFI. `CONFIG_VERSION = 1`. |
+| `core/src/config.rs` | The `Config` / `Operation` / `CaseKind` schema and `parse_config`. This is the data that crosses the FFI. `CONFIG_VERSION = 2`. |
 | `core/src/pipeline.rs` | `transform(input, config)` — folds the ordered operations over the text. Infallible and deterministic; holds intermediates in `Zeroizing` storage and wipes fused scratch storage before release or reallocation. |
 | `core/src/ops/mod.rs` | Operations module root; each op is a pure free function. |
 | `core/src/ops/html.rs` | Hand-rolled, pure-safe-Rust HTML→text state machine + curated entity decoder. The rich→plain / script-neutralizing workhorse. |
 | `core/src/ops/markdown.rs` | Markdown→text via `pulldown-cmark`; delegates embedded HTML to `html::strip_html`. |
+| `core/src/ops/html_to_markdown.rs` | Dependency-free, pure-safe-Rust HTML→Markdown converter for common copied-web fragments. Drops active content and unsafe links; used as a one-shot command. |
 | `core/src/ops/whitespace.rs` | `collapse_whitespace`, `trim_trailing_whitespace`. |
 | `core/src/ops/lines.rs` | The line model plus the line ops and best-effort `extract_emails`/`extract_urls`. |
 | `core/src/ops/case.rs` | `change_case`: upper / lower / title / sentence (full Unicode). |
@@ -139,6 +140,8 @@ which is small enough to read end to end.
 2. The shell reads the clipboard and **extracts the best plain representation**:
    it prefers the HTML representation and feeds it to the core's `StripHtml`,
    because that is the path that neutralizes `<script>`/`<style>` and tags.
+   The one-shot `HtmlToMarkdown` command is the deliberate exception: it consumes
+   the raw HTML representation directly so structure can be preserved as Markdown.
 3. The shell calls `ss_transform(input, config_json)`. `config_json` is a
    versioned, ordered list of operations — feature selection is **data**, not API.
 4. The core lossy-decodes the bytes, runs the pipeline left-to-right, and returns

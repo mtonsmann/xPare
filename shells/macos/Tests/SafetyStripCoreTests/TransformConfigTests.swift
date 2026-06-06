@@ -43,10 +43,12 @@ import Foundation
     }
 
     @Test func noPayloadOpsEncodeAsBareTag() throws {
-        let config = TransformConfig(operations: [.dedupeLines, .extractEmails, .extractUrls])
+        let config = TransformConfig(operations: [
+            .htmlToMarkdown, .dedupeLines, .extractEmails, .extractUrls
+        ])
         let json = try config.encodedJSON()
         let expected = """
-        {"version":2,"operations":[{"op":"dedupe_lines"},{"op":"extract_emails"},{"op":"extract_urls"}],"ordering":"canonical"}
+        {"version":2,"operations":[{"op":"html_to_markdown"},{"op":"dedupe_lines"},{"op":"extract_emails"},{"op":"extract_urls"}],"ordering":"canonical"}
         """
         #expect(try jsonObject(json) == jsonObject(expected))
     }

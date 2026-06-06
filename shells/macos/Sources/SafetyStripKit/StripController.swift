@@ -19,6 +19,9 @@ public enum StripOutcome: Equatable, Sendable {
     case empty
     /// The core rejected the input or config.
     case failed
+    /// The requested one-shot command does not apply to the current clipboard
+    /// representation. Carries no clipboard content.
+    case notApplicable
     /// The clipboard exceeded the shell's safe size ceiling and was left untouched
     /// (no transform attempted). Carries only the byte count, never content.
     case tooLarge(bytes: Int)
@@ -144,7 +147,8 @@ public final class StripController {
     /// emails/URLs) and one-shot rewrites (refang) are surfaced — per DESIGN.md D12
     /// they are *commands*, not standing toggles, so they must not be saved into
     /// `settings.operations`. An HTML source is still run through `strip_html` first
-    /// so a reduction sees plain text rather than raw markup.
+    /// so reductions see plain text rather than raw markup. `html_to_markdown` is
+    /// the exception: it consumes the raw HTML representation directly.
     @discardableResult
     public func runOnce(
         operations: [SafetyStripCore.Operation],
@@ -152,7 +156,11 @@ public final class StripController {
     ) async -> StripOutcome {
         await perform(trigger: trigger) { snapshot in
             var ops = operations
-            if snapshot.kind == .html {
+            let convertsHtmlToMarkdown = ops.contains(.htmlToMarkdown)
+            if convertsHtmlToMarkdown {
+                guard snapshot.kind == .html else { return nil }
+                ops.removeAll { $0 == .stripHtml }
+            } else if snapshot.kind == .html {
                 ops.removeAll { $0 == .stripHtml }
                 ops.insert(.stripHtml, at: 0)
             }
@@ -166,7 +174,7 @@ public final class StripController {
     /// "Stripping…" signal), and write the result back only when it actually changed.
     private func perform(
         trigger: StripTrigger,
-        makeConfig: (PasteboardSnapshot) -> TransformConfig
+        makeConfig: (PasteboardSnapshot) -> TransformConfig?
     ) async -> StripOutcome {
         if trigger == .clipboardChanged,
            pasteboard.changeCount == lastSelfWriteChangeCount {
@@ -191,7 +199,9 @@ public final class StripController {
             return .tooLarge(bytes: byteCount)
         }
 
-        var config = makeConfig(snapshot)
+        guard var config = makeConfig(snapshot) else {
+            return .notApplicable
+        }
         // D12 guard: continuous mode must NEVER run a reduction — it would silently
         // replace every copied buffer with a derived subset. Drop any that slipped
         // into the pipeline (e.g. from older persisted settings). On-demand triggers

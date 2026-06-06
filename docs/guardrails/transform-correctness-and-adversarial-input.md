@@ -31,8 +31,9 @@ hangs, stays deterministic, neutralizes active content."
 4. **Preserve the documented contract.** Each op's exact, frozen rules live in the
    doc comment on its function — that is the source of truth. If you change behavior,
    change the doc comment in the same diff and update the tests. Do not silently
-   drift `strip_html`'s block set, the entity table, the line model, the unwrap rule,
-   or the title/sentence-case rules.
+   drift `strip_html`'s block set, the entity table, the HTML-to-Markdown safe-link
+   and raw-HTML escaping policy, the line model, the unwrap rule, or the
+   title/sentence-case rules.
 5. **Honor the sanitization boundary.** `strip_html` is the security workhorse that
    neutralizes `<script>`/`<style>` and removes tags; the shell runs it on the
    clipboard's HTML representation. `strip_markdown` removes Markdown formatting and
@@ -55,6 +56,7 @@ hangs, stays deterministic, neutralizes active content."
 |---|---|---|
 | HTML | `core/src/ops/html.rs` | comment/declaration/PI dropping; quoted-attr `>`; stray `<`/`>` emitted literally; `<script>`/`<style>` raw-text dropped (case-insensitive close, unterminated → drop to end); curated block set; `<br>`/`<hr>` newline; ≤ one blank line; numeric entities (surrogate/oversize → U+FFFD); curated named table; unknown/malformed → verbatim |
 | Markdown | `core/src/ops/markdown.rs` | options `TABLES｜STRIKETHROUGH｜TASKLISTS`; text/code kept, formatting dropped; link text kept / URL dropped; image alt kept; soft break → space, hard break → `\n`; loose vs tight block spacing; table cells tab-separated; embedded HTML → `strip_html` |
+| HTML-to-Markdown | `core/src/ops/html_to_markdown.rs` | common copied-web structures only; comments/declarations/PIs dropped; `<script>`/`<style>` bodies dropped; headings/paragraphs/links/lists/blockquote/code/pre/table rows preserved best-effort; unsafe link schemes dropped while text survives; entities decoded via the curated HTML decoder; entity-decoded Markdown text escapes raw HTML delimiters; inline/pre code delimiters must outgrow copied backtick runs so content cannot break out as active Markdown HTML |
 | Whitespace | `core/src/ops/whitespace.rs` | `collapse_whitespace` only ASCII space/tab, never `\n`; `trim_trailing_whitespace` trims non-newline whitespace per line (CRLF→LF as a side effect) |
 | Lines | `core/src/ops/lines.rs` | the shared line model (split on `\n`, strip trailing `\r` run); trailing-newline round-trip; `unwrap_lines` → clean paragraph block, no trailing newline; heuristic email/URL extraction |
 | Case | `core/src/ops/case.rs` | full-Unicode mappings; **positional** title case (`3RD`→`3rd`, `(HELLO)`→`(hello)`); sentence = lowercase then capitalize after `.`/`!`/`?` + whitespace |

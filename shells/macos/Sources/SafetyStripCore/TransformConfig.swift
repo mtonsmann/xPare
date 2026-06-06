@@ -32,6 +32,7 @@ public enum Operation: Equatable, Sendable {
     // --- Must (common baseline) ---
     case stripHtml
     case stripMarkdown
+    case htmlToMarkdown
     case collapseWhitespace
     case trimTrailingWhitespace
     case removeBlankLines
@@ -58,6 +59,7 @@ public enum Operation: Equatable, Sendable {
         switch self {
         case .stripHtml: return "strip_html"
         case .stripMarkdown: return "strip_markdown"
+        case .htmlToMarkdown: return "html_to_markdown"
         case .collapseWhitespace: return "collapse_whitespace"
         case .trimTrailingWhitespace: return "trim_trailing_whitespace"
         case .removeBlankLines: return "remove_blank_lines"
@@ -106,7 +108,7 @@ extension Operation: Codable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(opTag, forKey: .op)
         switch self {
-        case .stripHtml, .stripMarkdown, .collapseWhitespace,
+        case .stripHtml, .stripMarkdown, .htmlToMarkdown, .collapseWhitespace,
              .trimTrailingWhitespace, .removeBlankLines, .unwrapLines,
              .dedupeLines, .extractEmails, .extractUrls, .refang, .cleanUrls:
             // No payload — the `op` tag is the whole object.
@@ -139,6 +141,7 @@ extension Operation: Codable {
         switch op {
         case "strip_html": self = .stripHtml
         case "strip_markdown": self = .stripMarkdown
+        case "html_to_markdown": self = .htmlToMarkdown
         case "collapse_whitespace": self = .collapseWhitespace
         case "trim_trailing_whitespace": self = .trimTrailingWhitespace
         case "remove_blank_lines": self = .removeBlankLines

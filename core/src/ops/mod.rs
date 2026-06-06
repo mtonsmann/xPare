@@ -12,6 +12,7 @@
 pub mod case;
 pub mod defang;
 pub mod html;
+pub mod html_to_markdown;
 pub mod lines;
 pub mod markdown;
 pub mod urls;
