@@ -73,37 +73,78 @@ final class AppModel: ObservableObject {
         settings.operations.contains(op)
     }
 
-    /// Sort-lines toggle. Parameterized (two flags), but surfaced in the menu as a
-    /// plain on/off with sensible defaults; the flags themselves live in Settings.
-    var isSortEnabled: Bool { settings.operations.contains(where: isSort) }
+    /// Sort modes — off plus the four flag combinations — surfaced as a single inline
+    /// `Picker` in the menu so the active mode gets the system ✓ (the native Finder
+    /// "Sort By" idiom). Mutually exclusive; sort is on iff a non-`off` mode is picked.
+    enum SortMode: Hashable, CaseIterable, Identifiable {
+        case off, ascending, descending, ascendingCI, descendingCI
+        var id: Self { self }
 
-    func setSort(enabled: Bool) {
-        var ops = settings.operations
-        let existing = sortFlags() // preserve flags across an off→on toggle
-        ops.removeAll(where: isSort)
-        if enabled {
-            ops.append(.sortLines(descending: existing.descending,
-                                  caseInsensitive: existing.caseInsensitive))
-        }
-        commit(ops)
-    }
-
-    /// The active sort flags (or defaults if sort is off).
-    func sortFlags() -> (descending: Bool, caseInsensitive: Bool) {
-        for op in settings.operations {
-            if case let .sortLines(descending, caseInsensitive) = op {
-                return (descending, caseInsensitive)
+        /// Full label for the Picker rows.
+        var label: String {
+            switch self {
+            case .off: return "Off"
+            case .ascending: return "A → Z"
+            case .descending: return "Z → A"
+            case .ascendingCI: return "A → Z (ignore case)"
+            case .descendingCI: return "Z → A (ignore case)"
             }
         }
-        return (false, false)
+
+        /// Compact label for the collapsed submenu title.
+        var shortLabel: String {
+            switch self {
+            case .off: return "Off"
+            case .ascending: return "A → Z"
+            case .descending: return "Z → A"
+            case .ascendingCI: return "A → Z, aA"
+            case .descendingCI: return "Z → A, aA"
+            }
+        }
+
+        /// The `sort_lines` flags for this mode, or `nil` when sort is off.
+        var flags: (descending: Bool, caseInsensitive: Bool)? {
+            switch self {
+            case .off: return nil
+            case .ascending: return (false, false)
+            case .descending: return (true, false)
+            case .ascendingCI: return (false, true)
+            case .descendingCI: return (true, true)
+            }
+        }
     }
 
-    func setSortFlags(descending: Bool, caseInsensitive: Bool) {
+    /// The selected sort mode, derived from the pipeline.
+    var sortMode: SortMode {
+        for op in settings.operations {
+            if case let .sortLines(descending, caseInsensitive) = op {
+                switch (descending, caseInsensitive) {
+                case (false, false): return .ascending
+                case (true, false): return .descending
+                case (false, true): return .ascendingCI
+                case (true, true): return .descendingCI
+                }
+            }
+        }
+        return .off
+    }
+
+    func setSortMode(_ mode: SortMode) {
         var ops = settings.operations
-        // Update the existing sort op in place; never *create* one here (that's the
-        // "Sort lines" toggle's job) so editing flags can't resurrect a disabled sort.
-        guard let idx = ops.firstIndex(where: isSort) else { return }
-        ops[idx] = .sortLines(descending: descending, caseInsensitive: caseInsensitive)
+        guard let flags = mode.flags else {
+            ops.removeAll(where: isSort) // .off → drop the sort op
+            commit(ops)
+            return
+        }
+        let newOp = SafetyStripCore.Operation.sortLines(descending: flags.descending,
+                                                        caseInsensitive: flags.caseInsensitive)
+        // Update in place when present (preserves pipeline position in manual order);
+        // otherwise append.
+        if let idx = ops.firstIndex(where: isSort) {
+            ops[idx] = newOp
+        } else {
+            ops.append(newOp)
+        }
         commit(ops)
     }
 
@@ -334,25 +375,21 @@ private struct MenuContent: View {
                 set: { model.setOperation(op, enabled: $0) }
             ))
         }
-        Toggle("Sort lines", isOn: Binding(
-            get: { model.isSortEnabled },
-            set: { model.setSort(enabled: $0) }
-        ))
-        // Sort's two flags as a native submenu next to the on/off toggle (disabled
-        // until sort is on). Bounded-choice params belong in submenus (D12).
-        Menu("Sort options") {
-            Toggle("Descending", isOn: Binding(
-                get: { model.sortFlags().descending },
-                set: { model.setSortFlags(descending: $0,
-                                          caseInsensitive: model.sortFlags().caseInsensitive) }
-            ))
-            Toggle("Case-insensitive", isOn: Binding(
-                get: { model.sortFlags().caseInsensitive },
-                set: { model.setSortFlags(descending: model.sortFlags().descending,
-                                          caseInsensitive: $0) }
-            ))
+        // Sort is a SINGLE entry: a submenu whose title shows the active mode, with the
+        // modes as an inline Picker so the active one gets the system ✓ — the same
+        // native checkmark the sibling toggles use, just on the child (Finder "Sort By"
+        // idiom). One menu line; state visible in the title; no glyph-alignment hacks.
+        Menu("Sort lines: \(model.sortMode.shortLabel)") {
+            Picker("Sort lines", selection: Binding(
+                get: { model.sortMode },
+                set: { model.setSortMode($0) }
+            )) {
+                ForEach(AppModel.SortMode.allCases) { mode in
+                    Text(mode.label).tag(mode)
+                }
+            }
+            .pickerStyle(.inline)
         }
-        .disabled(!model.isSortEnabled)
         Toggle("Defang IOCs", isOn: Binding(
             get: { model.isDefangEnabled },
             set: { model.setDefang(enabled: $0) }
