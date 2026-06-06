@@ -31,8 +31,9 @@ Nothing here is committed scope; it's a memory aid for the next maintainer.
 
 ## From exec-plan 0004 — extraction, defang/refang, URL cleaning
 
-- **In-menu sort-flag submenu.** Surface `Sort lines`' *descending* / *case-insensitive*
-  flags as a menu submenu; today they live only in the Settings window. (0004 → Phase 3)
+- ~~**In-menu sort-flag submenu.**~~ Done — `Sort lines`' *descending* /
+  *case-insensitive* flags are now a "Sort options" submenu in the menu (and moved
+  out of the Settings window so each control has one home).
 - **Drag-to-reorder pipeline.** Let the user reorder the operation pipeline in the
   Settings window; today order follows menu/insertion order. (0004 → Phase 3)
 - **Measured throughput for `defang` / `clean_urls`.** Add real `make perf` figures for
