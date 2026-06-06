@@ -234,4 +234,34 @@ proptest! {
         let fused_canonical = transform(&input, &canonical);
         prop_assert_eq!(&fused_canonical, &reference);
     }
+
+    /// The internal W3 fusion for CollapseWhitespace -> TrimTrailingWhitespace ->
+    /// RemoveBlankLines must remain byte-for-byte identical to applying the three
+    /// public operations in order.
+    #[test]
+    fn collapse_trim_remove_blank_fusion_matches_public_ops(input in interesting_string()) {
+        let collapsed = ops::whitespace::collapse_whitespace(&input);
+        let trimmed = ops::whitespace::trim_trailing_whitespace(&collapsed);
+        let reference = ops::lines::remove_blank_lines(&trimmed);
+
+        let as_given = Config::as_given(vec![
+            Operation::CollapseWhitespace,
+            Operation::TrimTrailingWhitespace,
+            Operation::RemoveBlankLines,
+        ]);
+        let fused_as_given = transform(&input, &as_given);
+        prop_assert_eq!(&fused_as_given, &reference);
+
+        let canonical = Config {
+            version: CONFIG_VERSION,
+            operations: vec![
+                Operation::RemoveBlankLines,
+                Operation::TrimTrailingWhitespace,
+                Operation::CollapseWhitespace,
+            ],
+            ordering: Ordering::Canonical,
+        };
+        let fused_canonical = transform(&input, &canonical);
+        prop_assert_eq!(&fused_canonical, &reference);
+    }
 }

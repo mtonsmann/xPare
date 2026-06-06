@@ -62,6 +62,13 @@ pub fn transform(input: &str, config: &Config) -> String {
 /// Dispatch one pipeline step, optionally fusing adjacent operations whose combined
 /// behavior is byte-for-byte identical but avoids a zeroized intermediate.
 fn apply_next(text: &str, ops: &[&Operation]) -> (String, usize) {
+    if ops.len() >= 3
+        && matches!(ops[0], Operation::CollapseWhitespace)
+        && matches!(ops[1], Operation::TrimTrailingWhitespace)
+        && matches!(ops[2], Operation::RemoveBlankLines)
+    {
+        return (collapse_trim_then_remove_blank_lines(text), 3);
+    }
     if ops.len() >= 2
         && matches!(ops[0], Operation::TrimTrailingWhitespace)
         && matches!(ops[1], Operation::RemoveBlankLines)
@@ -148,4 +155,79 @@ fn push_nonblank_line(out: &mut String, line: &str, wrote_line: &mut bool) {
 
 fn trim_non_newline_whitespace_end(line: &str) -> &str {
     line.trim_end_matches(|c: char| c.is_whitespace() && c != '\n')
+}
+
+/// Fused `CollapseWhitespace` followed by `TrimTrailingWhitespace` and
+/// `RemoveBlankLines`.
+///
+/// This extends the two-op line cleanup fusion to the default pipeline's common
+/// three-op suffix. It keeps a reusable per-line collapse scratch buffer rather than
+/// materializing and zeroizing the full collapse output before trimming/removing.
+fn collapse_trim_then_remove_blank_lines(input: &str) -> String {
+    let mut preserve_trailing_newline = input.ends_with('\n');
+    let mut out = String::with_capacity(input.len());
+    let mut wrote_line = false;
+    let mut saw_newline = false;
+    let mut start = 0usize;
+    let mut collapsed = Vec::new();
+    for (i, ch) in input.char_indices() {
+        if ch == '\n' {
+            saw_newline = true;
+            push_collapsed_trimmed_nonblank_line(
+                &mut out,
+                &input[start..i],
+                &mut collapsed,
+                &mut wrote_line,
+            );
+            start = i + 1;
+        }
+    }
+    if !preserve_trailing_newline {
+        let final_line = collapse_line(&input[start..], &mut collapsed);
+        let final_line = trim_non_newline_whitespace_end(final_line);
+        if final_line.chars().all(char::is_whitespace) {
+            preserve_trailing_newline = saw_newline;
+        } else {
+            push_nonblank_line(&mut out, final_line, &mut wrote_line);
+        }
+    }
+    if preserve_trailing_newline && wrote_line {
+        out.push('\n');
+    }
+    out
+}
+
+fn push_collapsed_trimmed_nonblank_line(
+    out: &mut String,
+    line: &str,
+    collapsed: &mut Vec<u8>,
+    wrote_line: &mut bool,
+) {
+    let collapsed = collapse_line(line, collapsed);
+    let trimmed = trim_non_newline_whitespace_end(collapsed);
+    if trimmed.chars().all(char::is_whitespace) {
+        return;
+    }
+    push_nonblank_line(out, trimmed, wrote_line);
+}
+
+fn collapse_line<'a>(line: &'a str, scratch: &'a mut Vec<u8>) -> &'a str {
+    scratch.clear();
+    scratch.reserve(line.len());
+    let mut in_run = false;
+    for &byte in line.as_bytes() {
+        if byte == b' ' || byte == b'\t' {
+            if !in_run {
+                scratch.push(b' ');
+                in_run = true;
+            }
+        } else {
+            in_run = false;
+            scratch.push(byte);
+        }
+    }
+    match std::str::from_utf8(scratch) {
+        Ok(collapsed) => collapsed,
+        Err(_) => line,
+    }
 }

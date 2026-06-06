@@ -77,7 +77,8 @@ current tree (see the decision log); they are listed for continuity.
   normalization + a line op, or collapse + trim where ordering permits) without
   changing visible semantics or the public config. Golden-tested fused-vs-unfused.
   *(Partially banked: adjacent `TrimTrailingWhitespace` → `RemoveBlankLines` is
-  fused inside the pipeline executor.)*
+  fused inside the pipeline executor, and the common `CollapseWhitespace` →
+  `TrimTrailingWhitespace` → `RemoveBlankLines` suffix is fused when adjacent.)*
 - **W4 — Byte-oriented fast paths.** ASCII-specialized loops falling back to the
   Unicode-safe path on non-ASCII; byte scans where char boundaries are irrelevant.
   Consider `memchr` only if local benches show a clear gain **and** dependency
@@ -306,4 +307,15 @@ let two agents edit the same file family at once.
   (+13%), `lossy-utf8-log` 123.8 → 142.2 (+15%), `full-menu-without-markdown`
   136.5 → 160.4 (+18%), and `full-menu-without-collapse` 126.7 → 145.8 (+15%).
   No ABI, dependency, zeroization, ordering, or privacy posture change.
+- 2026-06-06: W3b accepted for `CollapseWhitespace` → `TrimTrailingWhitespace` →
+  `RemoveBlankLines` fusion: the pipeline executor now consumes the common adjacent
+  default-pipeline suffix as one private pass, reusing a per-line collapse scratch
+  buffer instead of materializing and zeroizing the full collapse output before line
+  cleanup. A proptest equivalence check compares fused transform output with the
+  public unfused ops for both `as_given` and canonical ordering. Same-branch
+  128 MiB / 5-sample comparison after W3: `default-log` 142.2 → 157.8 MiB/s
+  (+11%), `full-menu-log` 122.7 → 133.4 (+8.7%), `lossy-utf8-log`
+  142.2 → 158.2 (+11%), `full-menu-without-markdown` 160.4 → 178.2 (+11%),
+  and `full-menu-without-dedupe` 112.4 → 122.2 (+8.7%). No ABI, dependency,
+  zeroization, ordering, or privacy posture change.
 - _Append one entry per accepted optimization: date, scenario, before→after median._
