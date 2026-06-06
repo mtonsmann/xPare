@@ -169,7 +169,7 @@ therefore CI). Fix the code to satisfy the check; never weaken the check.
 | Default checks avoid the real clipboard | `check-clipboard-safety` (no default Make target depends on a real-clipboard smoke) | `xtask`, `Makefile` |
 | Pipeline intermediates wiped after use | `Zeroizing` buffers in the pipeline + `ss_buffer_free` zeroizes output | `core/src/pipeline.rs`, `core-ffi` |
 | Deterministic output | `transform(x,c) == transform(x,c)` property test | `core` tests |
-| Minimal macOS entitlements | checked-in entitlements file + `check-entitlements` | `xtask`, `shells/macos/` |
+| Minimal macOS entitlements | checked-in entitlements file + `check-entitlements`; `release.sh dist` requires it for Developer ID signing and verifies the signed payload is still minimal | `xtask`, `shells/macos/` |
 
 The single gate that runs all of the above is `cargo xtask ci`; CI runs the exact
 same command (`.github/workflows/ci.yml`). See [`CONTRIBUTING.md`](CONTRIBUTING.md).

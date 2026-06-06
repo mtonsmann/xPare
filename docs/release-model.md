@@ -32,8 +32,10 @@ make preview VERSION=1.2.3
 ```
 
 That writes `dist/release/SafetyStrip-vX.Y.Z-macos-<arch>-unsigned-preview.zip` and
-its `.sha256`. There are **no official downloadable release assets yet** — by
-design, the bundle is unsigned/un-notarized until Developer ID credentials exist.
+its `.sha256`. Preview archives are test artifacts, not official binaries: they are
+unsigned/ad-hoc and must not be promoted as end-user downloads. There are **no
+official downloadable release assets yet** — by design, the bundle is
+unsigned/un-notarized until Developer ID credentials exist.
 
 ## Target release channels
 
@@ -60,8 +62,10 @@ architecture choice explicit.
    unsigned preview as a workflow artifact.
 2. **publish-official** (gated): only when repo variable
    `SAFETYSTRIP_ENABLE_OFFICIAL_RELEASE == 'true'` **and** the Apple secrets are
-   present. Imports the Developer ID cert into a temp keychain, stores notary
-   credentials, runs `make dist` (sign → notarize → staple → zip → checksum →
+   present. It re-checks `shells/macos/SafetyStrip.entitlements`, imports the
+   Developer ID cert into a temp keychain, stores notary credentials, runs
+   `make dist` (Developer ID sign with the checked App Sandbox entitlements →
+   verify the signed payload is minimal → notarize → staple → zip → checksum →
    verify) and `make github-release`, then wipes the signing material.
 
 Signing/notary credentials are **never** required for pull-request CI. Absent them,
@@ -82,11 +86,22 @@ make dist VERSION=1.2.3 \
 make github-release VERSION=1.2.3
 ```
 
+`make dist` defaults to `shells/macos/SafetyStrip.entitlements` and fails if that
+file is unavailable. `SIGN_ENTITLEMENTS` exists so CI can pass that checked file as
+an absolute path; `release.sh` rejects any path that does not resolve to the checked
+file. The signed payload must contain only
+`com.apple.security.app-sandbox = true`. After signing, `release.sh` reads the
+signature back with `codesign -d --entitlements :-` and fails if the signed payload
+is not minimal.
+
 ## First public binary prerequisites
 
 - Lock the public bundle identifier (currently `com.safetystrip.app`).
 - Decide universal vs. per-arch assets.
 - Add Developer ID signing + notarization secrets (kept **out** of the repo).
+- Keep official signing tied to `shells/macos/SafetyStrip.entitlements`; a signed
+  app without the minimal App Sandbox-only payload is not an official SafetyStrip
+  release.
 - Verify Gatekeeper acceptance on a clean macOS machine.
 - Keep the no-network, no-telemetry, no-clipboard-content-logging posture intact —
   enforced by `cargo xtask ci` on every release run.

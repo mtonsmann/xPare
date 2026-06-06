@@ -23,12 +23,13 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 #![deny(clippy::print_stdout, clippy::print_stderr, clippy::dbg_macro)]
 
+use std::borrow::Cow;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::OnceLock;
 
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 /// Version of this C ABI. Bump on **any** change to the function signatures,
 /// struct/enum layouts, or memory-ownership contract below. Adding a transform is
@@ -148,7 +149,7 @@ pub unsafe extern "C" fn ss_transform(
     } else {
         unsafe { std::slice::from_raw_parts(input, input_len) }
     };
-    let input_text = String::from_utf8_lossy(input_bytes);
+    let input_text = LossyInput::new(input_bytes);
 
     // SAFETY: `config_json` is non-null and the caller guarantees it is a valid
     // NUL-terminated string.
@@ -165,7 +166,7 @@ pub unsafe extern "C" fn ss_transform(
     // Defense in depth: the core is fuzzed to never panic, but a panic must never
     // unwind across the FFI boundary. Convert any panic to ErrInternal.
     let output = match catch_unwind(AssertUnwindSafe(|| {
-        safetystrip_core::transform(&input_text, &config)
+        safetystrip_core::transform(input_text.as_str(), &config)
     })) {
         Ok(text) => text,
         Err(_) => return SsStatus::ErrInternal,
@@ -210,4 +211,43 @@ fn into_c_buffer(s: String) -> (*mut u8, usize) {
     let len = boxed.len();
     let ptr = Box::into_raw(boxed).cast::<u8>();
     (ptr, len)
+}
+
+enum LossyInput<'a> {
+    Borrowed(&'a str),
+    Owned(Zeroizing<String>),
+}
+
+impl<'a> LossyInput<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        match String::from_utf8_lossy(bytes) {
+            Cow::Borrowed(text) => Self::Borrowed(text),
+            Cow::Owned(text) => Self::Owned(Zeroizing::new(text)),
+        }
+    }
+
+    fn as_str(&self) -> &str {
+        match self {
+            Self::Borrowed(text) => text,
+            Self::Owned(text) => text.as_str(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LossyInput;
+
+    #[test]
+    fn valid_utf8_input_stays_borrowed() {
+        let input = LossyInput::new("valid UTF-8".as_bytes());
+        assert!(matches!(&input, LossyInput::Borrowed("valid UTF-8")));
+    }
+
+    #[test]
+    fn invalid_utf8_input_uses_zeroizing_owned_copy() {
+        let input = LossyInput::new(&[0xff, b'A']);
+        assert!(matches!(&input, LossyInput::Owned(_)));
+        assert_eq!(input.as_str(), "\u{fffd}A");
+    }
 }

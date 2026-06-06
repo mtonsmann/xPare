@@ -72,6 +72,20 @@ fn markdown_adversarial_inputs_stay_linear() {
     assert_fast("blockquote_depth", &">".repeat(n), strip_markdown);
     assert_fast("emphasis_storm", &"*".repeat(n), strip_markdown);
     assert_fast("heading_spam", &"# h\n".repeat(n / 4), strip_markdown);
+    assert_fast(
+        "codeblock_spaces_then_rules",
+        &markdown_codeblock_spaces_then_rules(n),
+        strip_markdown,
+    );
+}
+
+fn markdown_codeblock_spaces_then_rules(n: usize) -> String {
+    let mut input = String::with_capacity(n + (n * 4) + 16);
+    input.push_str("```\n");
+    input.push_str(&" ".repeat(n));
+    input.push_str("\n```\n");
+    input.push_str(&"---\n".repeat(n));
+    input
 }
 
 #[test]

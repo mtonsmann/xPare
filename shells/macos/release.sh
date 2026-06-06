@@ -10,9 +10,10 @@
 # Subcommands:
 #   preview          Assemble + zip an explicitly UNSIGNED preview + checksum.
 #                    Needs no Apple account; this is the path CI and local testing use.
-#   dist             Developer ID sign -> notarize -> staple -> zip -> checksum -> verify.
-#                    GATED: requires CERT_NAME (and NOTARY_PROFILE to notarize) plus a
-#                    real vX.Y.Z version. Cannot run without an Apple Developer ID.
+#   dist             Developer ID sign with the checked App Sandbox entitlements
+#                    -> notarize -> staple -> zip -> checksum -> verify.
+#                    GATED: requires CERT_NAME, the entitlements file, and a real
+#                    vX.Y.Z version. Cannot run without an Apple Developer ID.
 #   github-release   Upload the signed release zip + checksum via `gh`.
 #
 # Environment:
@@ -20,7 +21,9 @@
 #                              git tag); `preview` falls back to a dev label.
 #   CERT_NAME="Developer ID Application: Name (TEAMID)"   Required for `dist`.
 #   NOTARY_PROFILE=name        `xcrun notarytool store-credentials` profile; required to notarize.
-#   SIGN_ENTITLEMENTS=path     Optional entitlements for the Developer ID signature.
+#   SIGN_ENTITLEMENTS=path     Entitlements for the Developer ID signature. Defaults
+#                              to shells/macos/SafetyStrip.entitlements; dist rejects
+#                              any path that does not resolve to that checked file.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -31,6 +34,7 @@ APP="${SCRIPT_DIR}/dist/${APP_NAME}.app"
 EXE="${APP}/Contents/MacOS/${APP_NAME}"
 RELEASE_DIR="${REPO_ROOT}/dist/release"
 ARCH="$(uname -m)"
+DEFAULT_SIGN_ENTITLEMENTS="${SCRIPT_DIR}/SafetyStrip.entitlements"
 
 die() { echo "release.sh: $*" >&2; exit 1; }
 
@@ -45,6 +49,87 @@ resolve_version() {
 }
 
 valid_version() { [[ "$1" =~ ^[0-9]+(\.[0-9]+){2}([.-][A-Za-z0-9]+)?$ ]]; }
+
+canonical_path() {
+    local path="$1"
+    local dir
+    local base
+    dir="$(cd "$(dirname "${path}")" && pwd -P)" || return 1
+    base="$(basename "${path}")"
+    printf '%s/%s' "${dir}" "${base}"
+}
+
+minimal_entitlements_error() {
+    local target="$1"
+    local label="$2"
+    local sandbox
+    if ! sandbox="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.app-sandbox' "${target}" 2>/dev/null)"; then
+        echo "${label} is missing com.apple.security.app-sandbox=true."
+        return 1
+    fi
+    if [[ "${sandbox}" != "true" ]]; then
+        echo "${label} has com.apple.security.app-sandbox=${sandbox}; expected true."
+        return 1
+    fi
+
+    local printed
+    if ! printed="$(/usr/libexec/PlistBuddy -c 'Print' "${target}" 2>/dev/null)"; then
+        echo "could not read ${label}."
+        return 1
+    fi
+
+    local key_count
+    key_count="$(printf '%s\n' "${printed}" | awk '/^[[:space:]]+[A-Za-z0-9_.-]+ =/ { count++ } END { print count + 0 }')"
+    if [[ "${key_count}" != "1" ]]; then
+        echo "${label} must contain only com.apple.security.app-sandbox=true; found ${key_count} entitlement keys."
+        return 1
+    fi
+}
+
+require_minimal_entitlements() {
+    local target="$1"
+    local label="$2"
+    local err
+    if ! err="$(minimal_entitlements_error "${target}" "${label}")"; then
+        die "${err}"
+    fi
+}
+
+resolve_sign_entitlements() {
+    local path="${SIGN_ENTITLEMENTS:-${DEFAULT_SIGN_ENTITLEMENTS}}"
+    if [[ "${path}" != /* ]]; then
+        path="${PWD}/${path}"
+    fi
+    [ -f "${path}" ] || die "dist needs signing entitlements at ${path} (default: ${DEFAULT_SIGN_ENTITLEMENTS})."
+
+    local resolved
+    local default_resolved
+    resolved="$(canonical_path "${path}")" || die "could not resolve signing entitlements path ${path}."
+    default_resolved="$(canonical_path "${DEFAULT_SIGN_ENTITLEMENTS}")" || die "could not resolve default signing entitlements path ${DEFAULT_SIGN_ENTITLEMENTS}."
+    [[ "${resolved}" == "${default_resolved}" ]] || die "dist must sign with the checked entitlements at ${default_resolved}; refusing SIGN_ENTITLEMENTS=${resolved}."
+
+    require_minimal_entitlements "${resolved}" "signing entitlements ${resolved}"
+    printf '%s' "${resolved}"
+}
+
+verify_signed_entitlements() {
+    local target="$1"
+    local actual
+    actual="$(mktemp "${TMPDIR:-/tmp}/safetystrip-entitlements.XXXXXX")"
+    if ! codesign -d --entitlements :- "${target}" > "${actual}" 2>/dev/null; then
+        rm -f "${actual}"
+        die "could not read signed entitlements from ${target}."
+    fi
+    local err
+    if ! err="$(minimal_entitlements_error "${actual}" "signed entitlements for ${target}")"; then
+        echo "release.sh: signed entitlements for ${target}:" >&2
+        sed 's/^/release.sh:   /' "${actual}" >&2
+        rm -f "${actual}"
+        die "${err}"
+    fi
+    rm -f "${actual}"
+    echo ">>> verified minimal App Sandbox entitlement on ${target}"
+}
 
 # Assemble the .app via package-app.sh at the requested version (ad-hoc signed).
 assemble() {
@@ -75,17 +160,20 @@ case "${cmd}" in
         version="$(resolve_version)"
         [ -n "${version}" ] || die "dist needs VERSION=X.Y.Z or an exact vX.Y.Z tag."
         valid_version "${version}" || die "VERSION must look like X.Y.Z or X.Y.Z-suffix (got '${version}')."
+        sign_entitlements="$(resolve_sign_entitlements)"
         [ -n "${CERT_NAME:-}" ] || die "dist needs CERT_NAME='Developer ID Application: ... (TEAMID)'."
 
         assemble "${version}"
 
-        echo ">>> Developer ID signing (hardened runtime)"
-        ent=()
-        [ -n "${SIGN_ENTITLEMENTS:-}" ] && ent=(--entitlements "${SIGN_ENTITLEMENTS}")
+        echo ">>> Developer ID signing (hardened runtime + App Sandbox entitlements)"
         # Sign the inner Mach-O first, then the bundle (inside-out).
-        codesign --force --options runtime --timestamp "${ent[@]}" --sign "${CERT_NAME}" "${EXE}"
-        codesign --force --options runtime --timestamp --sign "${CERT_NAME}" "${APP}"
+        codesign --force --options runtime --timestamp \
+            --entitlements "${sign_entitlements}" --sign "${CERT_NAME}" "${EXE}"
+        codesign --force --options runtime --timestamp \
+            --entitlements "${sign_entitlements}" --sign "${CERT_NAME}" "${APP}"
         codesign --verify --strict --verbose=2 "${EXE}"
+        codesign --verify --strict --verbose=2 "${APP}"
+        verify_signed_entitlements "${APP}"
 
         local_zip="${RELEASE_DIR}/${APP_NAME}-v${version}-notary.zip"
         mkdir -p "${RELEASE_DIR}"; rm -f "${local_zip}"

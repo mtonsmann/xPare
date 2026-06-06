@@ -4,9 +4,10 @@
 # bundle, and uploads an explicitly UNSIGNED preview artifact — it needs no Apple
 # secrets, so it works on every tag and every fork. `publish-official` runs only
 # when the repo opts in (vars.SAFETYSTRIP_ENABLE_OFFICIAL_RELEASE == 'true') AND the
-# Apple Developer ID / notary secrets are present; it signs, notarizes, and
-# publishes the GitHub Release. Signing/notary credentials are NEVER required for
-# pull-request CI (see .github/workflows/ci.yml).
+# Apple Developer ID / notary secrets are present; it signs with the checked App
+# Sandbox entitlements, notarizes, and publishes the GitHub Release.
+# Signing/notary credentials are NEVER required for pull-request CI (see
+# .github/workflows/ci.yml).
 name: Release
 
 on:
@@ -33,6 +34,9 @@ jobs:
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           components: clippy, rustfmt
+
+      - name: Verify release entitlements file
+        run: cargo run -p xtask -- check-entitlements
 
       - name: Normalize release version
         run: |
@@ -94,6 +98,9 @@ jobs:
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           components: clippy, rustfmt
+
+      - name: Verify release entitlements file
+        run: cargo run -p xtask -- check-entitlements
 
       - name: Normalize release version
         run: |
@@ -163,7 +170,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          make dist VERSION="${RELEASE_VERSION}" CERT_NAME="${CERT_NAME}" NOTARY_PROFILE="${NOTARY_PROFILE}"
+          make dist VERSION="${RELEASE_VERSION}" CERT_NAME="${CERT_NAME}" NOTARY_PROFILE="${NOTARY_PROFILE}" SIGN_ENTITLEMENTS="${GITHUB_WORKSPACE}/shells/macos/SafetyStrip.entitlements"
           make github-release VERSION="${RELEASE_VERSION}"
 
       - name: Clean temporary signing material
