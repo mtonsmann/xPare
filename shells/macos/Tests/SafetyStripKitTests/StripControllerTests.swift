@@ -574,6 +574,27 @@ struct StripControllerTests {
         #expect(manual == .stripped(changed: true))
         #expect(pb.writes == ["https://a.com/x"])
     }
+
+    /// Masking is a rewrite, not a reduction, so continuous mode may run it.
+    @Test func continuousModeRunsMaskingRewrite() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let pb = FakePasteboard(snapshot:
+            PasteboardSnapshot(text: "me@a.test", kind: .plain))
+        let controller = StripController(
+            settings: Settings(
+                mode: .continuous,
+                operations: [.maskIdentifiers(emails: true, ipv4: false, ipv6: false)]
+            ),
+            pasteboard: pb,
+            defaults: defaults
+        )
+
+        let auto = await controller.stripNow(trigger: .clipboardChanged)
+        #expect(auto == .stripped(changed: true))
+        #expect(pb.writes == ["[email]"])
+    }
 }
 
 private final class RecordingTransformer: Transforming, @unchecked Sendable {

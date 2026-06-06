@@ -146,6 +146,16 @@ pub enum Operation {
     /// other parameter, their order, and any fragment. Idempotent; baked-in
     /// denylist (no network). (Rule on `ops::urls::clean_urls`.)
     CleanUrls,
+    /// Replace selected email/IP tokens with fixed placeholders. Heuristic,
+    /// token-oriented, and idempotent. (Rule on `ops::mask::mask_identifiers`.)
+    MaskIdentifiers {
+        #[serde(default)]
+        emails: bool,
+        #[serde(default)]
+        ipv4: bool,
+        #[serde(default)]
+        ipv6: bool,
+    },
 }
 
 impl Operation {
@@ -167,17 +177,18 @@ impl Operation {
             Operation::CollapseWhitespace => 6,
             Operation::TrimTrailingWhitespace => 7,
             Operation::CleanUrls => 8,
-            Operation::Defang { .. } => 9,
-            Operation::Refang => 10,
-            Operation::ExtractEmails => 11,
-            Operation::ExtractUrls => 12,
-            Operation::RemoveBlankLines => 13,
-            Operation::DedupeLines => 14,
-            Operation::SortLines { .. } => 15,
-            Operation::ChangeCase { .. } => 16,
-            Operation::PrefixLines { .. } => 17,
-            Operation::SuffixLines { .. } => 18,
-            Operation::JoinWith { .. } => 19,
+            Operation::MaskIdentifiers { .. } => 9,
+            Operation::Defang { .. } => 10,
+            Operation::Refang => 11,
+            Operation::ExtractEmails => 12,
+            Operation::ExtractUrls => 13,
+            Operation::RemoveBlankLines => 14,
+            Operation::DedupeLines => 15,
+            Operation::SortLines { .. } => 16,
+            Operation::ChangeCase { .. } => 17,
+            Operation::PrefixLines { .. } => 18,
+            Operation::SuffixLines { .. } => 19,
+            Operation::JoinWith { .. } => 20,
         }
     }
 }

@@ -115,6 +115,11 @@ enum LocalOp {
     Defang { style: LocalBracketStyle },
     Refang,
     CleanUrls,
+    MaskIdentifiers {
+        emails: bool,
+        ipv4: bool,
+        ipv6: bool,
+    },
 }
 
 impl From<LocalOp> for Operation {
@@ -146,6 +151,9 @@ impl From<LocalOp> for Operation {
             },
             LocalOp::Refang => Operation::Refang,
             LocalOp::CleanUrls => Operation::CleanUrls,
+            LocalOp::MaskIdentifiers { emails, ipv4, ipv6 } => {
+                Operation::MaskIdentifiers { emails, ipv4, ipv6 }
+            }
         }
     }
 }

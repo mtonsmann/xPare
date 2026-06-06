@@ -19,6 +19,7 @@ import Foundation
                 .stripHtml,
                 .changeCase(case: .title),
                 .sortLines(descending: true, caseInsensitive: false),
+                .maskIdentifiers(emails: true, ipv4: true, ipv6: false),
                 .prefixLines(prefix: "- "),
             ],
             hotkey: HotkeyCombo(keyCode: 9, modifiers: 0x0100 | 0x0800),
@@ -66,9 +67,17 @@ import Foundation
     }
 
     @Test func transformConfigBuiltFromSettings() {
-        let s = Settings(operations: [.stripHtml, .collapseWhitespace])
+        let s = Settings(operations: [
+            .stripHtml,
+            .collapseWhitespace,
+            .maskIdentifiers(emails: true, ipv4: false, ipv6: true),
+        ])
         let config = s.transformConfig()
-        #expect(config.operations == [.stripHtml, .collapseWhitespace])
+        #expect(config.operations == [
+            .stripHtml,
+            .collapseWhitespace,
+            .maskIdentifiers(emails: true, ipv4: false, ipv6: true),
+        ])
         #expect(config.version == TransformConfig.schemaVersion)
     }
 }

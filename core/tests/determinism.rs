@@ -87,6 +87,8 @@ fn operation_strategy() -> impl Strategy<Value = Operation> {
             .prop_map(|style| Operation::Defang { style }),
         Just(Operation::Refang),
         Just(Operation::CleanUrls),
+        (any::<bool>(), any::<bool>(), any::<bool>())
+            .prop_map(|(emails, ipv4, ipv6)| { Operation::MaskIdentifiers { emails, ipv4, ipv6 } }),
     ]
 }
 
@@ -238,6 +240,11 @@ proptest! {
             Operation::Defang { style: BracketStyle::Square },
             Operation::Defang { style: BracketStyle::Round },
             Operation::CleanUrls,
+            Operation::MaskIdentifiers {
+                emails: true,
+                ipv4: true,
+                ipv6: true,
+            },
         ] {
             let cfg = Config::as_given(vec![op.clone()]);
             let once = transform(&input, &cfg);

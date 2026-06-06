@@ -3,7 +3,8 @@
 SafetyStrip is a memory-safe, plain-text clipboard utility. It strips formatting
 and noise out of clipboard text — coerce rich text to plain, strip HTML/Markdown,
 convert copied HTML to Markdown, normalize whitespace, change case, line
-operations — without the clipboard content ever leaving the process.
+operations, IOC cleanup, and optional email/IP masking — without the clipboard
+content ever leaving the process.
 
 It is built as **two components separated by a frozen, language-neutral C ABI**:
 
@@ -46,6 +47,8 @@ invariants.
 | `core/src/ops/whitespace.rs` | `collapse_whitespace`, `trim_trailing_whitespace`. |
 | `core/src/ops/lines.rs` | The line model plus the line ops and best-effort `extract_emails`/`extract_urls`. |
 | `core/src/ops/case.rs` | `change_case`: upper / lower / title / sentence (full Unicode). |
+| `core/src/ops/indicators.rs` | Shared token and email/URL/IP heuristics used by extraction, IOC cleanup, and masking. |
+| `core/src/ops/mask.rs` | Token-level privacy masking for selected email, IPv4, and IPv6 identifiers. |
 
 Public API: `transform`, `parse_config`, `capabilities`/`CAPABILITIES_JSON`,
 and the `Config`, `Operation`, `CaseKind`, `ConfigError`, `CONFIG_VERSION` types.
@@ -151,7 +154,7 @@ which is small enough to read end to end.
 
 The canonical sanitization config is **`StripHtml` → `StripMarkdown`** (HTML first
 to neutralize active content, then Markdown to remove residual formatting),
-optionally followed by whitespace/case/line ops. See
+optionally followed by URL/IOC/masking, whitespace/case, and line ops. See
 [the transform guardrail](docs/guardrails/transform-correctness-and-adversarial-input.md).
 
 ## Enforced invariants

@@ -85,18 +85,20 @@ import Foundation
     }
 
     @Test func iocOpsEncodeToWireSchema() throws {
-        // defang carries its style; refang and clean_urls are bare tags.
+        // defang and mask carry parameters; refang and clean_urls are bare tags.
         let config = TransformConfig(operations: [
             .defang(style: .square),
             .refang,
             .cleanUrls,
+            .maskIdentifiers(emails: true, ipv4: true, ipv6: false),
         ])
         let json = try config.encodedJSON()
         let expected = """
         {"version":2,"operations":[\
         {"op":"defang","style":"square"},\
         {"op":"refang"},\
-        {"op":"clean_urls"}],"ordering":"canonical"}
+        {"op":"clean_urls"},\
+        {"op":"mask_identifiers","emails":true,"ipv4":true,"ipv6":false}],"ordering":"canonical"}
         """
         #expect(try jsonObject(json) == jsonObject(expected))
     }
@@ -121,10 +123,19 @@ import Foundation
             .defang(style: .round),
             .refang,
             .cleanUrls,
+            .maskIdentifiers(emails: true, ipv4: false, ipv6: true),
         ])
         let json = try original.encodedJSON()
         let decoded = try JSONDecoder().decode(TransformConfig.self, from: Data(json.utf8))
         #expect(decoded == original)
+    }
+
+    @Test func maskIdentifiersDecodesWithDefaultFalseFlags() throws {
+        let json = #"{"version":2,"operations":[{"op":"mask_identifiers","emails":true}]}"#
+        let decoded = try JSONDecoder().decode(TransformConfig.self, from: Data(json.utf8))
+        #expect(decoded == TransformConfig(operations: [
+            .maskIdentifiers(emails: true, ipv4: false, ipv6: false)
+        ]))
     }
 
     @Test func allBracketStylesRawValues() {
