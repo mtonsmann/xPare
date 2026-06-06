@@ -151,7 +151,7 @@ enum CoreTransform {
 /// Classify a token core. Returns `None` if the core is not an indicator or is
 /// already defanged and should be emitted unchanged.
 fn classify_core(core: &str) -> Option<CoreTransform> {
-    if core.is_empty() || already_defanged(core) {
+    if core.is_empty() || !has_indicator_byte(core) || already_defanged(core) {
         return None;
     }
     if is_url(core) {
@@ -170,6 +170,15 @@ fn classify_core(core: &str) -> Option<CoreTransform> {
         return Some(CoreTransform::BareDomain);
     }
     None
+}
+
+/// No live indicator handled here can match without `.`, `@`, or `:`, and
+/// already-defanged bracket markers need `[` or `(`. Tokens with none of those bytes
+/// are exact no-ops, so skip the heavier classifiers.
+fn has_indicator_byte(core: &str) -> bool {
+    core.as_bytes()
+        .iter()
+        .any(|&b| matches!(b, b'.' | b'@' | b':' | b'[' | b'('))
 }
 
 fn push_transformed_core(out: &mut String, core: &str, kind: CoreTransform, style: BracketStyle) {

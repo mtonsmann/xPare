@@ -40,11 +40,11 @@ Measured 2026-06-06 on **Apple M5 Pro, 18 cores, 48 GB, arm64**, via
 pipeline intermediate zeroization** and the W1 byte-oriented
 `collapse_whitespace` path, W1c marker-free HTML text path, W4 ASCII Upper/Lower
 fast paths, and W5b IOC marker dispatch plus W5c pre-sized line dedupe containers
-and W5d/W5f defang allocation/marker guard cleanup and streaming token
-reconstruction, W2 output pre-sizing for shared line joins, and W4b streaming
-sentence-case scanning, W2b borrowed-slice trailing trim, W1b Markdown output
-bookkeeping/normalization cleanup, and W5e streaming URL cleaner token
-reconstruction, plus W3
+and W5d/W5f/W5g defang allocation/marker guard cleanup, streaming token
+reconstruction, and no-op token prefiltering, W2 output pre-sizing for shared line
+joins, and W4b streaming sentence-case scanning, W2b borrowed-slice trailing trim,
+W1b Markdown output bookkeeping/normalization cleanup, and W5e streaming URL
+cleaner token reconstruction, plus W3
 `TrimTrailingWhitespace` → `RemoveBlankLines` fusion and W3b `CollapseWhitespace` →
 `TrimTrailingWhitespace` → `RemoveBlankLines` fusion with boundary-zeroized scratch
 (see the cost section below).
@@ -72,7 +72,7 @@ size-optimized — leaving the scalar scan loop unvectorized).
 | dedupe-lines-repeated | 0.167s | 767.6 MiB/s |
 | dedupe-lines-unique | 0.172s | 742.7 MiB/s |
 | sort-lines | 0.214s | 596.9 MiB/s |
-| defang-iocs (URLs/emails/IPs/domains; output grows ~15%) | 0.910s | 140.6 MiB/s |
+| defang-iocs (URLs/emails/IPs/domains; output grows ~15%) | 0.684s | 187.1 MiB/s |
 | refang-iocs (input is the defanged buffer) | 0.400s | 369.9 MiB/s |
 | clean-urls-trackers | 0.409s | 312.7 MiB/s |
 | html-markdown-trim-log | 0.571s | 224.0 MiB/s |
@@ -89,11 +89,12 @@ Markdown stripping and defang. Marker-free HTML is no longer in that slow cluste
 after W1c's guarded plain-text path, and sparse/log-like Markdown is no longer there
 after W1b's suffix-based newline bookkeeping and in-place edge trim, but heavy
 Markdown still pays parser/event cost. Defang still emits multi-character bracket
-markers around every indicator character and grows output ~15%, but W5d/W5f removed
-the avoidable token-level allocation overhead. Unicode sentence-case is no longer in
-the same slow cluster after W4b's streaming scanner, which avoids the temporary
-lowercase buffer and per-character uppercase allocations while preserving Unicode
-expansion. Clean URL stripping now streams URL token reconstruction directly into
+markers around every indicator character and grows output ~15%, but W5d/W5f/W5g
+removed avoidable token-level allocation and no-op classification overhead. Unicode
+sentence-case is no longer in the same slow cluster after W4b's streaming scanner,
+which avoids the temporary lowercase buffer and per-character uppercase allocations
+while preserving Unicode expansion. Clean URL stripping now streams URL token
+reconstruction directly into
 the final output, so it avoids per-token temporary strings and an intermediate
 survivor list. End-to-end clipboard pipelines (which don't include the IOC ops) sit
 at ~159–195 MiB/s in this run. The W3 fusions remove the trim/remove-blank

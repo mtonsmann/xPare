@@ -96,9 +96,10 @@ current tree (see the decision log); they are listed for continuity.
   per-position table scans. *(Partially banked: `refang` dispatches by first marker
   byte instead of checking every marker at every byte; `defang` avoids an extra
   transformed-token wrapper allocation and prefilters marker families before
-  expensive idempotence checks, and streams transformed cores directly into the
-  final output; `clean_urls` streams URL token reconstruction into the final output
-  instead of allocating per-token rebuilt strings.)*
+  expensive idempotence checks, streams transformed cores directly into the final
+  output, and skips no-op tokens that contain none of the bytes any handled
+  indicator needs; `clean_urls` streams URL token reconstruction into the final
+  output instead of allocating per-token rebuilt strings.)*
 - **W6 — Shell responsiveness** (macOS): measure Swift↔Rust copies separately; move
   large transforms off the main actor while keeping pasteboard reads/writes on it;
   re-check `changeCount` before commit; keep `NSPasteboard.general` opt-in. Land the
@@ -379,5 +380,16 @@ let two agents edit the same file family at once.
   (+0.4%), `full-menu-log` 158.6 → 158.2 (−0.3%), and `lossy-utf8-log`
   193.4 → 193.1 (−0.2%). No ABI, dependency, zeroization, ordering, or privacy
   posture change; the change removes short-lived allocations and adds no
+  transform-local scratch.
+- 2026-06-06: W5g accepted for `defang`: token cores that contain none of `.`, `@`,
+  `:`, `[`, or `(` now skip already-defanged marker checks and the URL/email/IP/domain
+  classifier chain. This is an exact no-op prefilter: every live indicator class
+  handled by `defang` needs `.`, `@`, or `:`, and every already-defanged bracket marker
+  needs `[` or `(`. Same-worktree 128 MiB / 5-sample comparison after W5f confirmed
+  the target row twice despite broader machine noise: `defang-iocs` 140.6 → 183.0
+  MiB/s (+31%) and then 140.6 → 187.1 (+33%). In the confirmation run, adjacent IOC
+  rows stayed within the −3% rule (`refang-iocs` 369.9 → 359.1, `clean-urls-trackers`
+  312.7 → 304.0). No ABI, dependency, zeroization, ordering, or privacy posture
+  change; the change removes classifier work on ordinary prose tokens and adds no
   transform-local scratch.
 - _Append one entry per accepted optimization: date, scenario, before→after median._
