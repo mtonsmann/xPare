@@ -238,6 +238,9 @@ fn prepare_collapse_scratch(scratch: &mut Vec<u8>, needed: usize) {
 }
 
 fn collapse_line<'a>(line: &'a str, scratch: &'a mut Vec<u8>) -> &'a str {
+    if !needs_ascii_collapse(line) {
+        return line;
+    }
     prepare_collapse_scratch(scratch, line.len());
     let mut in_run = false;
     for &byte in line.as_bytes() {
@@ -255,4 +258,22 @@ fn collapse_line<'a>(line: &'a str, scratch: &'a mut Vec<u8>) -> &'a str {
         Ok(collapsed) => collapsed,
         Err(_) => line,
     }
+}
+
+fn needs_ascii_collapse(line: &str) -> bool {
+    let mut previous_space = false;
+    for &byte in line.as_bytes() {
+        if byte == b'\t' {
+            return true;
+        }
+        if byte == b' ' {
+            if previous_space {
+                return true;
+            }
+            previous_space = true;
+        } else {
+            previous_space = false;
+        }
+    }
+    false
 }

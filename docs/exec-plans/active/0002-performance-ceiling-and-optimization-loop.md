@@ -80,7 +80,9 @@ current tree (see the decision log); they are listed for continuity.
   changing visible semantics or the public config. Golden-tested fused-vs-unfused.
   *(Partially banked: adjacent `TrimTrailingWhitespace` → `RemoveBlankLines` is
   fused inside the pipeline executor, and the common `CollapseWhitespace` →
-  `TrimTrailingWhitespace` → `RemoveBlankLines` suffix is fused when adjacent.)*
+  `TrimTrailingWhitespace` → `RemoveBlankLines` suffix is fused when adjacent; the
+  collapse/trim/blank fusion borrows already-collapse-normalized lines instead of
+  copying them through scratch.)*
 - **W4 — Byte-oriented fast paths.** ASCII-specialized loops falling back to the
   Unicode-safe path on non-ASCII; byte scans where char boundaries are irrelevant.
   Consider `memchr` only if local benches show a clear gain **and** dependency
@@ -466,4 +468,17 @@ let two agents edit the same file family at once.
   `unwrap-lines` 1423.9 → 2751.9 MiB/s (+93%). No ABI, dependency, zeroization,
   ordering, privacy, or determinism change; the change adds no transform-local
   scratch and only removes intermediate paragraph allocations.
+- 2026-06-06: W3c accepted for the existing
+  `CollapseWhitespace` → `TrimTrailingWhitespace` → `RemoveBlankLines` fusion: each
+  line now first checks whether collapse would be identity (no tab and no run of two
+  or more ASCII spaces) and borrows that line directly when possible. Lines that do
+  need collapsing still use the existing boundary-zeroized scratch with the same
+  wipe-before-growth/drop behavior, so scratch posture improves by reducing
+  clipboard-derived temporary copies. The existing fused-vs-public property test
+  covers equivalence. Parent W2c commit versus branch same-session 128 MiB /
+  5-sample comparison: `default-log` 242.3 → 290.9 MiB/s (+21%),
+  `full-menu-log` 198.4 → 226.7 (+15%), `lossy-utf8-log` 253.4 → 285.4 (+13%),
+  `full-menu-without-markdown` 308.5 → 362.2 (+18%), and
+  `full-menu-without-dedupe` 184.9 → 210.4 (+14%). No ABI, dependency, ordering,
+  privacy, or determinism change.
 - _Append one entry per accepted optimization: date, scenario, before→after median._

@@ -49,42 +49,43 @@ token prefiltering and tracker-key dispatch, W7 speed-tuned release optimization
 W1d borrowed first-pass pipeline input, W2c streaming `unwrap_lines`, plus W3
 `TrimTrailingWhitespace` → `RemoveBlankLines` fusion and W3b `CollapseWhitespace` →
 `TrimTrailingWhitespace` → `RemoveBlankLines` fusion with boundary-zeroized scratch
-(see the cost section below).
+and W3c borrowed-line fast path for already-collapse-normalized lines (see the cost
+section below).
 Re-measure on each machine; do not assume another machine's numbers. Read each
 transform row relative to this machine's own roofline controls (byte-copy is noisy at
-this size and was ≈ 18 GiB/s in this run; byte-scan is vectorized under the
+this size and was ≈ 36 GiB/s in this run; byte-scan is vectorized under the
 speed-tuned release profile and can exceed the copy control because it does less
 write traffic).
 
 | Scenario | Median | Throughput |
 |----------|-------:|-----------:|
-| roofline-byte-scan | 0.003s | 49209.5 MiB/s |
-| roofline-byte-copy | 0.007s | 18324.3 MiB/s |
-| strip-html-plain (no `<`/`&`) | 0.043s | 2997.7 MiB/s |
-| strip-html-heavy | 0.246s | 519.5 MiB/s |
-| strip-html-sparse-log | 0.049s | 2636.3 MiB/s |
-| strip-markdown-heavy | 0.791s | 161.9 MiB/s |
-| strip-markdown-sparse-log | 0.122s | 1049.5 MiB/s |
-| collapse-whitespace | 0.104s | 1225.1 MiB/s |
-| trim-trailing | 0.104s | 1225.5 MiB/s |
-| remove-blank-lines | 0.051s | 2534.4 MiB/s |
-| unwrap-lines | 0.047s | 2751.9 MiB/s |
-| case-lower-ascii | 0.010s | 12481.9 MiB/s |
-| case-sentence-unicode | 0.404s | 317.2 MiB/s |
-| dedupe-lines-repeated | 0.075s | 1695.4 MiB/s |
-| dedupe-lines-unique | 0.078s | 1639.3 MiB/s |
-| sort-lines | 0.126s | 1013.8 MiB/s |
-| defang-iocs (URLs/emails/IPs/domains; output grows ~15%) | 0.487s | 262.6 MiB/s |
-| refang-iocs (input is the defanged buffer) | 0.120s | 1232.4 MiB/s |
-| clean-urls-trackers | 0.234s | 547.0 MiB/s |
-| html-markdown-trim-log | 0.423s | 302.7 MiB/s |
-| full-menu-without-markdown | 0.412s | 310.6 MiB/s |
-| full-menu-without-collapse | 0.546s | 234.5 MiB/s |
-| full-menu-without-dedupe | 0.698s | 183.3 MiB/s |
-| full-menu-without-case | 0.651s | 196.5 MiB/s |
-| **default-log** (html+md+collapse+trim+blank) | 0.528s | **242.4 MiB/s** |
-| **full-menu-log** (+dedupe+unwrap+lowercase) | 0.651s | **196.6 MiB/s** |
-| **lossy-utf8-log** (invalid UTF-8, default pipeline) | 0.543s | **236.1 MiB/s** |
+| roofline-byte-scan | 0.002s | 58632.7 MiB/s |
+| roofline-byte-copy | 0.004s | 36374.0 MiB/s |
+| strip-html-plain (no `<`/`&`) | 0.043s | 3011.2 MiB/s |
+| strip-html-heavy | 0.238s | 538.7 MiB/s |
+| strip-html-sparse-log | 0.049s | 2625.8 MiB/s |
+| strip-markdown-heavy | 0.696s | 183.9 MiB/s |
+| strip-markdown-sparse-log | 0.121s | 1057.8 MiB/s |
+| collapse-whitespace | 0.103s | 1247.7 MiB/s |
+| trim-trailing | 0.101s | 1266.2 MiB/s |
+| remove-blank-lines | 0.050s | 2582.0 MiB/s |
+| unwrap-lines | 0.047s | 2732.2 MiB/s |
+| case-lower-ascii | 0.010s | 12662.8 MiB/s |
+| case-sentence-unicode | 0.403s | 317.5 MiB/s |
+| dedupe-lines-repeated | 0.072s | 1767.7 MiB/s |
+| dedupe-lines-unique | 0.077s | 1670.0 MiB/s |
+| sort-lines | 0.125s | 1021.3 MiB/s |
+| defang-iocs (URLs/emails/IPs/domains; output grows ~15%) | 0.493s | 259.4 MiB/s |
+| refang-iocs (input is the defanged buffer) | 0.120s | 1232.1 MiB/s |
+| clean-urls-trackers | 0.237s | 540.5 MiB/s |
+| html-markdown-trim-log | 0.389s | 328.8 MiB/s |
+| full-menu-without-markdown | 0.353s | 362.2 MiB/s |
+| full-menu-without-collapse | 0.511s | 250.5 MiB/s |
+| full-menu-without-dedupe | 0.608s | 210.4 MiB/s |
+| full-menu-without-case | 0.570s | 224.7 MiB/s |
+| **default-log** (html+md+collapse+trim+blank) | 0.440s | **290.9 MiB/s** |
+| **full-menu-log** (+dedupe+unwrap+lowercase) | 0.565s | **226.7 MiB/s** |
+| **lossy-utf8-log** (invalid UTF-8, default pipeline) | 0.449s | **285.4 MiB/s** |
 
 Slow lanes (optimization targets): the remaining slow single-op cluster is heavy
 Markdown stripping and defang. Marker-free HTML is no longer in that slow cluster
