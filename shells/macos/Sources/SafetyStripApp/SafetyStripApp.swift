@@ -357,13 +357,12 @@ private struct MenuContent: View {
             ))
             .disabled(!model.isSortEnabled)
         } label: {
-            // Show a plain checkmark when on (matching the sibling toggles' ✓) and no
-            // glyph when off, instead of a heavy checkbox symbol that clashes with them.
-            if model.isSortEnabled {
-                Label("Sort lines", systemImage: "checkmark")
-            } else {
-                Text("Sort lines")
-            }
+            // Plain label in both states. SwiftUI can't place a checkmark in a submenu
+            // parent's native state column; a Label icon lands in the image column
+            // instead — heavier and misaligned vs the siblings' ✓ (the "funky enabled"
+            // look). So the parent stays clean and the "Enabled" item inside carries
+            // the on/off state.
+            Text("Sort lines")
         }
         Toggle("Defang IOCs", isOn: Binding(
             get: { model.isDefangEnabled },
