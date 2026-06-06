@@ -35,7 +35,3 @@ Nothing here is committed scope; it's a memory aid for the next maintainer.
   flags as a menu submenu; today they live only in the Settings window. (0004 → Phase 3)
 - **Drag-to-reorder pipeline.** Let the user reorder the operation pipeline in the
   Settings window; today order follows menu/insertion order. (0004 → Phase 3)
-- **Measured throughput for `defang` / `clean_urls`.** Add real `make perf` figures for
-  the two new ops to [`docs/performance.md`](performance.md). Linearity is already
-  guarded by `core/tests/perf_guard.rs`; only the reported numbers are missing.
-  (0004 → Phase 4)
