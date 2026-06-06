@@ -18,6 +18,7 @@
 //!   check-supply-chain  cargo-deny: advisories + licenses + bans + sources
 //!   check-workflows     lint GitHub Actions workflows (actionlint + zizmor)
 //!   check-shell         shellcheck the shell scripts
+//!   check-fuzz          build cargo-fuzz targets; optionally smoke-run all targets
 //!   ci                  run fmt --check, clippy -D warnings, test, and all the above
 //!
 //! Every check exits nonzero on violation with a remediation-oriented message so a
@@ -44,6 +45,7 @@ fn main() -> ExitCode {
         Some("check-supply-chain") => report(check_supply_chain()),
         Some("check-workflows") => report(check_workflows()),
         Some("check-shell") => report(check_shell()),
+        Some("check-fuzz") => report(check_fuzz()),
         Some("ci") => run_ci(),
         Some(other) => {
             eprintln!("xtask: unknown subcommand '{other}'");
@@ -75,6 +77,7 @@ fn usage() {
          \x20 check-supply-chain   cargo-deny: advisories + licenses + bans + sources\n\
          \x20 check-workflows      lint GitHub Actions workflows (actionlint + zizmor)\n\
          \x20 check-shell          shellcheck the shell scripts\n\
+         \x20 check-fuzz           build fuzz targets; set SS_FUZZ_SMOKE_SECONDS=N to run them\n\
          \x20 ci                   fmt + clippy + test + every structural & external check"
     );
 }
@@ -1309,7 +1312,7 @@ fn check_clipboard_safety() -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
-// external linters (supply-chain, workflows, shell)
+// external linters and dev tools (supply-chain, workflows, shell, fuzz)
 // ---------------------------------------------------------------------------
 //
 // Unlike the structural checks above (pure Rust, zero external deps), these shell
@@ -1322,6 +1325,7 @@ fn check_clipboard_safety() -> Result<(), String> {
 // .github/workflows/ci.yml.
 const CARGO_DENY_VERSION: &str = "0.19.8";
 const ZIZMOR_VERSION: &str = "1.25.2";
+const CARGO_FUZZ_VERSION: &str = "0.13.1";
 
 const SHELLCHECK_INSTALL_HINT: &str = "\x20 macOS:  brew install shellcheck\n\
      \x20 Debian: sudo apt-get install -y shellcheck\n\
@@ -1350,6 +1354,20 @@ fn resolve_tool(bin: &str) -> Option<PathBuf> {
         .unwrap_or_default();
     dirs.extend(cargo_bin_dir());
     dirs.into_iter().map(|d| d.join(bin)).find(|c| c.is_file())
+}
+
+/// Return a PATH that definitely contains `tool`'s directory. Useful for cargo
+/// subcommands: `cargo +nightly fuzz ...` discovers `cargo-fuzz` via PATH, but
+/// minimal agent shells do not always include `$CARGO_HOME/bin`.
+fn path_with_tool_dir(tool: &std::path::Path) -> Option<std::ffi::OsString> {
+    let parent = tool.parent()?;
+    let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect())
+        .unwrap_or_default();
+    if !dirs.iter().any(|d| d == parent) {
+        dirs.insert(0, parent.to_path_buf());
+    }
+    std::env::join_paths(dirs).ok()
 }
 
 /// Run an external linter (resolved to an absolute path) from the workspace root,
@@ -1490,6 +1508,164 @@ fn check_supply_chain() -> Result<(), String> {
              reason) in deny.toml — do not broaden the policy to make the check pass."
         )
     })
+}
+
+fn fuzz_dir() -> PathBuf {
+    workspace_root().join("fuzz")
+}
+
+/// Ensure `cargo +nightly ...` is usable. If a fresh rustup-based agent has not
+/// installed nightly yet, install the minimal profile on demand; normal stable
+/// builds remain pinned by `rust-toolchain.toml`.
+fn ensure_nightly_toolchain() -> Result<(), String> {
+    let available = Command::new("cargo")
+        .args(["+nightly", "--version"])
+        .output()
+        .map_err(|e| format!("check-fuzz: FAIL — could not launch `cargo +nightly`: {e}"))?;
+    if available.status.success() {
+        return Ok(());
+    }
+
+    println!(
+        "check-fuzz: nightly toolchain not found — installing `nightly` with rustup \
+         (minimal profile)…"
+    );
+    let installed = Command::new("rustup")
+        .args(["toolchain", "install", "nightly", "--profile", "minimal"])
+        .status()
+        .map_err(|e| {
+            format!(
+                "check-fuzz: FAIL — could not launch `rustup` to install nightly: {e}\n\
+                 Install rustup/nightly manually and re-run:\n\
+                 \x20 rustup toolchain install nightly --profile minimal"
+            )
+        })?
+        .success();
+    if installed {
+        Ok(())
+    } else {
+        Err(format!(
+            "check-fuzz: FAIL — could not install the nightly Rust toolchain.\n\
+             Install it manually and re-run:\n\
+             \x20 rustup toolchain install nightly --profile minimal\n\
+             Original `cargo +nightly --version` stderr:\n{}",
+            String::from_utf8_lossy(&available.stderr)
+        ))
+    }
+}
+
+fn parse_fuzz_targets(stdout: &str) -> Vec<String> {
+    stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn parse_fuzz_smoke_seconds(raw: Option<&str>) -> Result<Option<u64>, String> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let raw = raw.trim();
+    if raw.is_empty() || raw == "0" {
+        return Ok(None);
+    }
+    let seconds: u64 = raw.parse().map_err(|_| {
+        format!(
+            "check-fuzz: FAIL — SS_FUZZ_SMOKE_SECONDS must be a positive integer, \
+             0, or empty; got `{raw}`."
+        )
+    })?;
+    Ok(Some(seconds))
+}
+
+fn run_cargo_fuzz(args: &[&str], path_env: Option<&std::ffi::OsString>) -> Result<(), String> {
+    println!("check-fuzz: $ cargo +nightly fuzz {}", args.join(" "));
+    let mut command = Command::new("cargo");
+    command
+        .args(["+nightly", "fuzz"])
+        .args(args)
+        .current_dir(fuzz_dir());
+    if let Some(path) = path_env {
+        command.env("PATH", path);
+    }
+    let status = command
+        .status()
+        .map_err(|e| format!("check-fuzz: FAIL — could not launch `cargo +nightly fuzz`: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "check-fuzz: FAIL — `cargo +nightly fuzz {}` exited with {status}. \
+             Fix the fuzz target, dependency, or toolchain issue.",
+            args.join(" ")
+        ))
+    }
+}
+
+fn cargo_fuzz_targets(path_env: Option<&std::ffi::OsString>) -> Result<Vec<String>, String> {
+    let mut command = Command::new("cargo");
+    command
+        .args(["+nightly", "fuzz", "list"])
+        .current_dir(fuzz_dir());
+    if let Some(path) = path_env {
+        command.env("PATH", path);
+    }
+    let output = command.output().map_err(|e| {
+        format!("check-fuzz: FAIL — could not launch `cargo +nightly fuzz list`: {e}")
+    })?;
+    if !output.status.success() {
+        return Err(format!(
+            "check-fuzz: FAIL — `cargo +nightly fuzz list` exited with {}:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let targets = parse_fuzz_targets(&String::from_utf8_lossy(&output.stdout));
+    if targets.is_empty() {
+        return Err("check-fuzz: FAIL — `cargo +nightly fuzz list` found no targets.".to_string());
+    }
+    Ok(targets)
+}
+
+/// check-fuzz: local/CI path for the separate cargo-fuzz workspace. This stays
+/// outside the required `ci` gate because nightly/libFuzzer smoke is intentionally
+/// best-effort, but it is still mechanical and drift-proof: targets are discovered
+/// from `cargo fuzz list`, not hard-coded in Makefile or GitHub Actions.
+fn check_fuzz() -> Result<(), String> {
+    let dir = fuzz_dir();
+    if !dir.join("Cargo.toml").is_file() {
+        println!("check-fuzz: no fuzz/Cargo.toml; nothing to check.");
+        return Ok(());
+    }
+
+    ensure_nightly_toolchain()?;
+    let cargo_fuzz = ensure_cargo_tool("cargo-fuzz", "cargo-fuzz", CARGO_FUZZ_VERSION)?;
+    let path_env = path_with_tool_dir(&cargo_fuzz);
+    let targets = cargo_fuzz_targets(path_env.as_ref())?;
+    println!("check-fuzz: targets: {}", targets.join(", "));
+
+    run_cargo_fuzz(&["build"], path_env.as_ref())?;
+
+    let smoke_seconds_raw = std::env::var("SS_FUZZ_SMOKE_SECONDS").ok();
+    if let Some(seconds) = parse_fuzz_smoke_seconds(smoke_seconds_raw.as_deref())? {
+        let max_total_time = format!("-max_total_time={seconds}");
+        for target in targets {
+            run_cargo_fuzz(
+                &["run", target.as_str(), "--", max_total_time.as_str()],
+                path_env.as_ref(),
+            )?;
+        }
+        println!("check-fuzz: all fuzz targets smoke-ran for {seconds}s each.");
+    } else {
+        println!(
+            "check-fuzz: built all fuzz targets. Set SS_FUZZ_SMOKE_SECONDS=N to \
+             run every target briefly."
+        );
+    }
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1656,6 +1832,31 @@ mod tests {
                 "should not scan build/worktree dirs: {rel}"
             );
         }
+    }
+
+    #[test]
+    fn fuzz_target_list_parser_ignores_blank_lines() {
+        assert_eq!(
+            parse_fuzz_targets("\nstrip_html\nstrip_markdown\n\nmask_identifiers\n"),
+            vec![
+                "strip_html".to_string(),
+                "strip_markdown".to_string(),
+                "mask_identifiers".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn fuzz_smoke_seconds_parser_accepts_empty_zero_and_positive_values() {
+        assert_eq!(parse_fuzz_smoke_seconds(None).unwrap(), None);
+        assert_eq!(parse_fuzz_smoke_seconds(Some("")).unwrap(), None);
+        assert_eq!(parse_fuzz_smoke_seconds(Some("0")).unwrap(), None);
+        assert_eq!(parse_fuzz_smoke_seconds(Some("30")).unwrap(), Some(30));
+    }
+
+    #[test]
+    fn fuzz_smoke_seconds_parser_rejects_invalid_values() {
+        assert!(parse_fuzz_smoke_seconds(Some("soon")).is_err());
     }
 
     #[test]

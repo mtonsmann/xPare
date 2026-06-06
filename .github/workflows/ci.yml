@@ -165,22 +165,22 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # nightly
+        with:
+          toolchain: nightly
 
-      - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --locked
-
-      # `fuzz/` is its own workspace, so commands run from that directory. A short
-      # time budget per target keeps this a smoke test, not a fuzzing campaign.
+      # `xtask` auto-installs the pinned cargo-fuzz version and discovers every
+      # target from `cargo fuzz list`, so this cannot drift when a new fuzz target is
+      # added. A short time budget per target keeps this a smoke test, not a fuzzing
+      # campaign.
       - name: Run fuzz targets briefly
-        working-directory: fuzz
-        run: |
-          for target in strip_html strip_markdown transform_pipeline; do
-            echo "::group::fuzz $target"
-            cargo +nightly fuzz run "$target" -- -max_total_time=30
-            echo "::endgroup::"
-          done
+        env:
+          SS_FUZZ_SMOKE_SECONDS: "30"
+        run: cargo run -p xtask -- check-fuzz
 
   # ----------------------------------------------------------------------------
   # GitHub Actions security: zizmor statically audits the workflow files
