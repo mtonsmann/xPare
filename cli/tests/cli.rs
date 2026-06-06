@@ -62,7 +62,7 @@ fn run_str(args: &[&str], stdin: &str) -> Output {
     run(args, stdin.as_bytes())
 }
 
-const STRIP_HTML: &str = r#"{"version":1,"operations":[{"op":"strip_html"}]}"#;
+const STRIP_HTML: &str = r#"{"version":2,"operations":[{"op":"strip_html"}]}"#;
 
 #[test]
 fn capabilities_prints_valid_json_to_stdout() {
@@ -87,7 +87,7 @@ fn capabilities_prints_valid_json_to_stdout() {
         "missing name: {json}"
     );
     assert!(
-        json.contains(r#""config_version":1"#),
+        json.contains(r#""config_version":2"#),
         "missing config_version: {json}"
     );
     assert!(
@@ -204,7 +204,7 @@ fn multi_op_pipeline_runs_in_order() {
     // strip_html -> collapse_whitespace -> trim_trailing_whitespace.
     // The two block elements become two paragraphs separated by a blank line;
     // internal runs of spaces collapse to one; trailing spaces on each line go.
-    let config = r#"{"version":1,"operations":[
+    let config = r#"{"version":2,"operations":[
         {"op":"strip_html"},
         {"op":"collapse_whitespace"},
         {"op":"trim_trailing_whitespace"}
@@ -393,9 +393,30 @@ fn embedded_nul_in_stdin_does_not_panic() {
 #[test]
 fn invalid_utf8_through_change_case_does_not_panic() {
     // A different op path over invalid bytes, to exercise more of the pipeline.
-    let config = r#"{"version":1,"operations":[{"op":"change_case","case":"upper"}]}"#;
+    let config = r#"{"version":2,"operations":[{"op":"change_case","case":"upper"}]}"#;
     let out = run(&["transform", "--config-json", config], b"h\xffi");
     assert_eq!(out.code, Some(0), "stderr: {}", out.stderr);
     // 'h','i' uppercase around a replacement char for the lone 0xff byte.
     assert_eq!(out.stdout_str(), "H\u{FFFD}I");
+}
+
+#[test]
+fn cli_defaults_to_as_given_but_canonical_reorders() {
+    // Pipeline listed in the "wrong" order: defang before clean_urls.
+    let config = r#"{"version":2,"operations":[{"op":"defang"},{"op":"clean_urls"}]}"#;
+    let input = "https://e.com/?utm_source=x";
+
+    // Default: as-given, so defang runs first and clean_urls can't match the now-
+    // mangled URL — the tracker survives.
+    let out = run_str(&["transform", "--config-json", config], input);
+    assert_eq!(out.code, Some(0), "stderr: {}", out.stderr);
+    assert_eq!(out.stdout_str(), "hxxps[://]e[.]com/?utm_source=x");
+
+    // --canonical reorders to clean_urls then defang: the tracker is stripped first.
+    let out = run_str(
+        &["transform", "--config-json", config, "--canonical"],
+        input,
+    );
+    assert_eq!(out.code, Some(0), "stderr: {}", out.stderr);
+    assert_eq!(out.stdout_str(), "hxxps[://]e[.]com/");
 }

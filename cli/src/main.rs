@@ -18,18 +18,21 @@
 use std::io::{Read, Write};
 use std::process::ExitCode;
 
-use safetystrip_core::{capabilities, parse_config, transform, Config};
+use safetystrip_core::{capabilities, parse_config, transform, Config, Ordering};
 
 const USAGE: &str = "\
 safetystrip — strip and transform text via safetystrip-core
 
 USAGE:
     safetystrip capabilities
-    safetystrip transform [--config <file> | --config-json <json>]
+    safetystrip transform [--config <file> | --config-json <json>] [--canonical]
     safetystrip --help
 
 Reads stdin, writes stdout. With no config, applies the identity pipeline.
-The two config flags are mutually exclusive and may each appear at most once.";
+The two config flags are mutually exclusive and may each appear at most once.
+
+Operations run in the EXACT given order by default (the explicit-tool contract).
+Pass --canonical to apply the core's documented canonical ordering instead.";
 
 /// Exit code for a usage error (bad command, bad/conflicting flags).
 const EXIT_USAGE: u8 = 2;
@@ -150,7 +153,8 @@ enum ConfigSource<'a> {
 /// Any other token, a missing flag value, a duplicate, or a conflict is a usage
 /// error. Reading or parsing a config is a config error.
 fn parse_transform_config(args: &[String]) -> Result<TransformArgs, CliError> {
-    let config = match parse_config_source(args)? {
+    let (source, canonical) = parse_config_source(args)?;
+    let mut config = match source {
         ConfigSource::Help => return Ok(TransformArgs::Help),
         ConfigSource::Identity => Config::empty(),
         ConfigSource::File(path) => {
@@ -162,13 +166,22 @@ fn parse_transform_config(args: &[String]) -> Result<TransformArgs, CliError> {
             parse_config(json).map_err(|e| CliError::config(e.to_string()))?
         }
     };
+    // The CLI is the explicit/validation tool, so it runs operations in the exact
+    // given order by default; `--canonical` opts into the core's canonical ordering.
+    // The flag is authoritative over any `ordering` in the config JSON.
+    config.ordering = if canonical {
+        Ordering::Canonical
+    } else {
+        Ordering::AsGiven
+    };
     Ok(TransformArgs::Run(config))
 }
 
 /// Scan `transform`'s arguments and resolve the single config source, rejecting
 /// duplicate, conflicting, unknown, or value-less flags. Side-effect-free.
-fn parse_config_source(args: &[String]) -> Result<ConfigSource<'_>, CliError> {
+fn parse_config_source(args: &[String]) -> Result<(ConfigSource<'_>, bool), CliError> {
     let mut source: Option<ConfigSource<'_>> = None;
+    let mut canonical = false;
     let mut iter = args.iter();
 
     while let Some(arg) = iter.next() {
@@ -177,7 +190,12 @@ fn parse_config_source(args: &[String]) -> Result<ConfigSource<'_>, CliError> {
         let is_json = match arg.as_str() {
             "--config" => false,
             "--config-json" => true,
-            "--help" | "-h" => return Ok(ConfigSource::Help),
+            // Value-less flag: opt into canonical ordering.
+            "--canonical" => {
+                canonical = true;
+                continue;
+            }
+            "--help" | "-h" => return Ok((ConfigSource::Help, canonical)),
             other if other.starts_with('-') => {
                 return Err(CliError::usage(format!(
                     "unknown flag '{other}'\n\n{USAGE}"
@@ -215,5 +233,5 @@ fn parse_config_source(args: &[String]) -> Result<ConfigSource<'_>, CliError> {
         });
     }
 
-    Ok(source.unwrap_or(ConfigSource::Identity))
+    Ok((source.unwrap_or(ConfigSource::Identity), canonical))
 }

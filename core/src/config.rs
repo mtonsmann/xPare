@@ -11,20 +11,32 @@
 use serde::{Deserialize, Serialize};
 
 /// Current config schema version. `parse_config` rejects any other version.
-pub const CONFIG_VERSION: u32 = 1;
-
-/// A transformation request: a schema version plus an ordered pipeline of operations.
 ///
-/// Operations run in the exact order given. Order is significant and always
-/// explicit — the core never reorders.
+/// **v2** added [`Config::ordering`] (canonical-by-default operation ordering); see
+/// DESIGN.md decision D13. A v1 config is rejected and must add the version field's
+/// new value — `ordering` itself is optional (defaults to `Canonical`).
+pub const CONFIG_VERSION: u32 = 2;
+
+/// A transformation request: a schema version, a pipeline of operations, and how that
+/// pipeline is ordered.
+///
+/// By default ([`Ordering::Canonical`]) the core stable-sorts the operations into a
+/// documented canonical order (see [`Operation::canonical_rank`] / DESIGN.md D13) so
+/// the result is correct and efficient regardless of the order a UI assembled them.
+/// [`Ordering::AsGiven`] runs them in the exact order provided — the explicit,
+/// byte-for-byte contract.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     /// Schema version. Must equal [`CONFIG_VERSION`].
     pub version: u32,
-    /// Operations applied left-to-right.
+    /// Operations to apply. Interpreted per [`Config::ordering`].
     #[serde(default)]
     pub operations: Vec<Operation>,
+    /// How `operations` is ordered before running. Optional; defaults to
+    /// [`Ordering::Canonical`].
+    #[serde(default)]
+    pub ordering: Ordering,
 }
 
 impl Config {
@@ -33,8 +45,44 @@ impl Config {
         Self {
             version: CONFIG_VERSION,
             operations: Vec::new(),
+            ordering: Ordering::default(),
         }
     }
+
+    /// A current-version config that runs `operations` in the documented canonical
+    /// order (the default ordering).
+    pub fn canonical(operations: Vec<Operation>) -> Self {
+        Self {
+            version: CONFIG_VERSION,
+            operations,
+            ordering: Ordering::Canonical,
+        }
+    }
+
+    /// A current-version config that runs `operations` in exactly the given order.
+    pub fn as_given(operations: Vec<Operation>) -> Self {
+        Self {
+            version: CONFIG_VERSION,
+            operations,
+            ordering: Ordering::AsGiven,
+        }
+    }
+}
+
+/// How the pipeline order is interpreted.
+///
+/// `Canonical` (the default) stable-sorts operations by their documented
+/// [`Operation::canonical_rank`], so a caller never has to reason about order;
+/// `AsGiven` runs them exactly as provided (what the CLI and order-sensitive callers
+/// want). Stable sort means any operations sharing a rank keep their input order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Ordering {
+    /// Reorder into the documented canonical order (correct + efficient by default).
+    #[default]
+    Canonical,
+    /// Run operations in the exact order given.
+    AsGiven,
 }
 
 /// One transformation step. Serialized as an internally-tagged object keyed on `op`,
@@ -96,6 +144,39 @@ pub enum Operation {
     /// other parameter, their order, and any fragment. Idempotent; baked-in
     /// denylist (no network). (Rule on `ops::urls::clean_urls`.)
     CleanUrls,
+}
+
+impl Operation {
+    /// Canonical execution rank — lower runs first. Under [`Ordering::Canonical`] the
+    /// pipeline is stable-sorted by this rank. The ranking is a documented total
+    /// order (DESIGN.md D13) encoding correctness constraints (e.g. `StripHtml`
+    /// before `StripMarkdown`; `CleanUrls` before `Defang`; `TrimTrailingWhitespace`
+    /// before `DedupeLines`; `JoinWith` last) and efficiency ones (`DedupeLines`
+    /// before `SortLines` — output-identical but cheaper). Distinct ranks per variant
+    /// keep canonical output independent of input order; genuinely free choices
+    /// (e.g. prefix vs suffix) fall back to the stable sort's input order.
+    pub fn canonical_rank(&self) -> u16 {
+        match self {
+            Operation::StripHtml => 1,
+            Operation::StripMarkdown => 2,
+            Operation::SplitOn { .. } => 3,
+            Operation::UnwrapLines => 4,
+            Operation::CollapseWhitespace => 5,
+            Operation::TrimTrailingWhitespace => 6,
+            Operation::CleanUrls => 7,
+            Operation::Defang { .. } => 8,
+            Operation::Refang => 9,
+            Operation::ExtractEmails => 10,
+            Operation::ExtractUrls => 11,
+            Operation::RemoveBlankLines => 12,
+            Operation::DedupeLines => 13,
+            Operation::SortLines { .. } => 14,
+            Operation::ChangeCase { .. } => 15,
+            Operation::PrefixLines { .. } => 16,
+            Operation::SuffixLines { .. } => 17,
+            Operation::JoinWith { .. } => 18,
+        }
+    }
 }
 
 /// Bracket convention used by [`Operation::Defang`]. The default (`Square`, `[.]`)

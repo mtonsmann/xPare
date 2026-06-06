@@ -25,10 +25,7 @@ fn markdown_block() -> &'static str {
 }
 
 fn config(ops: Vec<Operation>) -> Config {
-    Config {
-        version: safetystrip_core::CONFIG_VERSION,
-        operations: ops,
-    }
+    Config::as_given(ops)
 }
 
 fn bench_strip_html(c: &mut Criterion) {

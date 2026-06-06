@@ -34,5 +34,8 @@ Nothing here is committed scope; it's a memory aid for the next maintainer.
 - ~~**In-menu sort-flag submenu.**~~ Done — `Sort lines`' *descending* /
   *case-insensitive* flags are now a "Sort options" submenu in the menu (and moved
   out of the Settings window so each control has one home).
-- **Drag-to-reorder pipeline.** Let the user reorder the operation pipeline in the
-  Settings window; today order follows menu/insertion order. (0004 → Phase 3)
+- ~~**Drag-to-reorder pipeline.**~~ Delivered by exec-plan 0005 (canonical pipeline
+  ordering): the pipeline runs in a correct/efficient canonical order by default, and
+  the Settings window's "Manual order" mode provides drag-to-reorder for exact control.
+- ~~**Measured throughput for `defang` / `clean_urls`.**~~ Done — the throughput
+  harness (`make perf`) now measures the new ops alongside the existing pipeline.

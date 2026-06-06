@@ -174,20 +174,49 @@ extension Operation: Codable {
     }
 }
 
-/// A transformation request: a schema version plus an ordered pipeline.
-/// Mirrors the Rust `Config` struct; `version` must equal ``schemaVersion``.
+/// How the core orders the pipeline before running it. Mirrors the Rust `Ordering`
+/// enum (`#[serde(rename_all = "snake_case")]`); the raw values are the exact JSON
+/// strings the core expects.
+public enum Ordering: String, Codable, Sendable, CaseIterable {
+    /// Stable-sort into the documented canonical order (the default).
+    case canonical
+    /// Run operations in exactly the given order.
+    case asGiven = "as_given"
+}
+
+/// A transformation request: a schema version, an ordered pipeline, and how that
+/// pipeline is ordered. Mirrors the Rust `Config` struct; `version` must equal
+/// ``schemaVersion``.
 public struct TransformConfig: Codable, Equatable, Sendable {
     /// The config schema version the core understands. Kept in sync with
-    /// `core/src/config.rs::CONFIG_VERSION`.
-    public static let schemaVersion: UInt32 = 1
+    /// `core/src/config.rs::CONFIG_VERSION`. **v2** added ``ordering``.
+    public static let schemaVersion: UInt32 = 2
 
     public var version: UInt32
     public var operations: [Operation]
+    /// Defaults to ``Ordering/canonical`` (matches the core's serde default).
+    public var ordering: Ordering
 
     public init(version: UInt32 = TransformConfig.schemaVersion,
-                operations: [Operation] = []) {
+                operations: [Operation] = [],
+                ordering: Ordering = .canonical) {
         self.version = version
         self.operations = operations
+        self.ordering = ordering
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case version, operations, ordering
+    }
+
+    /// Decode tolerantly: a config that omits `ordering` defaults to `canonical`,
+    /// exactly as the core's serde `#[serde(default)]` does. (Encoding is synthesized
+    /// and always emits all three fields.)
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        version = try c.decode(UInt32.self, forKey: .version)
+        operations = try c.decodeIfPresent([Operation].self, forKey: .operations) ?? []
+        ordering = try c.decodeIfPresent(Ordering.self, forKey: .ordering) ?? .canonical
     }
 
     /// Encode to a JSON string the core's `parse_config` accepts.

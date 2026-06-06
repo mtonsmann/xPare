@@ -5,7 +5,9 @@
 //! representative fixtures and a proptest over arbitrary `Config` values.
 
 use proptest::prelude::*;
-use safetystrip_core::{parse_config, CaseKind, Config, ConfigError, Operation, CONFIG_VERSION};
+use safetystrip_core::{
+    parse_config, BracketStyle, CaseKind, Config, ConfigError, Operation, Ordering, CONFIG_VERSION,
+};
 
 /// Every `Operation` variant, with representative parameter values, so the fixture
 /// set covers the whole schema surface.
@@ -52,6 +54,14 @@ fn all_operations() -> Vec<Operation> {
         },
         Operation::ExtractEmails,
         Operation::ExtractUrls,
+        Operation::Defang {
+            style: BracketStyle::Square,
+        },
+        Operation::Defang {
+            style: BracketStyle::Round,
+        },
+        Operation::Refang,
+        Operation::CleanUrls,
     ]
 }
 
@@ -65,9 +75,11 @@ fn empty_config_round_trips() {
 
 #[test]
 fn full_config_round_trips() {
+    // Non-default ordering so the round-trip also exercises the `ordering` field.
     let cfg = Config {
         version: CONFIG_VERSION,
         operations: all_operations(),
+        ordering: Ordering::AsGiven,
     };
     let json = serde_json::to_string(&cfg).expect("serialize");
     let parsed = parse_config(&json).expect("parse");
@@ -77,10 +89,7 @@ fn full_config_round_trips() {
 #[test]
 fn each_operation_round_trips_individually() {
     for op in all_operations() {
-        let cfg = Config {
-            version: CONFIG_VERSION,
-            operations: vec![op.clone()],
-        };
+        let cfg = Config::as_given(vec![op.clone()]);
         let json = serde_json::to_string(&cfg).expect("serialize");
         let parsed = parse_config(&json).unwrap_or_else(|e| panic!("parse {op:?}: {e}"));
         assert_eq!(parsed, cfg, "round-trip mismatch for {op:?}");
@@ -96,11 +105,12 @@ fn known_operation_encoding_is_internally_tagged() {
         operations: vec![Operation::ChangeCase {
             case: CaseKind::Title,
         }],
+        ordering: Ordering::Canonical,
     };
     let json = serde_json::to_string(&cfg).expect("serialize");
     assert_eq!(
         json,
-        r#"{"version":1,"operations":[{"op":"change_case","case":"title"}]}"#
+        r#"{"version":2,"operations":[{"op":"change_case","case":"title"}],"ordering":"canonical"}"#
     );
 }
 
@@ -148,21 +158,35 @@ fn malformed_json_is_json_error() {
 fn unknown_field_is_rejected() {
     // `#[serde(deny_unknown_fields)]` on Config means a stray field is a Json error,
     // not a silently-ignored one — important for catching shell/core drift.
-    let json = r#"{"version":1,"operations":[],"extra":true}"#;
+    let json = r#"{"version":2,"operations":[],"extra":true}"#;
     assert!(matches!(parse_config(json), Err(ConfigError::Json(_))));
 }
 
 #[test]
 fn unknown_operation_tag_is_rejected() {
-    let json = r#"{"version":1,"operations":[{"op":"does_not_exist"}]}"#;
+    let json = r#"{"version":2,"operations":[{"op":"does_not_exist"}]}"#;
     assert!(matches!(parse_config(json), Err(ConfigError::Json(_))));
 }
 
 #[test]
 fn missing_required_param_is_rejected() {
     // prefix_lines requires `prefix`; omitting it is a schema violation.
-    let json = r#"{"version":1,"operations":[{"op":"prefix_lines"}]}"#;
+    let json = r#"{"version":2,"operations":[{"op":"prefix_lines"}]}"#;
     assert!(matches!(parse_config(json), Err(ConfigError::Json(_))));
+}
+
+#[test]
+fn ordering_defaults_to_canonical_when_absent() {
+    // `ordering` is `#[serde(default)]`, so a v2 config omitting it is canonical.
+    let cfg = parse_config(r#"{"version":2,"operations":[]}"#).expect("parse");
+    assert_eq!(cfg.ordering, Ordering::Canonical);
+}
+
+#[test]
+fn explicit_as_given_parses() {
+    let cfg =
+        parse_config(r#"{"version":2,"operations":[],"ordering":"as_given"}"#).expect("parse");
+    assert_eq!(cfg.ordering, Ordering::AsGiven);
 }
 
 // ---------------------------------------------------------------------------
@@ -208,12 +232,18 @@ fn operation_strategy() -> impl Strategy<Value = Operation> {
     ]
 }
 
-/// Strategy for an arbitrary valid `Config` (always the supported version).
+/// Strategy for an arbitrary valid `Config` (always the supported version, either
+/// ordering mode so both serialize/round-trip).
 fn config_strategy() -> impl Strategy<Value = Config> {
-    prop::collection::vec(operation_strategy(), 0..12).prop_map(|operations| Config {
-        version: CONFIG_VERSION,
-        operations,
-    })
+    (
+        prop::collection::vec(operation_strategy(), 0..12),
+        prop_oneof![Just(Ordering::Canonical), Just(Ordering::AsGiven)],
+    )
+        .prop_map(|(operations, ordering)| Config {
+            version: CONFIG_VERSION,
+            operations,
+            ordering,
+        })
 }
 
 proptest! {
@@ -234,7 +264,11 @@ proptest! {
         version in any::<u32>().prop_filter("not the supported version", |v| *v != CONFIG_VERSION),
         operations in prop::collection::vec(operation_strategy(), 0..6),
     ) {
-        let cfg = Config { version, operations };
+        let cfg = Config {
+            version,
+            operations,
+            ordering: Ordering::AsGiven,
+        };
         let json = serde_json::to_string(&cfg).expect("serialize");
         let is_version_error =
             matches!(parse_config(&json), Err(ConfigError::UnsupportedVersion { .. }));

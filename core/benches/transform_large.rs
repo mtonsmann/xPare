@@ -47,10 +47,7 @@ fn synthetic_log(target: usize) -> String {
 }
 
 fn config(ops: Vec<Operation>) -> Config {
-    Config {
-        version: safetystrip_core::CONFIG_VERSION,
-        operations: ops,
-    }
+    Config::as_given(ops)
 }
 
 /// A realistic log-cleanup pipeline measured across a size sweep up to 256 MB.

@@ -117,7 +117,7 @@ fn free(ptr: *mut u8, len: usize) {
 
 /// A config that performs no operations: the identity transform (echo, modulo the
 /// lossy UTF-8 decode the boundary always applies to input).
-const IDENTITY_CFG: &str = r#"{"version":1,"operations":[]}"#;
+const IDENTITY_CFG: &str = r#"{"version":2,"operations":[]}"#;
 
 // ---------------------------------------------------------------------------
 // 1. ABI version.
@@ -177,7 +177,7 @@ fn capabilities_json_matches_core_and_describes_schema() {
     );
 
     // And it must actually be the capabilities document: an `operations` array and
-    // a `config_version` matching the core's CONFIG_VERSION (1). Checked via string
+    // a `config_version` matching the core's CONFIG_VERSION (2). Checked via string
     // search to avoid pulling in a JSON parser as a dependency.
     assert!(
         caps.contains("\"operations\":["),
@@ -201,7 +201,7 @@ fn capabilities_json_matches_core_and_describes_schema() {
 #[test]
 fn transform_happy_path_strip_html_then_collapse_whitespace() {
     let cfg_json =
-        r#"{"version":1,"operations":[{"op":"strip_html"},{"op":"collapse_whitespace"}]}"#;
+        r#"{"version":2,"operations":[{"op":"strip_html"},{"op":"collapse_whitespace"}]}"#;
     let cfg = config(cfg_json);
     let input = b"<p>Hi   there</p>";
 
@@ -407,7 +407,7 @@ impl XorShift64 {
 fn transform_fuzz_lite_boundary_never_panics() {
     // A non-trivial pipeline with two hand-rolled/parser-backed strippers, so the
     // random bytes exercise real work behind the boundary.
-    let cfg = config(r#"{"version":1,"operations":[{"op":"strip_html"},{"op":"strip_markdown"}]}"#);
+    let cfg = config(r#"{"version":2,"operations":[{"op":"strip_html"},{"op":"strip_markdown"}]}"#);
 
     let mut rng = XorShift64::new(0x5afe_5719_2026_0604);
 

@@ -34,7 +34,7 @@ use std::fmt::Write as _;
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
-use safetystrip_core::{transform, BracketStyle, CaseKind, Config, Operation, CONFIG_VERSION};
+use safetystrip_core::{transform, BracketStyle, CaseKind, Config, Operation};
 
 const MIB: usize = 1024 * 1024;
 
@@ -177,10 +177,7 @@ fn build_tracker_urls(target: usize) -> String {
 }
 
 fn cfg(operations: Vec<Operation>) -> Config {
-    Config {
-        version: CONFIG_VERSION,
-        operations,
-    }
+    Config::as_given(operations)
 }
 
 // --- timing -----------------------------------------------------------------

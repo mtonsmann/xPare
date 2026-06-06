@@ -55,20 +55,23 @@ pipe with no clipboard or OS integration — handy for trying transforms:
 # Strip HTML (note <script> bodies are dropped, tags removed):
 echo '<b>hi</b><script>steal()</script>' | \
   cargo run -p safetystrip-cli -- transform \
-    --config-json '{"version":1,"operations":[{"op":"strip_html"}]}'
+    --config-json '{"version":2,"operations":[{"op":"strip_html"}]}'
 # -> hi
 
 # The canonical sanitization order, StripHtml then StripMarkdown:
 echo '**bold** <i>x</i>' | \
   cargo run -p safetystrip-cli -- transform \
-    --config-json '{"version":1,"operations":[{"op":"strip_html"},{"op":"strip_markdown"}]}'
+    --config-json '{"version":2,"operations":[{"op":"strip_html"},{"op":"strip_markdown"}]}'
 
 # Ask the core what it can do:
 cargo run -p safetystrip-cli -- capabilities
 ```
 
-A config is `{"version":1,"operations":[ ... ]}` — an ordered list of operations
-applied left to right. `transform` with no config flag is the identity pipeline.
+A config is `{"version":2,"operations":[ ... ],"ordering":"canonical"}` — a list of
+operations plus how to order them. The CLI runs them in the **exact given order** by
+default (the explicit-tool contract); pass `--canonical` to apply the core's
+documented canonical ordering (see [DESIGN.md D13](DESIGN.md#d13--canonical-pipeline-ordering)).
+`transform` with no config flag is the identity pipeline.
 
 ### Run the full local gate
 

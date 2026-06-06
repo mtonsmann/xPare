@@ -4,14 +4,12 @@
 //! relevant, adversarial) input. These run the ops through the public `transform`
 //! pipeline with a single-operation config, so they also exercise dispatch.
 
-use safetystrip_core::{transform, CaseKind, Config, Operation, CONFIG_VERSION};
+use safetystrip_core::{transform, CaseKind, Config, Operation};
 
-/// Build a single-operation config.
+/// Build a single-operation config. Order is irrelevant for one op, but use
+/// `as_given` so these goldens stay independent of the canonical-order policy.
 fn cfg(op: Operation) -> Config {
-    Config {
-        version: CONFIG_VERSION,
-        operations: vec![op],
-    }
+    Config::as_given(vec![op])
 }
 
 /// Run one operation over `input`.

@@ -1,17 +1,17 @@
 //! Pipeline ordering & composition tests.
 //!
-//! These verify that `transform` applies operations strictly left-to-right and that
-//! the A2-owned ops compose as documented. Assertions on exact output use only ops
-//! A2 owns; pipelines that include `StripHtml`/`StripMarkdown` (owned by another
-//! agent) assert only structural/ordering properties, never their exact output.
+//! These verify that `transform` applies operations strictly left-to-right (in
+//! `as_given` ordering) and that the A2-owned ops compose as documented. Assertions
+//! on exact output use only ops A2 owns; pipelines that include
+//! `StripHtml`/`StripMarkdown` (owned by another agent) assert only
+//! structural/ordering properties, never their exact output. Canonical-ordering
+//! behavior is covered separately in `ordering.rs`.
 
-use safetystrip_core::{transform, CaseKind, Config, Operation, CONFIG_VERSION};
+use safetystrip_core::{transform, CaseKind, Config, Operation};
 
+/// Build an `as_given` pipeline so these tests pin exact left-to-right composition.
 fn pipeline(ops: Vec<Operation>) -> Config {
-    Config {
-        version: CONFIG_VERSION,
-        operations: ops,
-    }
+    Config::as_given(ops)
 }
 
 #[test]

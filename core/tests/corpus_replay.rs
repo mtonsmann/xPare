@@ -54,16 +54,13 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
 /// A representative pipeline that exercises both strippers plus the whitespace/line
 /// ops in sequence — the realistic "coerce rich → clean plain text" path.
 fn representative_pipeline() -> Config {
-    Config {
-        version: safetystrip_core::CONFIG_VERSION,
-        operations: vec![
-            Operation::StripHtml,
-            Operation::StripMarkdown,
-            Operation::CollapseWhitespace,
-            Operation::TrimTrailingWhitespace,
-            Operation::RemoveBlankLines,
-        ],
-    }
+    Config::as_given(vec![
+        Operation::StripHtml,
+        Operation::StripMarkdown,
+        Operation::CollapseWhitespace,
+        Operation::TrimTrailingWhitespace,
+        Operation::RemoveBlankLines,
+    ])
 }
 
 /// Run `f` and assert it finishes within [`PER_FILE_BUDGET`]; return its output.
@@ -148,18 +145,15 @@ fn corpus_alt_pipeline_completes() {
     let mut files = Vec::new();
     collect_files(&root, &mut files);
 
-    let config = Config {
-        version: safetystrip_core::CONFIG_VERSION,
-        operations: vec![
-            Operation::StripHtml,
-            Operation::StripMarkdown,
-            Operation::UnwrapLines,
-            Operation::CollapseWhitespace,
-            Operation::ChangeCase {
-                case: CaseKind::Lower,
-            },
-        ],
-    };
+    let config = Config::as_given(vec![
+        Operation::StripHtml,
+        Operation::StripMarkdown,
+        Operation::UnwrapLines,
+        Operation::CollapseWhitespace,
+        Operation::ChangeCase {
+            case: CaseKind::Lower,
+        },
+    ]);
 
     for path in &files {
         let bytes = fs::read(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
