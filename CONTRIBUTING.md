@@ -44,7 +44,9 @@ own (e.g. `cargo xtask check-abi`) for a fast inner loop.
 > (`cargo-deny`, `zizmor`) auto-install a pinned version on first use; the system
 > tools (`shellcheck`, `actionlint`) print a one-line install command if missing.
 > CI pre-installs all four (pinned), so a green `cargo xtask ci` locally means a
-> green PR — there is no required check outside this one command.
+> green PR — there is no required check outside this one command. Optional fuzzing
+> uses the same pattern through `cargo xtask check-fuzz`, which installs nightly and
+> the pinned `cargo-fuzz` tool when a fresh agent is missing them.
 
 ### `make` shortcuts (optional)
 
@@ -95,23 +97,27 @@ document the proof gap and add the strongest repeatable substitute available.
 The core feeds arbitrary, possibly adversarial bytes through hand-rolled
 parsers, so the strippers and the full pipeline are fuzzed to prove they never
 panic or hang. `fuzz/` is its own workspace (libFuzzer + the nightly-only
-toolchain stay out of normal stable builds), so it needs nightly and
-`cargo-fuzz`:
+toolchain stay out of normal stable builds).
 
 ```sh
-rustup toolchain install nightly
-cargo install cargo-fuzz            # once
+# Build every target. On a fresh agent this installs nightly and the pinned
+# cargo-fuzz version on demand, matching the CI fuzz-smoke job.
+make fuzz
 
-# Run a target (Ctrl-C to stop, or bound it with a time budget):
+# Briefly run every target:
+make fuzz-smoke FUZZ_SMOKE_SECONDS=60
+
+# Or run one target manually (Ctrl-C to stop):
 cargo +nightly fuzz run <target>
 cargo +nightly fuzz run strip_html -- -max_total_time=60
 ```
 
-Available targets: `strip_html`, `strip_markdown`, `transform_pipeline`. Run the
-target(s) covering any core transform you change, and commit any new crashing
-input found under `fuzz/` so it is replayed as a regression. CI runs a short
-best-effort nightly fuzz smoke (`continue-on-error`); the required signal is the
-property/corpus tests in `cargo xtask ci`.
+Available targets are discovered mechanically with `cargo +nightly fuzz list`.
+Run the target(s) covering any core transform you change, and commit any new
+crashing input found under `fuzz/` so it is replayed as a regression. CI runs a
+short best-effort nightly fuzz smoke (`continue-on-error`) through the same
+`cargo xtask check-fuzz` path; the required signal is the property/corpus tests
+in `cargo xtask ci`.
 
 ## Pull requests
 

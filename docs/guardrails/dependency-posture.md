@@ -78,6 +78,9 @@ capability-constrained**, and the constraint is enforced mechanically.
   against `deny.toml`.
 - `check-shell` runs `shellcheck` over every shell script; `check-workflows` runs
   `actionlint` (correctness) then `zizmor` (security) over `.github/workflows/`.
+- `check-fuzz` is the optional fuzz/tooling gate: it installs the nightly toolchain
+  and pinned `cargo-fuzz` on demand, discovers targets with `cargo fuzz list`, builds
+  all targets, and smoke-runs them when `SS_FUZZ_SMOKE_SECONDS=N` is set.
 
 These all print remediation-oriented messages that explain how to *fix* the violation,
 not how to silence it.
@@ -91,6 +94,7 @@ not how to silence it.
 - `cargo xtask check-shell` (shellcheck) and `cargo xtask check-workflows` (actionlint
   + zizmor). The cargo-installable tools auto-install; `shellcheck`/`actionlint` print
   a one-line install hint if missing. `make zizmor` runs the security audit on its own.
+- `cargo xtask check-fuzz` (optional nightly fuzz gate; `make fuzz` delegates here).
 - When editing `xtask` itself: `cargo test -p xtask`,
   `cargo clippy -p xtask --all-targets -- -D warnings`.
 - All of the above are part of `cargo xtask ci` (the same command CI runs).
