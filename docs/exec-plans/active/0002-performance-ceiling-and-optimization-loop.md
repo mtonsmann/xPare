@@ -87,7 +87,9 @@ current tree (see the decision log); they are listed for continuity.
   synthetic rows. Keep the documented token/marker heuristics exact, avoid new parser
   dependencies, and favor bounded byte dispatch over repeated replacement or
   per-position table scans. *(Partially banked: `refang` dispatches by first marker
-  byte instead of checking every marker at every byte.)*
+  byte instead of checking every marker at every byte; `defang` avoids an extra
+  transformed-token wrapper allocation and prefilters marker families before
+  expensive idempotence checks.)*
 - **W6 — Shell responsiveness** (macOS): measure Swift↔Rust copies separately; move
   large transforms off the main actor while keeping pasteboard reads/writes on it;
   re-check `changeCount` before commit; keep `NSPasteboard.general` opt-in. Land the
@@ -238,5 +240,12 @@ let two agents edit the same file family at once.
   Same-branch 128 MiB / 5-sample comparison after W5b: `dedupe-lines-unique`
   490.1 → 680.3 MiB/s (+39%), `dedupe-lines-repeated` 761.1 → 763.6 (+0.3%),
   `default-log` 109.0 → 109.9 (+0.8%), `full-menu-log` 97.0 → 96.7 (−0.3%).
+  No ABI, dependency, zeroization, ordering, or privacy posture change.
+- 2026-06-06: W5d accepted for `defang`: transformed tokens with no trimmed
+  punctuation now reuse the transformed core directly, and the already-defanged
+  guard first scans for possible marker-family bytes before running substring
+  checks. Same-branch 128 MiB / 5-sample comparison after W5c: `defang-iocs`
+  62.2 → 122.1 MiB/s (+96%), `refang-iocs` 375.7 → 368.2 (−2.0%),
+  `default-log` 109.9 → 108.8 (−1.0%), `full-menu-log` 96.7 → 96.2 (−0.5%).
   No ABI, dependency, zeroization, ordering, or privacy posture change.
 - _Append one entry per accepted optimization: date, scenario, before→after median._

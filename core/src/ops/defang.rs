@@ -134,6 +134,9 @@ fn defang_token(token: &str, style: BracketStyle) -> Cow<'_, str> {
     match transform_core(core, style) {
         None => Cow::Borrowed(token),
         Some(new_core) => {
+            if core.len() == token.len() {
+                return Cow::Owned(new_core);
+            }
             // The trimmed core is a contiguous slice of `token`; recover the
             // surrounding prefix/suffix by byte offset. Both lie on char boundaries
             // because `trim_matches` only ever trims whole chars.
@@ -177,11 +180,33 @@ fn transform_core(core: &str, style: BracketStyle) -> Option<String> {
 /// True if `core` already carries any defang marker, for either bracket style, or the
 /// `hxxp` scheme mangle. Used as the idempotence guard.
 fn already_defanged(core: &str) -> bool {
-    const MARKERS: [&str; 8] = ["[.]", "[@]", "[://]", "[:]", "(.)", "(@)", "(://)", "(:)"];
-    if core.contains("hxxp") {
+    let mut has_h = false;
+    let mut has_square = false;
+    let mut has_round = false;
+    for &b in core.as_bytes() {
+        match b {
+            b'h' => has_h = true,
+            b'[' => has_square = true,
+            b'(' => has_round = true,
+            _ => {}
+        }
+    }
+    if has_h && core.contains("hxxp") {
         return true;
     }
-    MARKERS.iter().any(|m| core.contains(m))
+    if has_square
+        && (core.contains("[.]")
+            || core.contains("[@]")
+            || core.contains("[://]")
+            || core.contains("[:]"))
+    {
+        return true;
+    }
+    has_round
+        && (core.contains("(.)")
+            || core.contains("(@)")
+            || core.contains("(://)")
+            || core.contains("(:)"))
 }
 
 /// Defang a URL core: mangle a leading lowercase scheme, bracket the first `://`,
