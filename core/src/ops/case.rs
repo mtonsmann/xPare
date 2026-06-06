@@ -95,35 +95,71 @@ fn to_title(input: &str) -> String {
 ///   next line's first letter. Example: `"hi! go. ok? yes"` ->
 ///   `"Hi! Go. Ok? Yes"`; `"!!! go"` -> `"!!! Go"`.
 fn to_sentence(input: &str) -> String {
-    let lowered = to_lower(input);
-    let mut out = String::with_capacity(lowered.len());
+    let mut out = String::with_capacity(input.len());
     // `expect_capital` - we are at/seeking the first cased letter of a sentence.
     let mut expect_capital = true;
     // `prev_terminator` - the previous emitted char was `.`/`!`/`?`.
     let mut prev_terminator = false;
-    for ch in lowered.chars() {
-        // A sentence boundary is "terminator then whitespace": when we see
-        // whitespace right after a terminator, the *next* cased letter starts a
-        // new sentence.
-        if prev_terminator && ch.is_whitespace() {
-            expect_capital = true;
-        }
-
-        if expect_capital {
-            // Try the full-Unicode uppercase. The iterator yields the char itself
-            // unchanged when there is no uppercase mapping (digit/punct/space), in
-            // which case we keep `expect_capital` set and look at the next char.
-            let upper: String = ch.to_uppercase().collect();
-            let has_mapping = !upper.chars().eq(std::iter::once(ch));
-            out.push_str(&upper);
-            if has_mapping {
-                expect_capital = false;
-            }
+    for ch in input.chars() {
+        if ch.is_ascii() {
+            push_sentence_lowered_char(
+                ch.to_ascii_lowercase(),
+                &mut out,
+                &mut expect_capital,
+                &mut prev_terminator,
+            );
         } else {
-            out.push(ch);
+            for lowered in ch.to_lowercase() {
+                push_sentence_lowered_char(
+                    lowered,
+                    &mut out,
+                    &mut expect_capital,
+                    &mut prev_terminator,
+                );
+            }
         }
-
-        prev_terminator = matches!(ch, '.' | '!' | '?');
     }
     out
+}
+
+fn push_sentence_lowered_char(
+    ch: char,
+    out: &mut String,
+    expect_capital: &mut bool,
+    prev_terminator: &mut bool,
+) {
+    // A sentence boundary is "terminator then whitespace": when we see whitespace
+    // right after a terminator, the *next* cased letter starts a new sentence.
+    if *prev_terminator && ch.is_whitespace() {
+        *expect_capital = true;
+    }
+
+    if *expect_capital {
+        if ch.is_ascii() {
+            out.push(ch.to_ascii_uppercase());
+            if ch.is_ascii_alphabetic() {
+                *expect_capital = false;
+            }
+        } else {
+            push_unicode_upper(ch, out, expect_capital);
+        }
+    } else {
+        out.push(ch);
+    }
+
+    *prev_terminator = matches!(ch, '.' | '!' | '?');
+}
+
+fn push_unicode_upper(ch: char, out: &mut String, expect_capital: &mut bool) {
+    let mut upper = ch.to_uppercase();
+    let first = upper.next().unwrap_or(ch);
+    let mut has_mapping = first != ch;
+    out.push(first);
+    for mapped in upper {
+        has_mapping = true;
+        out.push(mapped);
+    }
+    if has_mapping {
+        *expect_capital = false;
+    }
 }

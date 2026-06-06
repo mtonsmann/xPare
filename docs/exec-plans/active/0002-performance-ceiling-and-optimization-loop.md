@@ -78,7 +78,8 @@ current tree (see the decision log); they are listed for continuity.
   Unicode-safe path on non-ASCII; byte scans where char boundaries are irrelevant.
   Consider `memchr` only if local benches show a clear gain **and** dependency
   guardrails approve it. *(Partially banked: whole-text Upper/Lower use standard
-  ASCII fast paths with full Unicode fallback.)*
+  ASCII fast paths with full Unicode fallback; sentence-case streams lowercase
+  mappings directly and uses an ASCII scanner on ASCII chars.)*
 - **W5 — Dedupe-specific.** Bench repeated/unique/long/adversarial lines separately;
   preserve exact first-occurrence semantics; consider pre-sizing the `HashSet`. Do
   **not** switch to a weaker hasher (adversarial-input risk). *(Partially banked:
@@ -259,4 +260,14 @@ let two agents edit the same file family at once.
   (+2.3%), `dedupe-lines-repeated` 752.3 → 754.9 (+0.3%), `default-log`
   108.8 → 109.4 (+0.6%), and `full-menu-log` 96.2 → 96.4 (+0.2%). No ABI,
   dependency, zeroization, ordering, or privacy posture change.
+- 2026-06-06: W4b accepted for sentence-case scanning: `to_sentence` now streams
+  lowercase mappings directly into the sentence scanner, uses an ASCII fast path for
+  ASCII chars, and streams Unicode uppercase expansions without per-character
+  temporary `String` allocation. Exact-output tests pin Unicode lowercase expansion
+  (`İ` → `i\u{307}` before sentence capitalization) and uppercase expansion
+  (`ß` → `SS`). Same-branch 128 MiB / 5-sample comparison after the W2 line-join
+  wave: `case-sentence-unicode` 122.0 → 240.6 MiB/s (+97%), `default-log`
+  109.4 → 112.2 (+2.6%), `full-menu-log` 96.4 → 98.7 (+2.4%), `lossy-utf8-log`
+  109.9 → 111.8 (+1.7%). No ABI, dependency, zeroization, ordering, or privacy
+  posture change.
 - _Append one entry per accepted optimization: date, scenario, before→after median._

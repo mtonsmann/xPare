@@ -374,6 +374,32 @@ fn case_sentence_newline_is_whitespace_after_terminator() {
     );
 }
 
+#[test]
+fn case_sentence_unicode_lowercase_expansion() {
+    assert_eq!(
+        run(
+            Operation::ChangeCase {
+                case: CaseKind::Sentence
+            },
+            "İST. straße"
+        ),
+        "I\u{307}st. Straße"
+    );
+}
+
+#[test]
+fn case_sentence_unicode_uppercase_expansion() {
+    assert_eq!(
+        run(
+            Operation::ChangeCase {
+                case: CaseKind::Sentence
+            },
+            "ßeta. next"
+        ),
+        "SSeta. Next"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // sort_lines
 // ---------------------------------------------------------------------------
