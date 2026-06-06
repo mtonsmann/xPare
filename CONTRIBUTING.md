@@ -46,7 +46,9 @@ own (e.g. `cargo xtask check-abi`) for a fast inner loop.
 > CI pre-installs all four (pinned), so a green `cargo xtask ci` locally means a
 > green PR — there is no required check outside this one command. Optional fuzzing
 > uses the same pattern through `cargo xtask check-fuzz`, which installs nightly and
-> the pinned `cargo-fuzz` tool when a fresh agent is missing them.
+> the pinned `cargo-fuzz` tool when a fresh agent is missing them. Releases add one
+> stronger gate: the manual Release Fuzz workflow must pass on the exact release
+> SHA before `.github/workflows/release.yml` will package the tag.
 
 ### `make` shortcuts (optional)
 
@@ -118,6 +120,19 @@ crashing input found under `fuzz/` so it is replayed as a regression. CI runs a
 short best-effort nightly fuzz smoke (`continue-on-error`) through the same
 `cargo xtask check-fuzz` path; the required signal is the property/corpus tests
 in `cargo xtask ci`.
+
+Before cutting a release, run the manual Release Fuzz workflow on the release
+candidate ref:
+
+```sh
+gh workflow run release-fuzz.yml --ref v1.2.3-rc.1 -f minutes_per_target=30
+```
+
+The release workflow checks GitHub Actions for a successful Release Fuzz run whose
+`head_sha` exactly matches the tag commit. If the final `v1.2.3` tag points at a
+different commit than the RC, release packaging fails until Release Fuzz is rerun
+on the new SHA. Crash artifacts and the generated fuzz corpus are uploaded as
+short-retention workflow artifacts.
 
 ## Pull requests
 

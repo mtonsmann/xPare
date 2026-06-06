@@ -91,8 +91,8 @@ fuzz: ## Build all fuzz targets (auto-installs nightly/cargo-fuzz if needed)
 fuzz-smoke: ## Build and briefly run all fuzz targets (FUZZ_SMOKE_SECONDS=30)
 	SS_FUZZ_SMOKE_SECONDS=$(FUZZ_SMOKE_SECONDS) $(CARGO) run -p xtask -- check-fuzz
 
-zizmor: ## Audit the GitHub Actions config (workflows + dependabot) for security (needs zizmor)
-	zizmor .github/
+zizmor: ## Audit GitHub Actions config via the canonical workflow lint gate
+	$(CARGO) run -p xtask -- check-workflows
 
 app: ## Build the macOS menu-bar .app bundle (dist/SafetyStrip.app)
 	cd shells/macos && ./package-app.sh

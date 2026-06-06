@@ -51,11 +51,11 @@ capability-constrained**, and the constraint is enforced mechanically.
    so a moved tag can't change what runs in CI, and checkouts set
    `persist-credentials: false`. [`zizmor`](https://docs.zizmor.sh) statically audits
    the workflows (unpinned actions, credential persistence, template injection,
-   over-broad `GITHUB_TOKEN` permissions) and **gates CI** via both the dedicated
-   `zizmor` SARIF job and `cargo xtask ci` (`check-workflows`, which also runs
-   `actionlint` for correctness), so an agent catches workflow issues locally before
-   pushing; `.github/dependabot.yml` bumps the pinned SHAs so the pins don't rot. The
-   actions themselves are supply-chain just like crates — boring, audited, pinned.
+   over-broad `GITHUB_TOKEN` permissions) through `cargo xtask ci`
+   (`check-workflows`, which also runs `actionlint` for correctness), so an agent
+   catches workflow issues locally before pushing; `.github/dependabot.yml` bumps
+   the pinned SHAs so the pins don't rot. The actions themselves are supply-chain
+   just like crates — boring, audited, pinned.
 9. **Audit the supply chain and the non-Rust surface mechanically.**
    [`cargo-deny`](https://embarkstudios.github.io/cargo-deny/) (`deny.toml`) scans the
    whole dependency tree for RustSec advisories, yanked crates, license compliance (a
@@ -77,10 +77,13 @@ capability-constrained**, and the constraint is enforced mechanically.
 - `check-supply-chain` runs `cargo-deny check` (advisories + licenses + bans + sources)
   against `deny.toml`.
 - `check-shell` runs `shellcheck` over every shell script; `check-workflows` runs
-  `actionlint` (correctness) then `zizmor` (security) over `.github/workflows/`.
+  `actionlint` (correctness) then `zizmor --offline` (security) over
+  `.github/workflows/`.
 - `check-fuzz` is the optional fuzz/tooling gate: it installs the nightly toolchain
   and pinned `cargo-fuzz` on demand, discovers targets with `cargo fuzz list`, builds
-  all targets, and smoke-runs them when `SS_FUZZ_SMOKE_SECONDS=N` is set.
+  all targets, and smoke-runs them when `SS_FUZZ_SMOKE_SECONDS=N` is set. The
+  manual Release Fuzz workflow uses this same path as the required pre-release
+  in-depth fuzz gate.
 
 These all print remediation-oriented messages that explain how to *fix* the violation,
 not how to silence it.
@@ -93,8 +96,11 @@ not how to silence it.
   local use, pre-installed in CI)
 - `cargo xtask check-shell` (shellcheck) and `cargo xtask check-workflows` (actionlint
   + zizmor). The cargo-installable tools auto-install; `shellcheck`/`actionlint` print
-  a one-line install hint if missing. `make zizmor` runs the security audit on its own.
+  a one-line install hint if missing. `make zizmor` delegates to this same workflow
+  lint gate.
 - `cargo xtask check-fuzz` (optional nightly fuzz gate; `make fuzz` delegates here).
+  Tagged releases require a successful manual Release Fuzz workflow run on the
+  exact release SHA before packaging.
 - When editing `xtask` itself: `cargo test -p xtask`,
   `cargo clippy -p xtask --all-targets -- -D warnings`.
 - All of the above are part of `cargo xtask ci` (the same command CI runs).

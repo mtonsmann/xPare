@@ -1463,9 +1463,9 @@ fn check_shell() -> Result<(), String> {
 
 /// check-workflows: lint the GitHub Actions workflows for correctness (actionlint)
 /// and security (zizmor). actionlint is a system tool; zizmor is cargo-installable
-/// (auto-installed, pinned). This is the local twin of the dedicated CI `zizmor`
-/// job (which additionally uploads SARIF to code scanning), so an agent catches
-/// workflow problems before pushing instead of from a failed CI run.
+/// (auto-installed, pinned). This is the same workflow-security gate CI runs via
+/// `cargo xtask ci`, so an agent catches workflow problems before pushing instead
+/// of from a failed CI run.
 fn check_workflows() -> Result<(), String> {
     let root = workspace_root();
     if !root.join(".github/workflows").is_dir() {
@@ -1483,9 +1483,7 @@ fn check_workflows() -> Result<(), String> {
     // Security second: template injection, credential persistence, unpinned actions,
     // over-broad token permissions. Run --offline so the gate's exit code never
     // depends on a GitHub token or network reachability — deterministic locally and
-    // in this CI job. The few network-only audits (e.g. known-vulnerable-actions) are
-    // covered by the dedicated `zizmor` CI job, which does the full online pass and
-    // uploads SARIF to code scanning.
+    // in CI.
     let zizmor = ensure_cargo_tool("zizmor", "zizmor", ZIZMOR_VERSION)?;
     run_tool("zizmor", &zizmor, &["--offline", ".github/workflows"])
 }

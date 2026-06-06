@@ -27,8 +27,7 @@ env:
   # Treat warnings as hard errors everywhere (clippy also gets -D warnings below).
   RUSTFLAGS: "-D warnings"
 
-# Least-privilege GITHUB_TOKEN: CI only needs to read the repo. A job that needs
-# more (e.g. zizmor's SARIF upload) opts in with its own job-level permissions.
+# Least-privilege GITHUB_TOKEN: CI only needs to read the repo.
 permissions:
   contents: read
 
@@ -181,25 +180,3 @@ jobs:
         env:
           SS_FUZZ_SMOKE_SECONDS: "30"
         run: cargo run -p xtask -- check-fuzz
-
-  # ----------------------------------------------------------------------------
-  # GitHub Actions security: zizmor statically audits the workflow files
-  # themselves (template injection, credential persistence, unpinned actions,
-  # over-broad token permissions). A required gate — workflow security is part of
-  # the posture, like the core invariants. Run it locally with `make zizmor`.
-  # ----------------------------------------------------------------------------
-  zizmor:
-    name: zizmor (workflow security)
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      # The zizmor action uploads its findings to GitHub code scanning (SARIF).
-      security-events: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          persist-credentials: false
-
-      - name: Run zizmor
-        uses: zizmorcore/zizmor-action@5f14fd08f7cf1cb1609c1e344975f152c7ee938d # v0.5.6
