@@ -108,8 +108,9 @@ current tree (see the decision log); they are listed for continuity.
   off-main-actor transform together with the ABI-v3 shell-integration pass (below) so
   the shell's transform path is touched once. Off-thread transform is a per-shell
   requirement — see the [shell-contract guardrail](../../guardrails/shell-contract.md).
-- **W7 — Thresholds & docs.** Update `docs/performance.md` each wave; add
-  `PERF_MIN_MIB_PER_SEC` guidance only for calibrated same-machine checks.
+- **W7 — Release profile & docs.** Update `docs/performance.md` each wave; add
+  `PERF_MIN_MIB_PER_SEC` guidance only for calibrated same-machine checks. Release
+  artifacts are speed-tuned when local measurements justify the binary-size tradeoff.
 
 ## Acceptance rules (per attempt)
 
@@ -415,4 +416,16 @@ let two agents edit the same file family at once.
   the −3% rule (`defang-iocs` 188.9 → 186.9, `refang-iocs` 369.3 → 369.1). No ABI,
   dependency, zeroization, ordering, or privacy posture change; the change removes
   unnecessary tracker-name comparisons and adds no transform-local scratch.
+- 2026-06-06: W7 accepted for release profile speed tuning: `[profile.release]`
+  now uses `opt-level = 3` instead of the former size-tuned `opt-level = "s"`.
+  This is a broad build-profile tradeoff, not a semantic transform change: output,
+  ABI, dependencies, zeroization, ordering, and privacy posture are unchanged, but
+  release artifacts no longer optimize for smallest size by default. Same-worktree
+  128 MiB / 5-sample comparison after W5i: `default-log` 193.4 → 221.6 MiB/s
+  (+11%), `full-menu-log` 157.8 → 182.8 (+16%), `lossy-utf8-log`
+  191.2 → 218.6 (+9.5%), `strip-markdown-heavy` 141.5 → 153.0 (+8.1%),
+  `strip-markdown-sparse-log` 589.3 → 687.1 (+17%), `strip-html-heavy`
+  334.0 → 421.8 (+25%), `defang-iocs` 186.9 → 237.5 (+27%), and
+  `clean-urls-trackers` 392.0 → 430.0 (+9.7%). The only targeted IOC row that moved
+  down was `refang-iocs` 369.1 → 361.4 (−2.1%), inside the −3% rule.
 - _Append one entry per accepted optimization: date, scenario, before→after median._
