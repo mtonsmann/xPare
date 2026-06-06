@@ -94,17 +94,23 @@ current tree (see the decision log); they are listed for continuity.
   synthetic rows. Keep the documented token/marker heuristics exact, avoid new parser
   dependencies, and favor bounded byte dispatch over repeated replacement or
   per-position table scans. *(Partially banked: `refang` dispatches by first marker
-  byte instead of checking every marker at every byte; `defang` avoids an extra
-  transformed-token wrapper allocation and prefilters marker families before
-  expensive idempotence checks.)*
+  byte instead of checking every marker at every byte and copies literal spans up to
+  the next marker-trigger byte; `defang` avoids an extra transformed-token wrapper
+  allocation and prefilters marker families before expensive idempotence checks,
+  streams transformed cores directly into the final output, and skips no-op tokens
+  that contain none of the bytes any handled indicator needs; `clean_urls` streams
+  URL token reconstruction into the final output instead of allocating per-token
+  rebuilt strings and skips no-op prose tokens that cannot expose a URL prefix after
+  punctuation trimming; tracker-key checks dispatch by first byte.)*
 - **W6 — Shell responsiveness** (macOS): measure Swift↔Rust copies separately; move
   large transforms off the main actor while keeping pasteboard reads/writes on it;
   re-check `changeCount` before commit; keep `NSPasteboard.general` opt-in. Land the
   off-main-actor transform together with the ABI-v3 shell-integration pass (below) so
   the shell's transform path is touched once. Off-thread transform is a per-shell
   requirement — see the [shell-contract guardrail](../../guardrails/shell-contract.md).
-- **W7 — Thresholds & docs.** Update `docs/performance.md` each wave; add
-  `PERF_MIN_MIB_PER_SEC` guidance only for calibrated same-machine checks.
+- **W7 — Release profile & docs.** Update `docs/performance.md` each wave; add
+  `PERF_MIN_MIB_PER_SEC` guidance only for calibrated same-machine checks. Release
+  artifacts are speed-tuned when local measurements justify the binary-size tradeoff.
 
 ## Acceptance rules (per attempt)
 
@@ -354,4 +360,83 @@ let two agents edit the same file family at once.
   `default-log` 156.3 → 194.9 (+25%), `full-menu-log` 132.0 → 158.7 (+20%),
   and `lossy-utf8-log` 154.6 → 193.5 (+25%). No ABI, dependency, zeroization,
   ordering, or privacy posture change.
+- 2026-06-06: W5e accepted for `clean_urls`: URL candidates now stream their
+  cleaned token reconstruction directly into the transform output, and surviving
+  query pairs are emitted as they are scanned instead of first collecting a
+  `Vec<&str>`. This removes temporary rebuilt URL strings and the survivor list
+  while preserving the documented token, punctuation, query, fragment, tracker-key,
+  and idempotence rules. Same-worktree 128 MiB / 5-sample comparison against fresh
+  `origin/main`: `clean-urls-trackers` 278.2 → 310.4 MiB/s (+11.6%),
+  `default-log` 195.9 → 195.0 (−0.5%), `full-menu-log` 156.0 → 158.6 (+1.7%),
+  and `lossy-utf8-log` 191.1 → 193.4 (+1.2%). The unrelated IOC rows stayed within
+  the −3% rule (`defang-iocs` 129.9 → 128.1, `refang-iocs` 379.3 → 369.9). No ABI,
+  dependency, zeroization, ordering, or privacy posture change; the change removes
+  short-lived allocations and adds no transform-local scratch.
+- 2026-06-06: W5f accepted for `defang`: transformed URL/email/IP/domain cores now
+  stream directly into the transform output after classification, instead of
+  allocating a temporary transformed core `String` for every indicator token and
+  copying it into the outer output. Classifier order, already-defanged detection,
+  punctuation reattachment, bracket style, and URL scheme handling are unchanged.
+  Same-worktree 128 MiB / 5-sample comparison after W5e:
+  `defang-iocs` 128.1 → 140.6 MiB/s (+9.8%), `refang-iocs` 369.9 → 369.9 (+0%),
+  `clean-urls-trackers` 310.4 → 312.7 (+0.7%), `default-log` 195.0 → 195.8
+  (+0.4%), `full-menu-log` 158.6 → 158.2 (−0.3%), and `lossy-utf8-log`
+  193.4 → 193.1 (−0.2%). No ABI, dependency, zeroization, ordering, or privacy
+  posture change; the change removes short-lived allocations and adds no
+  transform-local scratch.
+- 2026-06-06: W5g accepted for `defang`: token cores that contain none of `.`, `@`,
+  `:`, `[`, or `(` now skip already-defanged marker checks and the URL/email/IP/domain
+  classifier chain. This is an exact no-op prefilter: every live indicator class
+  handled by `defang` needs `.`, `@`, or `:`, and every already-defanged bracket marker
+  needs `[` or `(`. Same-worktree 128 MiB / 5-sample comparison after W5f confirmed
+  the target row twice despite broader machine noise: `defang-iocs` 140.6 → 183.0
+  MiB/s (+31%) and then 140.6 → 187.1 (+33%). In the confirmation run, adjacent IOC
+  rows stayed within the −3% rule (`refang-iocs` 369.9 → 359.1, `clean-urls-trackers`
+  312.7 → 304.0). No ABI, dependency, zeroization, ordering, or privacy posture
+  change; the change removes classifier work on ordinary prose tokens and adds no
+  transform-local scratch.
+- 2026-06-06: W5h accepted for `clean_urls`: non-whitespace tokens now skip
+  punctuation trimming and URL-prefix checks when the first byte after the fixed
+  ASCII trim-punctuation set is not lowercase `h` or `w`. This is an exact no-op
+  prefilter because the only recognized URL prefixes are `http://`, `https://`, and
+  `www.`. Same-worktree 128 MiB / 5-sample comparison after W5g:
+  `clean-urls-trackers` 312.7 → 331.9 MiB/s (+6.1%). The op is not part of
+  `default-log` or `full-menu-log`; nearby IOC rows stayed within the −3% rule
+  (`defang-iocs` 187.1 → 188.9, `refang-iocs` 369.9 → 369.3). No ABI, dependency,
+  zeroization, ordering, or privacy posture change; the change removes trim/prefix
+  work on ordinary prose tokens and adds no transform-local scratch.
+- 2026-06-06: W5i accepted for `clean_urls`: tracker-key matching now dispatches by
+  the ASCII-lowercased first key byte instead of scanning the full tracker table for
+  every query pair. Exact matching remains case-insensitive, and `utm_*` / `oly_*`
+  remain prefix rules. A focused test iterates `TRACKING_PARAMS` and verifies each
+  configured entry drops through the public transform, plus a regression keeps
+  non-wildcard stems like `utm` / `oly` / `utm-source` as functional params.
+  Same-worktree 128 MiB / 5-sample comparison after W5h:
+  `clean-urls-trackers` 331.9 → 392.0 MiB/s (+18%). Nearby IOC rows stayed within
+  the −3% rule (`defang-iocs` 188.9 → 186.9, `refang-iocs` 369.3 → 369.1). No ABI,
+  dependency, zeroization, ordering, or privacy posture change; the change removes
+  unnecessary tracker-name comparisons and adds no transform-local scratch.
+- 2026-06-06: W7 accepted for release profile speed tuning: `[profile.release]`
+  now uses `opt-level = 3` instead of the former size-tuned `opt-level = "s"`.
+  This is a broad build-profile tradeoff, not a semantic transform change: output,
+  ABI, dependencies, zeroization, ordering, and privacy posture are unchanged, but
+  release artifacts no longer optimize for smallest size by default. Same-worktree
+  128 MiB / 5-sample comparison after W5i: `default-log` 193.4 → 221.6 MiB/s
+  (+11%), `full-menu-log` 157.8 → 182.8 (+16%), `lossy-utf8-log`
+  191.2 → 218.6 (+9.5%), `strip-markdown-heavy` 141.5 → 153.0 (+8.1%),
+  `strip-markdown-sparse-log` 589.3 → 687.1 (+17%), `strip-html-heavy`
+  334.0 → 421.8 (+25%), `defang-iocs` 186.9 → 237.5 (+27%), and
+  `clean-urls-trackers` 392.0 → 430.0 (+9.7%). The only targeted IOC row that moved
+  down was `refang-iocs` 369.1 → 361.4 (−2.1%), inside the −3% rule.
+- 2026-06-06: W5j accepted for `refang`: when no marker matches at the current byte,
+  the fallback path now copies the whole literal span up to the next marker-trigger
+  byte (`[`, `(`, or `h`) instead of copying one UTF-8 character at a time. The
+  existing marker matcher still owns all substitutions, so bracket style handling,
+  longest-marker precedence, `hxxp` semantics, and Unicode literal preservation are
+  unchanged. A focused regression covers long literal spans, Unicode, and near-miss
+  marker text. Same-worktree 128 MiB / 5-sample comparison after W7:
+  `refang-iocs` 365.6 → 790.5 MiB/s (+116%). Adjacent rows stayed within the −3%
+  rule (`defang-iocs` 242.0 → 238.0, `clean-urls-trackers` 432.8 → 429.5). No ABI,
+  dependency, zeroization, ordering, or privacy posture change; the change adds no
+  transform-local scratch and only reduces fallback scanner work.
 - _Append one entry per accepted optimization: date, scenario, before→after median._

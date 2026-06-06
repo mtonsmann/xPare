@@ -89,18 +89,45 @@ pub const TRACKING_PARAMS: &[&str] = &[
 /// folding is exact here and avoids allocating a Unicode-folded copy of attacker
 /// input.
 fn is_tracker_key(key: &str) -> bool {
-    for &entry in TRACKING_PARAMS {
-        if let Some(stem) = entry.strip_suffix('*') {
-            if key.len() >= stem.len()
-                && key.as_bytes()[..stem.len()].eq_ignore_ascii_case(stem.as_bytes())
-            {
-                return true;
-            }
-        } else if key.eq_ignore_ascii_case(entry) {
-            return true;
+    let Some(first) = key.as_bytes().first().map(u8::to_ascii_lowercase) else {
+        return false;
+    };
+    match first {
+        b'_' => {
+            key.eq_ignore_ascii_case("_hsenc")
+                || key.eq_ignore_ascii_case("_hsmi")
+                || key.eq_ignore_ascii_case("_openstat")
         }
+        b'd' => key.eq_ignore_ascii_case("dclid"),
+        b'e' => key.eq_ignore_ascii_case("ef_id"),
+        b'f' => key.eq_ignore_ascii_case("fbclid"),
+        b'g' => {
+            key.eq_ignore_ascii_case("gclid")
+                || key.eq_ignore_ascii_case("gclsrc")
+                || key.eq_ignore_ascii_case("gbraid")
+        }
+        b'h' => key.eq_ignore_ascii_case("hsctatracking"),
+        b'i' => key.eq_ignore_ascii_case("igshid") || key.eq_ignore_ascii_case("icid"),
+        b'm' => {
+            key.eq_ignore_ascii_case("mc_cid")
+                || key.eq_ignore_ascii_case("mc_eid")
+                || key.eq_ignore_ascii_case("msclkid")
+                || key.eq_ignore_ascii_case("mkt_tok")
+        }
+        b'o' => key_has_tracker_prefix(key, "oly_") || key.eq_ignore_ascii_case("oicd"),
+        b's' => key.eq_ignore_ascii_case("s_kwcid"),
+        b't' => key.eq_ignore_ascii_case("twclid") || key.eq_ignore_ascii_case("ttclid"),
+        b'u' => key_has_tracker_prefix(key, "utm_"),
+        b'v' => key.eq_ignore_ascii_case("vero_id") || key.eq_ignore_ascii_case("vero_conv"),
+        b'w' => key.eq_ignore_ascii_case("wbraid") || key.eq_ignore_ascii_case("wickedid"),
+        b'y' => key.eq_ignore_ascii_case("yclid"),
+        _ => false,
     }
-    false
+}
+
+fn key_has_tracker_prefix(key: &str, prefix: &str) -> bool {
+    key.len() >= prefix.len()
+        && key.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes())
 }
 
 /// Clean tracking parameters from URL tokens in `input`. See the module-level frozen
@@ -120,7 +147,7 @@ pub fn clean_urls(input: &str) -> String {
     for (idx, ch) in input.char_indices() {
         if ch.is_whitespace() {
             if let Some(start) = token_start.take() {
-                out.push_str(&clean_token(&input[start..idx]));
+                push_clean_token(&mut out, &input[start..idx]);
             }
             out.push(ch);
         } else if token_start.is_none() {
@@ -128,17 +155,21 @@ pub fn clean_urls(input: &str) -> String {
         }
     }
     if let Some(start) = token_start {
-        out.push_str(&clean_token(&input[start..]));
+        push_clean_token(&mut out, &input[start..]);
     }
     out
 }
 
-/// Clean a single non-whitespace token. Non-URL tokens are returned borrowed-as-is
-/// (no allocation); URL tokens are rebuilt with trackers removed.
-fn clean_token(token: &str) -> std::borrow::Cow<'_, str> {
+/// Append a single non-whitespace token, cleaning URL candidates in place.
+fn push_clean_token(out: &mut String, token: &str) {
+    if !can_trim_to_url_prefix(token) {
+        out.push_str(token);
+        return;
+    }
     let trimmed = trim_token_punct(token);
     if !is_url(trimmed) {
-        return std::borrow::Cow::Borrowed(token);
+        out.push_str(token);
+        return;
     }
     // Recover the exact surrounding punctuation we trimmed so we can re-emit it.
     // `trimmed` is a sub-slice of `token`, so subtracting pointer offsets is the
@@ -148,21 +179,33 @@ fn clean_token(token: &str) -> std::borrow::Cow<'_, str> {
     let prefix = &token[..prefix_len];
     let suffix = &token[prefix_len + trimmed.len()..];
 
-    let cleaned_core = clean_url_core(trimmed);
-    // If nothing changed and there was no surrounding punctuation, borrow the input.
-    if prefix.is_empty() && suffix.is_empty() && cleaned_core == trimmed {
-        return std::borrow::Cow::Borrowed(token);
+    out.push_str(prefix);
+    push_clean_url_core(out, trimmed);
+    out.push_str(suffix);
+}
+
+/// A URL candidate must start with lowercase `h` or `w` after trimming the fixed
+/// ASCII edge punctuation set. Tokens that fail this necessary condition are exact
+/// no-ops, so avoid the heavier trim/prefix work.
+fn can_trim_to_url_prefix(token: &str) -> bool {
+    let mut idx = 0usize;
+    let bytes = token.as_bytes();
+    while idx < bytes.len() && is_token_trim_byte(bytes[idx]) {
+        idx += 1;
     }
-    let mut s = String::with_capacity(prefix.len() + cleaned_core.len() + suffix.len());
-    s.push_str(prefix);
-    s.push_str(&cleaned_core);
-    s.push_str(suffix);
-    std::borrow::Cow::Owned(s)
+    matches!(bytes.get(idx), Some(b'h' | b'w'))
+}
+
+fn is_token_trim_byte(byte: u8) -> bool {
+    matches!(
+        byte,
+        b'<' | b'>' | b'(' | b')' | b'[' | b']' | b'{' | b'}' | b',' | b';' | b':' | b'"' | b'\''
+    )
 }
 
 /// Clean the URL "core" (punctuation already trimmed): split base/query/fragment,
 /// drop tracker pairs, reassemble.
-fn clean_url_core(core: &str) -> String {
+fn push_clean_url_core(out: &mut String, core: &str) {
     // Locate the first '?' and the first '#'. Per the URL grammar, a '#' before any
     // '?' means there is no query (the '?' would live inside the fragment).
     let hash = core.find('#');
@@ -176,12 +219,11 @@ fn clean_url_core(core: &str) -> String {
         (None, None) => (core, None, None),
     };
 
-    let mut out = String::with_capacity(core.len());
     out.push_str(base);
 
     if let Some(query) = query {
         // Keep surviving pairs in order, exact spelling.
-        let mut survivors: Vec<&str> = Vec::new();
+        let mut wrote_pair = false;
         for pair in query.split('&') {
             if pair.is_empty() {
                 // Drop empty pairs from '&&' or leading/trailing '&'.
@@ -194,14 +236,11 @@ fn clean_url_core(core: &str) -> String {
                 None => pair,
             };
             if !is_tracker_key(key) {
-                survivors.push(pair);
-            }
-        }
-        if !survivors.is_empty() {
-            out.push('?');
-            for (i, pair) in survivors.iter().enumerate() {
-                if i > 0 {
+                if wrote_pair {
                     out.push('&');
+                } else {
+                    out.push('?');
+                    wrote_pair = true;
                 }
                 out.push_str(pair);
             }
@@ -212,6 +251,4 @@ fn clean_url_core(core: &str) -> String {
         out.push('#');
         out.push_str(fragment);
     }
-
-    out
 }

@@ -13,7 +13,7 @@
 //! function directly rather than routing through `transform`. The property
 //! strategies mirror `core/tests/determinism.rs`.
 
-use safetystrip_core::ops::urls::clean_urls;
+use safetystrip_core::ops::urls::{clean_urls, TRACKING_PARAMS};
 
 use proptest::prelude::*;
 
@@ -182,6 +182,33 @@ fn golden_inputs_are_idempotent() {
         let twice = clean_urls(&once);
         assert_eq!(once, twice, "clean_urls not idempotent on {input:?}");
     }
+}
+
+#[test]
+fn every_configured_tracker_key_is_dropped() {
+    for &entry in TRACKING_PARAMS {
+        let concrete = match entry.strip_suffix('*') {
+            Some(stem) => format!("{stem}campaign"),
+            None => entry.to_string(),
+        };
+        let uppercase = concrete.to_ascii_uppercase();
+        for key in [&concrete, &uppercase] {
+            let input = format!("https://example.com/?keep=1&{key}=x&after=2");
+            assert_eq!(
+                clean_urls(&input),
+                "https://example.com/?keep=1&after=2",
+                "tracker key {key:?} from entry {entry:?} should be dropped",
+            );
+        }
+    }
+}
+
+#[test]
+fn tracker_prefix_stems_without_separator_are_kept() {
+    assert_eq!(
+        clean_urls("https://example.com/?utm=1&oly=2&utm-source=3&keep=4"),
+        "https://example.com/?utm=1&oly=2&utm-source=3&keep=4"
+    );
 }
 
 // --- Property tests (mirror determinism.rs strategies) ----------------------

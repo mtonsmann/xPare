@@ -185,6 +185,13 @@ fn refang_no_markers_verbatim() {
     assert_eq!(refang(s), s);
 }
 
+#[test]
+fn refang_preserves_long_literal_spans_and_near_misses() {
+    let input = "héllo hxx nope [x] (/) 🚀 hxxp[://]x[.]y then hxxps(://)a(.)b";
+    let expected = "héllo hxx nope [x] (/) 🚀 http://x.y then https://a.b";
+    assert_eq!(refang(input), expected);
+}
+
 // ---------------------------------------------------------------------------
 // Property tests (mirroring determinism.rs strategies).
 // ---------------------------------------------------------------------------
