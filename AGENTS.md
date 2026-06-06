@@ -187,3 +187,7 @@ If the docs-only change captures a review lesson, also consult
   boundary move.
 - For any fixed review finding class, state the mechanical regression protection
   and the docs lesson added.
+- GitHub integration: prefer the Codex GitHub connector for PR metadata/creation
+  now that it has repo scope for `mtonsmann/SafetyStrip`. Use escalated local
+  `gh` as the fallback; sandboxed, non-escalated `gh` auth/network results are
+  not the source of truth for this repo.
