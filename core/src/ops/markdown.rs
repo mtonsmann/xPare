@@ -76,7 +76,7 @@ pub fn strip_markdown(input: &str) -> String {
         Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
     let parser = Parser::new_ext(input, options);
 
-    let mut out = String::with_capacity(input.len());
+    let mut out = MarkdownOutput::with_capacity(input.len());
     // Are we currently inside a table row? Used to insert a tab between cells.
     let mut in_table_row = false;
     let mut first_cell_in_row = true;
@@ -91,13 +91,13 @@ pub fn strip_markdown(input: &str) -> String {
                 let extracted = super::html::strip_html(&html);
                 out.push_str(&extracted);
             }
-            Event::SoftBreak => out.push(' '),
+            Event::SoftBreak => out.push_char(' '),
             Event::HardBreak => push_newline(&mut out),
             Event::Rule => push_newline(&mut out),
             Event::Start(tag) => {
                 if let Tag::TableCell = tag {
                     if in_table_row && !first_cell_in_row {
-                        out.push('\t');
+                        out.push_char('\t');
                     }
                     first_cell_in_row = false;
                 }
@@ -153,7 +153,7 @@ pub fn strip_markdown(input: &str) -> String {
         }
     }
 
-    normalize(out)
+    normalize(out.into_string())
 }
 
 /// "Loose" block tags emit a leading newline at their start (in addition to the
@@ -177,19 +177,63 @@ fn is_loose_block_start(tag: &Tag<'_>) -> bool {
     )
 }
 
+struct MarkdownOutput {
+    text: String,
+    trailing_newlines: u8,
+}
+
+impl MarkdownOutput {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            text: String::with_capacity(capacity),
+            trailing_newlines: 0,
+        }
+    }
+
+    fn push_str(&mut self, value: &str) {
+        self.text.push_str(value);
+        for &b in value.as_bytes() {
+            self.observe_byte(b);
+        }
+    }
+
+    fn push_char(&mut self, value: char) {
+        self.text.push(value);
+        match value {
+            '\n' => self.observe_newline(),
+            ' ' | '\t' => {}
+            _ => self.trailing_newlines = 0,
+        }
+    }
+
+    fn push_newline(&mut self) {
+        if self.trailing_newlines < 2 {
+            self.text.push('\n');
+            self.observe_newline();
+        }
+    }
+
+    fn into_string(self) -> String {
+        self.text
+    }
+
+    fn observe_byte(&mut self, byte: u8) {
+        match byte {
+            b'\n' => self.observe_newline(),
+            b' ' | b'\t' => {}
+            _ => self.trailing_newlines = 0,
+        }
+    }
+
+    fn observe_newline(&mut self) {
+        self.trailing_newlines = (self.trailing_newlines + 1).min(2);
+    }
+}
+
 /// Push a `\n`, collapsing runs so at most one blank line (`"\n\n"`) ever forms.
 /// Mirrors the HTML stripper's whitespace policy for consistent block separation.
-fn push_newline(out: &mut String) {
-    let trailing_newlines = out
-        .as_bytes()
-        .iter()
-        .rev()
-        .take_while(|&&b| b == b'\n' || b == b' ' || b == b'\t')
-        .filter(|&&b| b == b'\n')
-        .count();
-    if trailing_newlines < 2 {
-        out.push('\n');
-    }
+fn push_newline(out: &mut MarkdownOutput) {
+    out.push_newline();
 }
 
 /// Trim leading/trailing whitespace of the whole document. A single allocation only

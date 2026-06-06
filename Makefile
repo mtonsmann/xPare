@@ -19,6 +19,8 @@ PERF_MIN_MIB_PER_SEC ?=
 
 # Release packaging (see shells/macos/release.sh and docs/release-model.md).
 # dist/github-release are gated and need Developer ID credentials + a vX.Y.Z tag.
+# dist signs with shells/macos/SafetyStrip.entitlements by default. SIGN_ENTITLEMENTS
+# exists so CI can pass the checked file as an absolute path; other paths are rejected.
 VERSION ?=
 CERT_NAME ?=
 NOTARY_PROFILE ?=
@@ -94,7 +96,7 @@ run: ## Build and launch the macOS menu-bar app
 preview: ## Unsigned/ad-hoc preview zip + checksum under dist/release (VERSION optional)
 	cd shells/macos && VERSION="$(VERSION)" ./release.sh preview
 
-dist: ## Gated Developer ID sign+notarize+staple release (needs CERT_NAME [+ NOTARY_PROFILE])
+dist: ## Gated Developer ID sign+notarize+staple release (needs CERT_NAME; uses checked entitlements)
 	cd shells/macos && VERSION="$(VERSION)" CERT_NAME="$(CERT_NAME)" NOTARY_PROFILE="$(NOTARY_PROFILE)" SIGN_ENTITLEMENTS="$(SIGN_ENTITLEMENTS)" ./release.sh dist
 
 github-release: ## Upload the signed release zip + checksum via gh (needs VERSION)

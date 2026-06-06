@@ -49,9 +49,11 @@ Swift executable, so:
    the icon (skips gracefully if `iconutil`/`python3` absent). **Done.**
 3. `release.sh preview` → unsigned/ad-hoc zip + `.sha256` under `dist/release/`.
    **Done.**
-4. `release.sh dist` → Developer ID sign (hardened runtime, optional
-   `SIGN_ENTITLEMENTS`) → notarize → staple → zip → checksum → verify. Gated; refuses
-   without `CERT_NAME` and a real `vX.Y.Z`. **Done (gated; untested here).**
+4. `release.sh dist` → Developer ID sign (hardened runtime + checked App Sandbox
+   entitlements) → verify the signed payload is minimal → notarize → staple → zip
+   → checksum → verify. Gated; refuses without `CERT_NAME`, the checked entitlements
+   file, and a real `vX.Y.Z`; alternate entitlement paths are rejected. **Done
+   (gated; full signing untested here).**
 5. `release.sh github-release` → `gh release create` with the signed zip + checksum.
    **Done.**
 6. `make preview` / `dist` / `github-release` / `check-version` / `clean-release`
@@ -67,11 +69,11 @@ Swift executable, so:
 - 2026-06-05: Keep official publication gated behind
   `SAFETYSTRIP_ENABLE_OFFICIAL_RELEASE=true` + Apple secrets. Tag runs always build
   an unsigned preview artifact; they never publish it as an official download.
-- 2026-06-05: Default Developer ID signing uses **hardened runtime without extra
-  entitlements** (`SIGN_ENTITLEMENTS` optional) until the macOS permission posture is
-  re-tested under a real signature. Local dev bundling stays ad-hoc.
 - 2026-06-05: Put the release logic in `release.sh` (not the Makefile) to preserve
   the local "Makefile delegates; xtask/scripts are authoritative" convention.
+- 2026-06-06: Security fix: official Developer ID signing must use the checked-in
+  App Sandbox entitlements and verify the signed payload remains minimal. Local dev
+  preview bundling stays unsigned/ad-hoc and is not an official release channel.
 
 ## Acceptance criteria
 
@@ -79,8 +81,10 @@ Swift executable, so:
 - `make preview` writes an explicitly unsigned preview zip + checksum under
   `dist/release/`. **Verifiable locally (ad-hoc signing; no Apple account).**
 - `make dist` refuses without an exact `vX.Y.Z` (or `VERSION=`) and `CERT_NAME`.
-  **Gate verifiable; full sign/notarize requires Developer ID + full Xcode (not
-  available in the current Command-Line-Tools-only environment).**
+  It also refuses if the checked signing entitlements file is unavailable or if an
+  alternate entitlements path is supplied, and verifies the signed payload is minimal
+  after codesign. **Gates verifiable; full sign/notarize requires Developer ID + full
+  Xcode (not available in the current Command-Line-Tools-only environment).**
 - Pull-request CI requires no Apple credentials.
 - `cargo xtask ci` and `swift build` stay green.
 

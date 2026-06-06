@@ -28,15 +28,27 @@ and is wiped from the buffer that crosses the boundary.
 4. **In-memory only + best-effort wipe.** Content exists only as in-memory strings
    during a transform. The core holds each pipeline intermediate in a `Zeroizing`
    buffer (wiped on drop) and `ss_buffer_free` zeroizes the returned buffer before
-   freeing it. Minimize transient copies of content; do not stash it in a global, a
-   cache, or a long-lived object.
+   freeing it. If the FFI has to allocate an owned lossy-UTF-8 replacement string,
+   that temporary is also `Zeroizing` and wiped on drop. Minimize transient copies of
+   content; do not stash it in a global, a cache, or a long-lived object.
 5. **No telemetry / analytics / "phone home."** There is nothing to add here — there
    is no code that could, and there must not be.
 6. **Settings are configuration, not content.** Persisting the user's pipeline,
    hotkey, and interval is fine. Persisting what was on the clipboard is not.
 7. **Minimal OS privilege.** The macOS shell ships only the App Sandbox entitlement;
-   no network/device/personal-info/file/automation/accessibility grants. See
+   official Developer ID releases must be signed with the checked-in App Sandbox
+   entitlements and verify the signed payload is still minimal; no network, device,
+   personal-info, file, automation, or accessibility grants. See
    [macos-posture](macos-posture.md).
+8. **Local pasteboard writers are out of the confidentiality boundary.** A same-user
+   process that can write the system pasteboard can race SafetyStrip or feed huge
+   rich data. That can cause missed intermediate states or local DoS pressure; it
+   must not create exfiltration, persistence, logging, or memory-unsafety.
+9. **Resource limits apply before the core transform, after platform extraction.**
+   Native shells must refuse oversized extracted text before calling the core, and
+   the FFI has its own hard backstop. When a platform exposes raw rich representation
+   bytes, check them before decoding; still do not document the ceiling as a
+   universal streaming pre-parse limit for every native format.
 
 ## Why each rule has teeth
 
@@ -57,7 +69,7 @@ guardrails.
 | No content logged/persisted (incl. shells) | `cargo xtask check-no-content-logging` (scans shipped Rust + Swift source) |
 | Default checks avoid the real clipboard | `cargo xtask check-clipboard-safety` |
 | In-memory only / wipe | pipeline intermediates in `Zeroizing`; output buffer zeroized in `ss_buffer_free`; covered by `cargo test` |
-| Minimal entitlements | `cargo xtask check-entitlements` |
+| Minimal entitlements | `cargo xtask check-entitlements`; `release.sh dist` signs with and verifies the checked-in entitlements |
 
 All of these are part of `cargo xtask ci`, which CI runs verbatim.
 
