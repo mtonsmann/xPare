@@ -96,8 +96,9 @@ current tree (see the decision log); they are listed for continuity.
   per-position table scans. *(Partially banked: `refang` dispatches by first marker
   byte instead of checking every marker at every byte; `defang` avoids an extra
   transformed-token wrapper allocation and prefilters marker families before
-  expensive idempotence checks; `clean_urls` streams URL token reconstruction into
-  the final output instead of allocating per-token rebuilt strings.)*
+  expensive idempotence checks, and streams transformed cores directly into the
+  final output; `clean_urls` streams URL token reconstruction into the final output
+  instead of allocating per-token rebuilt strings.)*
 - **W6 — Shell responsiveness** (macOS): measure Swift↔Rust copies separately; move
   large transforms off the main actor while keeping pasteboard reads/writes on it;
   re-check `changeCount` before commit; keep `NSPasteboard.general` opt-in. Land the
@@ -367,4 +368,16 @@ let two agents edit the same file family at once.
   the −3% rule (`defang-iocs` 129.9 → 128.1, `refang-iocs` 379.3 → 369.9). No ABI,
   dependency, zeroization, ordering, or privacy posture change; the change removes
   short-lived allocations and adds no transform-local scratch.
+- 2026-06-06: W5f accepted for `defang`: transformed URL/email/IP/domain cores now
+  stream directly into the transform output after classification, instead of
+  allocating a temporary transformed core `String` for every indicator token and
+  copying it into the outer output. Classifier order, already-defanged detection,
+  punctuation reattachment, bracket style, and URL scheme handling are unchanged.
+  Same-worktree 128 MiB / 5-sample comparison after W5e:
+  `defang-iocs` 128.1 → 140.6 MiB/s (+9.8%), `refang-iocs` 369.9 → 369.9 (+0%),
+  `clean-urls-trackers` 310.4 → 312.7 (+0.7%), `default-log` 195.0 → 195.8
+  (+0.4%), `full-menu-log` 158.6 → 158.2 (−0.3%), and `lossy-utf8-log`
+  193.4 → 193.1 (−0.2%). No ABI, dependency, zeroization, ordering, or privacy
+  posture change; the change removes short-lived allocations and adds no
+  transform-local scratch.
 - _Append one entry per accepted optimization: date, scenario, before→after median._

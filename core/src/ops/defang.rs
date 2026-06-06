@@ -25,7 +25,6 @@ pub use crate::config::BracketStyle;
 // Token edges and the URL/email heuristics are shared with the extractors so all
 // three agree on what a token (and a URL/email) is — single source of truth.
 use crate::ops::lines::{is_email, is_url, trim_token_punct};
-use std::borrow::Cow;
 
 // Inherent helpers on the shared type (same crate, so this is allowed): the bracket
 // chars for a style. Kept here next to the defang logic that uses them.
@@ -110,7 +109,7 @@ pub fn defang(input: &str, style: BracketStyle) -> String {
     for (i, c) in input.char_indices() {
         if c.is_whitespace() {
             if let Some(start) = token_start.take() {
-                out.push_str(&defang_token(&input[start..i], style));
+                push_defang_token(&mut out, &input[start..i], style);
             }
             out.push(c);
         } else if token_start.is_none() {
@@ -118,63 +117,68 @@ pub fn defang(input: &str, style: BracketStyle) -> String {
         }
     }
     if let Some(start) = token_start {
-        out.push_str(&defang_token(&input[start..], style));
+        push_defang_token(&mut out, &input[start..], style);
     }
     out
 }
 
-/// Defang a single whitespace-free token: trim surrounding punctuation, transform the
-/// core, and re-emit `prefix + core' + suffix`.
-///
-/// Returns `Cow::Borrowed(token)` when the core is not an indicator — `prefix + core
-/// + suffix` is byte-identical to the original token, so an unchanged token needs no
-/// allocation (matching `clean_urls`'s allocation discipline).
-fn defang_token(token: &str, style: BracketStyle) -> Cow<'_, str> {
+/// Defang a single whitespace-free token into `out`.
+fn push_defang_token(out: &mut String, token: &str, style: BracketStyle) {
     let core = trim_token_punct(token);
-    match transform_core(core, style) {
-        None => Cow::Borrowed(token),
-        Some(new_core) => {
-            if core.len() == token.len() {
-                return Cow::Owned(new_core);
-            }
-            // The trimmed core is a contiguous slice of `token`; recover the
-            // surrounding prefix/suffix by byte offset. Both lie on char boundaries
-            // because `trim_matches` only ever trims whole chars.
-            let core_off = core.as_ptr() as usize - token.as_ptr() as usize;
-            let prefix = &token[..core_off];
-            let suffix = &token[core_off + core.len()..];
-            let mut s = String::with_capacity(prefix.len() + new_core.len() + suffix.len());
-            s.push_str(prefix);
-            s.push_str(&new_core);
-            s.push_str(suffix);
-            Cow::Owned(s)
-        }
-    }
+    let Some(kind) = classify_core(core) else {
+        out.push_str(token);
+        return;
+    };
+
+    // The trimmed core is a contiguous slice of `token`; recover the surrounding
+    // prefix/suffix by byte offset. Both lie on char boundaries because
+    // `trim_matches` only ever trims whole chars.
+    let core_off = core.as_ptr() as usize - token.as_ptr() as usize;
+    out.push_str(&token[..core_off]);
+    push_transformed_core(out, core, kind, style);
+    out.push_str(&token[core_off + core.len()..]);
 }
 
-/// Classify and transform a token core. Returns `Some(new_core)` if a substitution
-/// was made, or `None` if the core is not an indicator (or is already defanged) and
-/// should be emitted unchanged.
-fn transform_core(core: &str, style: BracketStyle) -> Option<String> {
+#[derive(Clone, Copy)]
+enum CoreTransform {
+    Url,
+    Email,
+    Ipv4,
+    Ipv6,
+    BareDomain,
+}
+
+/// Classify a token core. Returns `None` if the core is not an indicator or is
+/// already defanged and should be emitted unchanged.
+fn classify_core(core: &str) -> Option<CoreTransform> {
     if core.is_empty() || already_defanged(core) {
         return None;
     }
     if is_url(core) {
-        return Some(defang_url(core, style));
+        return Some(CoreTransform::Url);
     }
     if is_email(core) {
-        return Some(replace_dots_and(core, '@', style));
+        return Some(CoreTransform::Email);
     }
     if is_ipv4(core) {
-        return Some(bracket_char(core, '.', style));
+        return Some(CoreTransform::Ipv4);
     }
     if is_ipv6(core) {
-        return Some(bracket_char(core, ':', style));
+        return Some(CoreTransform::Ipv6);
     }
     if is_bare_domain(core) {
-        return Some(bracket_char(core, '.', style));
+        return Some(CoreTransform::BareDomain);
     }
     None
+}
+
+fn push_transformed_core(out: &mut String, core: &str, kind: CoreTransform, style: BracketStyle) {
+    match kind {
+        CoreTransform::Url => push_defang_url(out, core, style),
+        CoreTransform::Email => push_dots_and(out, core, '@', style),
+        CoreTransform::Ipv4 | CoreTransform::BareDomain => push_bracket_char(out, core, '.', style),
+        CoreTransform::Ipv6 => push_bracket_char(out, core, ':', style),
+    }
 }
 
 /// True if `core` already carries any defang marker, for either bracket style, or the
@@ -211,7 +215,7 @@ fn already_defanged(core: &str) -> bool {
 
 /// Defang a URL core: mangle a leading lowercase scheme, bracket the first `://`,
 /// then bracket every remaining `.`.
-fn defang_url(core: &str, style: BracketStyle) -> String {
+fn push_defang_url(out: &mut String, core: &str, style: BracketStyle) {
     // 1. Scheme mangle (lowercase only — matches the case-sensitive URL heuristic).
     //    Note "https" is handled before "http" is irrelevant here since we match the
     //    full "://"-bearing prefixes; do the longer first regardless for clarity.
@@ -224,7 +228,6 @@ fn defang_url(core: &str, style: BracketStyle) -> String {
     };
 
     let (o, cl) = (style.open(), style.close());
-    let mut out = String::with_capacity(core.len() + 16);
 
     match rest {
         Some((_sep, after)) => {
@@ -234,7 +237,7 @@ fn defang_url(core: &str, style: BracketStyle) -> String {
             out.push(o);
             out.push_str("://");
             out.push(cl);
-            push_dots_bracketed(&mut out, after, o, cl);
+            push_dots_bracketed(out, after, o, cl);
         }
         None => {
             // No scheme (e.g. "www.example.com"): bracket the first "://" if present
@@ -245,13 +248,12 @@ fn defang_url(core: &str, style: BracketStyle) -> String {
                 out.push(o);
                 out.push_str("://");
                 out.push(cl);
-                push_dots_bracketed(&mut out, &core[pos + 3..], o, cl);
+                push_dots_bracketed(out, &core[pos + 3..], o, cl);
             } else {
-                push_dots_bracketed(&mut out, core, o, cl);
+                push_dots_bracketed(out, core, o, cl);
             }
         }
     }
-    out
 }
 
 /// Append `s` to `out`, replacing every `.` with `<o>.<cl>`.
@@ -268,9 +270,8 @@ fn push_dots_bracketed(out: &mut String, s: &str, o: char, cl: char) {
 }
 
 /// Bracket every occurrence of `target` in `s` with the style brackets.
-fn bracket_char(s: &str, target: char, style: BracketStyle) -> String {
+fn push_bracket_char(out: &mut String, s: &str, target: char, style: BracketStyle) {
     let (o, cl) = (style.open(), style.close());
-    let mut out = String::with_capacity(s.len() + 8);
     for c in s.chars() {
         if c == target {
             out.push(o);
@@ -280,13 +281,11 @@ fn bracket_char(s: &str, target: char, style: BracketStyle) -> String {
             out.push(c);
         }
     }
-    out
 }
 
 /// Email helper: bracket every `.` and the single `@`.
-fn replace_dots_and(s: &str, at: char, style: BracketStyle) -> String {
+fn push_dots_and(out: &mut String, s: &str, at: char, style: BracketStyle) {
     let (o, cl) = (style.open(), style.close());
-    let mut out = String::with_capacity(s.len() + 8);
     for c in s.chars() {
         if c == '.' || c == at {
             out.push(o);
@@ -296,7 +295,6 @@ fn replace_dots_and(s: &str, at: char, style: BracketStyle) -> String {
             out.push(c);
         }
     }
-    out
 }
 
 /// IPv4 classifier: exactly four parts separated by `.`, each a 1–3 digit decimal in
