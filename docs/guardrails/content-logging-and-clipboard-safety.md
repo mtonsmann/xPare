@@ -33,7 +33,10 @@ upstream FormatStripper `guardrails.py` and enforced here by the in-tree `xtask`
 | 1, 2 | `check-no-content-logging` — scans shipped source (`core/src`, `cli/src`, `shells/macos/Sources`) for a line that both calls a log/persist sink **and** names clipboard-derived content | `cargo xtask check-no-content-logging` |
 | 3 | `check-clipboard-safety` — fails if a default Make target depends on a `*general*` (real-clipboard) smoke | `cargo xtask check-clipboard-safety` |
 
-Both run inside `cargo xtask ci` (and `make checks`).
+Both run inside `cargo xtask ci` (and `make checks`). The same gate also runs
+`check-release-posture` for the official signing path and `check-c-ffi-surface`
+for the C/SwiftPM bridge, because clipboard safety depends on those boundary
+surfaces staying narrow and fail-closed.
 
 ### Heuristic scope (and why it is tuned)
 

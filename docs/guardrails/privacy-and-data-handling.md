@@ -69,7 +69,7 @@ guardrails.
 | No content logged/persisted (incl. shells) | `cargo xtask check-no-content-logging` (scans shipped Rust + Swift source) |
 | Default checks avoid the real clipboard | `cargo xtask check-clipboard-safety` |
 | In-memory only / wipe | pipeline intermediates in `Zeroizing`; output buffer zeroized in `ss_buffer_free`; covered by `cargo test` |
-| Minimal entitlements | `cargo xtask check-entitlements`; `release.sh dist` signs with and verifies the checked-in entitlements |
+| Minimal entitlements | `cargo xtask check-entitlements`; `cargo xtask check-release-posture`; `release.sh dist` signs executable and bundle with the checked-in entitlements and verifies both signed payloads |
 
 All of these are part of `cargo xtask ci`, which CI runs verbatim.
 
