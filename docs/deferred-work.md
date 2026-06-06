@@ -31,9 +31,10 @@ Nothing here is committed scope; it's a memory aid for the next maintainer.
 
 ## From exec-plan 0004 — extraction, defang/refang, URL cleaning
 
-- ~~**In-menu sort-flag submenu.**~~ Done — `Sort lines`' *descending* /
-  *case-insensitive* flags are now a "Sort options" submenu in the menu (and moved
-  out of the Settings window so each control has one home).
+- ~~**In-menu sort-flag submenu.**~~ Done — sort is a single "Sort lines" submenu in
+  the menu: one entry whose icon shows on/off and whose contents toggle sort plus its
+  *descending* / *case-insensitive* flags (moved out of the Settings window so each
+  control has one home).
 - ~~**Drag-to-reorder pipeline.**~~ Delivered by exec-plan 0005 (canonical pipeline
   ordering): the pipeline runs in a correct/efficient canonical order by default, and
   the Settings window's "Manual order" mode provides drag-to-reorder for exact control.

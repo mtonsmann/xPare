@@ -73,8 +73,9 @@ final class AppModel: ObservableObject {
         settings.operations.contains(op)
     }
 
-    /// Sort-lines toggle. Parameterized (two flags), but surfaced in the menu as a
-    /// plain on/off with sensible defaults; the flags themselves live in Settings.
+    /// Sort-lines on/off. Parameterized (two flags); surfaced as a single "Sort
+    /// lines" submenu in the menu — `Enabled` drives this, the flags drive
+    /// `setSortFlags`. Enabling preserves whatever flags were last set.
     var isSortEnabled: Bool { settings.operations.contains(where: isSort) }
 
     func setSort(enabled: Bool) {
@@ -334,25 +335,31 @@ private struct MenuContent: View {
                 set: { model.setOperation(op, enabled: $0) }
             ))
         }
-        Toggle("Sort lines", isOn: Binding(
-            get: { model.isSortEnabled },
-            set: { model.setSort(enabled: $0) }
-        ))
-        // Sort's two flags as a native submenu next to the on/off toggle (disabled
-        // until sort is on). Bounded-choice params belong in submenus (D12).
-        Menu("Sort options") {
+        // Sort is a SINGLE menu entry: a "Sort lines" submenu whose icon shows the
+        // on/off state (filled checkbox when on) and whose contents both toggle sort
+        // and set its two flags. One line, not two (D12: bounded params as submenus).
+        Menu {
+            Toggle("Enabled", isOn: Binding(
+                get: { model.isSortEnabled },
+                set: { model.setSort(enabled: $0) }
+            ))
+            Divider()
             Toggle("Descending", isOn: Binding(
                 get: { model.sortFlags().descending },
                 set: { model.setSortFlags(descending: $0,
                                           caseInsensitive: model.sortFlags().caseInsensitive) }
             ))
+            .disabled(!model.isSortEnabled)
             Toggle("Case-insensitive", isOn: Binding(
                 get: { model.sortFlags().caseInsensitive },
                 set: { model.setSortFlags(descending: model.sortFlags().descending,
                                           caseInsensitive: $0) }
             ))
+            .disabled(!model.isSortEnabled)
+        } label: {
+            Label("Sort lines",
+                  systemImage: model.isSortEnabled ? "checkmark.square.fill" : "square")
         }
-        .disabled(!model.isSortEnabled)
         Toggle("Defang IOCs", isOn: Binding(
             get: { model.isDefangEnabled },
             set: { model.setDefang(enabled: $0) }
