@@ -89,18 +89,45 @@ pub const TRACKING_PARAMS: &[&str] = &[
 /// folding is exact here and avoids allocating a Unicode-folded copy of attacker
 /// input.
 fn is_tracker_key(key: &str) -> bool {
-    for &entry in TRACKING_PARAMS {
-        if let Some(stem) = entry.strip_suffix('*') {
-            if key.len() >= stem.len()
-                && key.as_bytes()[..stem.len()].eq_ignore_ascii_case(stem.as_bytes())
-            {
-                return true;
-            }
-        } else if key.eq_ignore_ascii_case(entry) {
-            return true;
+    let Some(first) = key.as_bytes().first().map(u8::to_ascii_lowercase) else {
+        return false;
+    };
+    match first {
+        b'_' => {
+            key.eq_ignore_ascii_case("_hsenc")
+                || key.eq_ignore_ascii_case("_hsmi")
+                || key.eq_ignore_ascii_case("_openstat")
         }
+        b'd' => key.eq_ignore_ascii_case("dclid"),
+        b'e' => key.eq_ignore_ascii_case("ef_id"),
+        b'f' => key.eq_ignore_ascii_case("fbclid"),
+        b'g' => {
+            key.eq_ignore_ascii_case("gclid")
+                || key.eq_ignore_ascii_case("gclsrc")
+                || key.eq_ignore_ascii_case("gbraid")
+        }
+        b'h' => key.eq_ignore_ascii_case("hsctatracking"),
+        b'i' => key.eq_ignore_ascii_case("igshid") || key.eq_ignore_ascii_case("icid"),
+        b'm' => {
+            key.eq_ignore_ascii_case("mc_cid")
+                || key.eq_ignore_ascii_case("mc_eid")
+                || key.eq_ignore_ascii_case("msclkid")
+                || key.eq_ignore_ascii_case("mkt_tok")
+        }
+        b'o' => key_has_tracker_prefix(key, "oly_") || key.eq_ignore_ascii_case("oicd"),
+        b's' => key.eq_ignore_ascii_case("s_kwcid"),
+        b't' => key.eq_ignore_ascii_case("twclid") || key.eq_ignore_ascii_case("ttclid"),
+        b'u' => key_has_tracker_prefix(key, "utm_"),
+        b'v' => key.eq_ignore_ascii_case("vero_id") || key.eq_ignore_ascii_case("vero_conv"),
+        b'w' => key.eq_ignore_ascii_case("wbraid") || key.eq_ignore_ascii_case("wickedid"),
+        b'y' => key.eq_ignore_ascii_case("yclid"),
+        _ => false,
     }
-    false
+}
+
+fn key_has_tracker_prefix(key: &str, prefix: &str) -> bool {
+    key.len() >= prefix.len()
+        && key.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes())
 }
 
 /// Clean tracking parameters from URL tokens in `input`. See the module-level frozen

@@ -100,7 +100,8 @@ current tree (see the decision log); they are listed for continuity.
   output, and skips no-op tokens that contain none of the bytes any handled
   indicator needs; `clean_urls` streams URL token reconstruction into the final
   output instead of allocating per-token rebuilt strings and skips no-op prose
-  tokens that cannot expose a URL prefix after punctuation trimming.)*
+  tokens that cannot expose a URL prefix after punctuation trimming; tracker-key
+  checks dispatch by first byte.)*
 - **W6 — Shell responsiveness** (macOS): measure Swift↔Rust copies separately; move
   large transforms off the main actor while keeping pasteboard reads/writes on it;
   re-check `changeCount` before commit; keep `NSPasteboard.general` opt-in. Land the
@@ -403,4 +404,15 @@ let two agents edit the same file family at once.
   (`defang-iocs` 187.1 → 188.9, `refang-iocs` 369.9 → 369.3). No ABI, dependency,
   zeroization, ordering, or privacy posture change; the change removes trim/prefix
   work on ordinary prose tokens and adds no transform-local scratch.
+- 2026-06-06: W5i accepted for `clean_urls`: tracker-key matching now dispatches by
+  the ASCII-lowercased first key byte instead of scanning the full tracker table for
+  every query pair. Exact matching remains case-insensitive, and `utm_*` / `oly_*`
+  remain prefix rules. A focused test iterates `TRACKING_PARAMS` and verifies each
+  configured entry drops through the public transform, plus a regression keeps
+  non-wildcard stems like `utm` / `oly` / `utm-source` as functional params.
+  Same-worktree 128 MiB / 5-sample comparison after W5h:
+  `clean-urls-trackers` 331.9 → 392.0 MiB/s (+18%). Nearby IOC rows stayed within
+  the −3% rule (`defang-iocs` 188.9 → 186.9, `refang-iocs` 369.3 → 369.1). No ABI,
+  dependency, zeroization, ordering, or privacy posture change; the change removes
+  unnecessary tracker-name comparisons and adds no transform-local scratch.
 - _Append one entry per accepted optimization: date, scenario, before→after median._
