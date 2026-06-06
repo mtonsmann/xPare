@@ -38,7 +38,7 @@ invariants.
 |---|---|
 | `core/src/lib.rs` | Crate root. Declares `#![forbid(unsafe_code)]` and the `print*`/`dbg!` denies. Re-exports the public API and holds `CAPABILITIES_JSON` (the static self-description). |
 | `core/src/config.rs` | The `Config` / `Operation` / `CaseKind` schema and `parse_config`. This is the data that crosses the FFI. `CONFIG_VERSION = 1`. |
-| `core/src/pipeline.rs` | `transform(input, config)` — folds the ordered operations over the text. Infallible and deterministic; holds intermediates in `Zeroizing` buffers so clipboard-derived bytes are wiped after use. |
+| `core/src/pipeline.rs` | `transform(input, config)` — folds the ordered operations over the text. Infallible and deterministic; holds intermediates and fused scratch buffers in `Zeroizing` storage so clipboard-derived bytes are wiped after use. |
 | `core/src/ops/mod.rs` | Operations module root; each op is a pure free function. |
 | `core/src/ops/html.rs` | Hand-rolled, pure-safe-Rust HTML→text state machine + curated entity decoder. The rich→plain / script-neutralizing workhorse. |
 | `core/src/ops/markdown.rs` | Markdown→text via `pulldown-cmark`; delegates embedded HTML to `html::strip_html`. |
@@ -167,7 +167,7 @@ therefore CI). Fix the code to satisfy the check; never weaken the check.
 | No log sink in the core | `#![deny(clippy::print_stdout, print_stderr, dbg_macro)]` + no logging deps | `core/src/lib.rs` |
 | No clipboard content logged or persisted | `check-no-content-logging` (scans shipped Rust + Swift source for sink calls on clipboard-derived content) | `xtask` |
 | Default checks avoid the real clipboard | `check-clipboard-safety` (no default Make target depends on a real-clipboard smoke) | `xtask`, `Makefile` |
-| Pipeline intermediates wiped after use | `Zeroizing` buffers in the pipeline + `ss_buffer_free` zeroizes output | `core/src/pipeline.rs`, `core-ffi` |
+| Pipeline intermediates and fused scratch buffers wiped after use | `Zeroizing` buffers in the pipeline + `check-pipeline-zeroization` + `ss_buffer_free` zeroizes output | `core/src/pipeline.rs`, `xtask`, `core-ffi` |
 | Deterministic output | `transform(x,c) == transform(x,c)` property test | `core` tests |
 | Minimal macOS entitlements | checked-in entitlements file + `check-entitlements`; `release.sh dist` requires it for Developer ID signing and verifies the signed payload is still minimal | `xtask`, `shells/macos/` |
 

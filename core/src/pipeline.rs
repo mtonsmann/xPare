@@ -17,7 +17,7 @@
 //! negligible at clipboard scale (sub-MiB), where the absolute time is microseconds
 //! either way. Quantified in `docs/performance.md`.
 
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::config::{Config, Operation, Ordering};
 use crate::ops;
@@ -161,15 +161,16 @@ fn trim_non_newline_whitespace_end(line: &str) -> &str {
 /// `RemoveBlankLines`.
 ///
 /// This extends the two-op line cleanup fusion to the default pipeline's common
-/// three-op suffix. It keeps a reusable per-line collapse scratch buffer rather than
-/// materializing and zeroizing the full collapse output before trimming/removing.
+/// three-op suffix. It keeps a reusable zeroizing per-line collapse scratch buffer
+/// rather than materializing and zeroizing the full collapse output before
+/// trimming/removing.
 fn collapse_trim_then_remove_blank_lines(input: &str) -> String {
     let mut preserve_trailing_newline = input.ends_with('\n');
     let mut out = String::with_capacity(input.len());
     let mut wrote_line = false;
     let mut saw_newline = false;
     let mut start = 0usize;
-    let mut collapsed = Vec::new();
+    let mut collapsed = Zeroizing::new(Vec::new());
     for (i, ch) in input.char_indices() {
         if ch == '\n' {
             saw_newline = true;
@@ -212,7 +213,7 @@ fn push_collapsed_trimmed_nonblank_line(
 }
 
 fn collapse_line<'a>(line: &'a str, scratch: &'a mut Vec<u8>) -> &'a str {
-    scratch.clear();
+    scratch.zeroize();
     scratch.reserve(line.len());
     let mut in_run = false;
     for &byte in line.as_bytes() {

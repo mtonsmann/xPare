@@ -12,6 +12,7 @@
 //!   check-entitlements  assert the macOS entitlements file is minimal
 //!   check-no-content-logging  assert no clipboard content is logged/persisted
 //!   check-clipboard-safety    assert default targets avoid the real clipboard
+//!   check-pipeline-zeroization assert fused core scratch buffers are wiped
 //!   check-c-ffi-surface       assert C/SwiftPM interop stays header-only and tiny
 //!   check-release-posture     assert official signing cannot broaden entitlements
 //!   check-supply-chain  cargo-deny: advisories + licenses + bans + sources
@@ -37,6 +38,7 @@ fn main() -> ExitCode {
         Some("check-entitlements") => report(check_entitlements()),
         Some("check-no-content-logging") => report(check_no_content_logging()),
         Some("check-clipboard-safety") => report(check_clipboard_safety()),
+        Some("check-pipeline-zeroization") => report(check_pipeline_zeroization()),
         Some("check-c-ffi-surface") => report(check_c_ffi_surface()),
         Some("check-release-posture") => report(check_release_posture()),
         Some("check-supply-chain") => report(check_supply_chain()),
@@ -67,6 +69,7 @@ fn usage() {
          \x20 check-entitlements   assert the macOS entitlements file is minimal\n\
          \x20 check-no-content-logging  assert no clipboard content is logged/persisted\n\
          \x20 check-clipboard-safety     assert default targets avoid the real clipboard\n\
+         \x20 check-pipeline-zeroization assert fused core scratch buffers are wiped\n\
          \x20 check-c-ffi-surface        assert C/SwiftPM interop stays header-only and tiny\n\
          \x20 check-release-posture      assert official signing cannot broaden entitlements\n\
          \x20 check-supply-chain   cargo-deny: advisories + licenses + bans + sources\n\
@@ -1164,6 +1167,67 @@ fn check_no_content_logging() -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
+// check-pipeline-zeroization
+// ---------------------------------------------------------------------------
+//
+// Security finding class: fused pipeline scratch buffers can hold
+// clipboard-derived bytes just like full pipeline intermediates. They must be
+// wiped before reuse and on drop; otherwise an optimization silently weakens the
+// documented in-memory hygiene posture.
+
+fn pipeline_path() -> PathBuf {
+    workspace_root().join("core/src/pipeline.rs")
+}
+
+fn validate_pipeline_zeroization(text: &str) -> Result<(), String> {
+    let mut missing = Vec::new();
+    if !text.contains("let mut collapsed = Zeroizing::new(Vec::new());") {
+        missing.push("W3b collapsed-line scratch must be `Zeroizing::new(Vec::new())`");
+    }
+    if !text.contains("scratch.zeroize();") {
+        missing.push("W3b collapsed-line scratch must call `scratch.zeroize()` before reuse");
+    }
+    if text.contains("let mut collapsed = Vec::new();") {
+        missing.push("plain `Vec::new()` scratch reintroduces heap remanence");
+    }
+    if text.contains("scratch.clear();") {
+        missing.push("plain `scratch.clear()` drops logical length without wiping bytes");
+    }
+
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(missing.join("\n  "))
+    }
+}
+
+fn check_pipeline_zeroization() -> Result<(), String> {
+    let path = pipeline_path();
+    let text = std::fs::read_to_string(&path).map_err(|e| {
+        format!(
+            "check-pipeline-zeroization: FAIL — could not read {}: {e}",
+            path.display()
+        )
+    })?;
+
+    validate_pipeline_zeroization(&text).map_err(|e| {
+        format!(
+            "check-pipeline-zeroization: FAIL — core pipeline fused scratch buffers \
+             are not mechanically covered by the wipe posture:\n  {e}\n\
+             \n\
+             Fused transform scratch buffers hold clipboard-derived bytes. Keep them \
+             wrapped in `Zeroizing` and wipe them before reuse; do not replace those \
+             controls with `Vec::new()` or `clear()` just for speed.",
+        )
+    })?;
+
+    println!(
+        "check-pipeline-zeroization: fused pipeline scratch buffers are zeroized before reuse and on drop."
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // check-clipboard-safety
 // ---------------------------------------------------------------------------
 //
@@ -1485,6 +1549,10 @@ fn run_ci() -> ExitCode {
         eprintln!("{msg}");
         return ExitCode::FAILURE;
     }
+    if let Err(msg) = check_pipeline_zeroization() {
+        eprintln!("{msg}");
+        return ExitCode::FAILURE;
+    }
     if let Err(msg) = check_clipboard_safety() {
         eprintln!("{msg}");
         return ExitCode::FAILURE;
@@ -1796,6 +1864,33 @@ mod tests {
             noncomment_lines(text),
             vec!["int accidental_symbol(void) { return 1; }".to_string()]
         );
+    }
+
+    // --- check-pipeline-zeroization ---
+
+    #[test]
+    fn current_pipeline_zeroization_passes() {
+        let text = std::fs::read_to_string(pipeline_path()).unwrap();
+        validate_pipeline_zeroization(&text).unwrap();
+    }
+
+    #[test]
+    fn pipeline_zeroization_rejects_plain_vec_scratch() {
+        let text = std::fs::read_to_string(pipeline_path()).unwrap();
+        let weakened = text.replace(
+            "let mut collapsed = Zeroizing::new(Vec::new());",
+            "let mut collapsed = Vec::new();",
+        );
+        let err = validate_pipeline_zeroization(&weakened).unwrap_err();
+        assert!(err.contains("plain `Vec::new()`"), "got: {err}");
+    }
+
+    #[test]
+    fn pipeline_zeroization_rejects_clear_without_wipe() {
+        let text = std::fs::read_to_string(pipeline_path()).unwrap();
+        let weakened = text.replace("scratch.zeroize();", "scratch.clear();");
+        let err = validate_pipeline_zeroization(&weakened).unwrap_err();
+        assert!(err.contains("plain `scratch.clear()`"), "got: {err}");
     }
 
     // --- check-no-content-logging ---

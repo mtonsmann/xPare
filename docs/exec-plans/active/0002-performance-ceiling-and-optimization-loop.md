@@ -309,15 +309,28 @@ let two agents edit the same file family at once.
   No ABI, dependency, zeroization, ordering, or privacy posture change.
 - 2026-06-06: W3b accepted for `CollapseWhitespace` → `TrimTrailingWhitespace` →
   `RemoveBlankLines` fusion: the pipeline executor now consumes the common adjacent
-  default-pipeline suffix as one private pass, reusing a per-line collapse scratch
-  buffer instead of materializing and zeroizing the full collapse output before line
-  cleanup. A proptest equivalence check compares fused transform output with the
-  public unfused ops for both `as_given` and canonical ordering. Same-branch
+  default-pipeline suffix as one private pass, reusing a per-line zeroizing collapse
+  scratch buffer instead of materializing and zeroizing the full collapse output
+  before line cleanup. A proptest equivalence check compares fused transform output
+  with the public unfused ops for both `as_given` and canonical ordering. Same-branch
   128 MiB / 5-sample comparison after W3: `default-log` 142.2 → 157.8 MiB/s
   (+11%), `full-menu-log` 122.7 → 133.4 (+8.7%), `lossy-utf8-log`
   142.2 → 158.2 (+11%), `full-menu-without-markdown` 160.4 → 178.2 (+11%),
   and `full-menu-without-dedupe` 112.4 → 122.2 (+8.7%). No ABI, dependency,
-  zeroization, ordering, or privacy posture change.
+  ordering, or privacy posture change.
+- 2026-06-06: Security review closure for the W3b fused-scratch zeroization finding:
+  the issue class is fused core scratch buffers holding clipboard-derived bytes
+  outside the pipeline's wipe posture. `collapse_trim_then_remove_blank_lines` now
+  wraps the collapsed-line scratch in `Zeroizing<Vec<u8>>` and `collapse_line`
+  zeroizes it before reuse; `cargo xtask check-pipeline-zeroization` blocks a
+  regression to plain `Vec::new()` or `scratch.clear()`. Same-worktree 128 MiB /
+  5-sample before/after on the rebased branch: `default-log` 195.5 → 160.6 MiB/s
+  (−18%), `full-menu-log` 159.9 → 136.0 (−15%), `lossy-utf8-log`
+  195.5 → 140.7 (−28%), `full-menu-without-markdown` 229.6 → 191.5 (−17%),
+  `full-menu-without-dedupe` 143.9 → 124.2 (−14%), and
+  `full-menu-without-case` 159.7 → 135.9 (−15%). This is an intentional privacy
+  posture repair, not an optimization regression to hide; `docs/performance.md`
+  now records the repaired baseline.
 - 2026-06-06: Rejected a private `DedupeLines` → `UnwrapLines` →
   `ChangeCase(Lower)` full-menu-tail fusion after equivalence proptests passed but
   the 128 MiB / 5-sample throughput run regressed `full-menu-log`
