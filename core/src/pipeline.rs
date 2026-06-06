@@ -73,6 +73,14 @@ pub fn transform(input: &str, config: &Config) -> String {
 /// Dispatch one pipeline step, optionally fusing adjacent operations whose combined
 /// behavior is byte-for-byte identical but avoids a zeroized intermediate.
 fn apply_next(text: &str, ops: &[&Operation]) -> (String, usize) {
+    if ops.len() >= 4
+        && matches!(ops[0], Operation::CollapseWhitespace)
+        && matches!(ops[1], Operation::TrimTrailingWhitespace)
+        && matches!(ops[2], Operation::RemoveBlankLines)
+        && matches!(ops[3], Operation::DedupeLines)
+    {
+        return (collapse_trim_remove_blank_then_dedupe_lines(text), 4);
+    }
     if ops.len() >= 3
         && matches!(ops[0], Operation::CollapseWhitespace)
         && matches!(ops[1], Operation::TrimTrailingWhitespace)
@@ -224,6 +232,20 @@ fn push_nonblank_line(out: &mut String, line: &str, wrote_line: &mut bool) {
 
 fn trim_non_newline_whitespace_end(line: &str) -> &str {
     line.trim_end_matches(|c: char| c.is_whitespace() && c != '\n')
+}
+
+/// Fused `CollapseWhitespace`, `TrimTrailingWhitespace`, `RemoveBlankLines`, then
+/// `DedupeLines`.
+///
+/// The borrowed fast path is exact only when collapse would be identity for the
+/// whole input. Otherwise, keep the existing zeroized cleaned-line intermediate
+/// before dedupe so collapsed dedupe keys never require non-zeroized owned scratch.
+fn collapse_trim_remove_blank_then_dedupe_lines(input: &str) -> String {
+    if !needs_ascii_collapse(input) {
+        return trim_remove_blank_then_dedupe_lines(input);
+    }
+    let cleaned = Zeroizing::new(collapse_trim_then_remove_blank_lines(input));
+    ops::lines::dedupe_lines(&cleaned)
 }
 
 /// Fused `CollapseWhitespace` followed by `TrimTrailingWhitespace` and

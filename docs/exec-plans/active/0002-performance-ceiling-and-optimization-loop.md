@@ -84,6 +84,9 @@ current tree (see the decision log); they are listed for continuity.
   collapse/trim/blank fusion borrows already-collapse-normalized lines instead of
   copying them through scratch; adjacent `TrimTrailingWhitespace` →
   `RemoveBlankLines` → `DedupeLines` is fused without owning dedupe keys.)*
+  `RemoveBlankLines` → `DedupeLines` is fused without owning dedupe keys, and the
+  four-op `CollapseWhitespace` → `TrimTrailingWhitespace` → `RemoveBlankLines` →
+  `DedupeLines` sequence uses that borrowed path when collapse is globally identity.)*
 - **W4 — Byte-oriented fast paths.** ASCII-specialized loops falling back to the
   Unicode-safe path on non-ASCII; byte scans where char boundaries are irrelevant.
   Consider `memchr` only if local benches show a clear gain **and** dependency
@@ -493,4 +496,17 @@ let two agents edit the same file family at once.
   nudged upward (`default-log` 290.9 → 294.6, `full-menu-log` 226.7 → 230.2), so
   treat this as a decomposition-row win rather than a new default-pipeline ceiling.
   No ABI, dependency, zeroization, ordering, privacy, or determinism change.
+- 2026-06-06: W3e accepted for the common full-menu suffix
+  `CollapseWhitespace` → `TrimTrailingWhitespace` → `RemoveBlankLines` →
+  `DedupeLines`: when a whole-input scan proves collapse would be identity, the
+  planner takes the borrowed W3d trim/blank/dedupe path and skips the cleaned
+  intermediate before dedupe. When collapse is required, it falls back to the W3c
+  cleaned output wrapped in `Zeroizing` before calling public `dedupe_lines`, so
+  collapsed dedupe keys never require non-zeroized owned scratch. A fused-vs-public
+  property covers as-given and canonical order. Parent W3d commit versus branch
+  same-session 128 MiB / 5-sample comparison: `full-menu-log` 211.5 → 245.4 MiB/s
+  (+16%), `full-menu-without-markdown` 352.0 → 454.3 (+29%), and
+  `full-menu-without-case` 215.2 → 258.0 (+27%). `default-log` has no dedupe and
+  is not the target for this fusion. No ABI, dependency, zeroization, ordering,
+  privacy, or determinism change.
 - _Append one entry per accepted optimization: date, scenario, before→after median._

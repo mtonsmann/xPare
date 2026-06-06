@@ -51,7 +51,8 @@ W1d borrowed first-pass pipeline input, W2c streaming `unwrap_lines`, plus W3
 `TrimTrailingWhitespace` → `RemoveBlankLines` fusion with boundary-zeroized scratch
 and W3c borrowed-line fast path for already-collapse-normalized lines (see the cost
 section below), plus W3d `TrimTrailingWhitespace` → `RemoveBlankLines` →
-`DedupeLines` fusion.
+`DedupeLines` fusion and W3e guarded `CollapseWhitespace` →
+`TrimTrailingWhitespace` → `RemoveBlankLines` → `DedupeLines` fusion.
 Re-measure on each machine; do not assume another machine's numbers. Read each
 transform row relative to this machine's own roofline controls (byte-copy is noisy at
 this size and was ≈ 43 GiB/s in this run; byte-scan is vectorized under the
@@ -60,33 +61,33 @@ write traffic).
 
 | Scenario | Median | Throughput |
 |----------|-------:|-----------:|
-| roofline-byte-scan | 0.003s | 45603.0 MiB/s |
-| roofline-byte-copy | 0.003s | 43928.4 MiB/s |
-| strip-html-plain (no `<`/`&`) | 0.041s | 3089.7 MiB/s |
-| strip-html-heavy | 0.229s | 559.0 MiB/s |
-| strip-html-sparse-log | 0.047s | 2746.2 MiB/s |
-| strip-markdown-heavy | 0.800s | 160.0 MiB/s |
-| strip-markdown-sparse-log | 0.117s | 1096.0 MiB/s |
-| collapse-whitespace | 0.100s | 1277.0 MiB/s |
-| trim-trailing | 0.102s | 1254.9 MiB/s |
-| remove-blank-lines | 0.050s | 2570.2 MiB/s |
-| unwrap-lines | 0.044s | 2880.7 MiB/s |
-| case-lower-ascii | 0.010s | 13219.1 MiB/s |
-| case-sentence-unicode | 0.398s | 321.6 MiB/s |
-| dedupe-lines-repeated | 0.075s | 1712.1 MiB/s |
-| dedupe-lines-unique | 0.075s | 1702.8 MiB/s |
-| sort-lines | 0.123s | 1039.7 MiB/s |
-| defang-iocs (URLs/emails/IPs/domains; output grows ~15%) | 0.484s | 264.4 MiB/s |
-| refang-iocs (input is the defanged buffer) | 0.111s | 1333.5 MiB/s |
-| clean-urls-trackers | 0.228s | 560.3 MiB/s |
-| html-markdown-trim-log | 0.384s | 333.7 MiB/s |
-| full-menu-without-markdown | 0.352s | 363.9 MiB/s |
-| full-menu-without-collapse | 0.440s | 290.8 MiB/s |
-| full-menu-without-dedupe | 0.602s | 212.8 MiB/s |
-| full-menu-without-case | 0.553s | 231.5 MiB/s |
-| **default-log** (html+md+collapse+trim+blank) | 0.434s | **294.6 MiB/s** |
-| **full-menu-log** (+dedupe+unwrap+lowercase) | 0.556s | **230.2 MiB/s** |
-| **lossy-utf8-log** (invalid UTF-8, default pipeline) | 0.438s | **293.1 MiB/s** |
+| roofline-byte-scan | 0.002s | 60609.7 MiB/s |
+| roofline-byte-copy | 0.003s | 42739.1 MiB/s |
+| strip-html-plain (no `<`/`&`) | 0.049s | 2638.8 MiB/s |
+| strip-html-heavy | 0.252s | 507.2 MiB/s |
+| strip-html-sparse-log | 0.048s | 2659.0 MiB/s |
+| strip-markdown-heavy | 0.699s | 183.2 MiB/s |
+| strip-markdown-sparse-log | 0.121s | 1054.7 MiB/s |
+| collapse-whitespace | 0.120s | 1068.7 MiB/s |
+| trim-trailing | 0.099s | 1295.5 MiB/s |
+| remove-blank-lines | 0.050s | 2570.7 MiB/s |
+| unwrap-lines | 0.047s | 2750.6 MiB/s |
+| case-lower-ascii | 0.010s | 13095.2 MiB/s |
+| case-sentence-unicode | 0.403s | 317.8 MiB/s |
+| dedupe-lines-repeated | 0.074s | 1730.6 MiB/s |
+| dedupe-lines-unique | 0.078s | 1651.1 MiB/s |
+| sort-lines | 0.122s | 1048.9 MiB/s |
+| defang-iocs (URLs/emails/IPs/domains; output grows ~15%) | 0.511s | 250.7 MiB/s |
+| refang-iocs (input is the defanged buffer) | 0.113s | 1303.0 MiB/s |
+| clean-urls-trackers | 0.241s | 531.1 MiB/s |
+| html-markdown-trim-log | 0.390s | 328.6 MiB/s |
+| full-menu-without-markdown | 0.282s | 454.3 MiB/s |
+| full-menu-without-collapse | 0.445s | 287.9 MiB/s |
+| full-menu-without-dedupe | 0.638s | 200.6 MiB/s |
+| full-menu-without-case | 0.496s | 258.0 MiB/s |
+| **default-log** (html+md+collapse+trim+blank) | 0.470s | **272.2 MiB/s** |
+| **full-menu-log** (+dedupe+unwrap+lowercase) | 0.522s | **245.4 MiB/s** |
+| **lossy-utf8-log** (invalid UTF-8, default pipeline) | 0.497s | **258.1 MiB/s** |
 
 Slow lanes (optimization targets): the remaining slow single-op cluster is heavy
 Markdown stripping and defang. Marker-free HTML is no longer in that slow cluster
