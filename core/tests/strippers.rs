@@ -239,6 +239,20 @@ mod markdown_regression {
     }
 
     #[test]
+    fn structural_edge_whitespace_is_trimmed() {
+        assert_eq!(strip_markdown("\n\n# Title\n\n"), "Title");
+        assert_eq!(strip_markdown("\n\n- one\n- two\n\n"), "one\ntwo");
+    }
+
+    #[test]
+    fn non_ascii_edge_whitespace_is_preserved() {
+        assert_eq!(
+            strip_markdown("\u{00a0}hello\u{00a0}"),
+            "\u{00a0}hello\u{00a0}"
+        );
+    }
+
+    #[test]
     fn link_keeps_text_drops_url() {
         assert_eq!(
             strip_markdown("see [the docs](https://example.com) now"),

@@ -41,55 +41,56 @@ pipeline intermediate zeroization** and the W1 byte-oriented
 `collapse_whitespace` path, W4 ASCII Upper/Lower fast paths, and W5b IOC marker
 dispatch plus W5c pre-sized line dedupe containers and W5d defang allocation/marker
 guard cleanup, W2 output pre-sizing for shared line joins, and W4b streaming
-sentence-case scanning, plus W2b borrowed-slice trailing trim (see the cost section
-below). Re-measure on each machine; do not assume another machine's numbers. Read
-each transform row relative to this machine's own roofline controls (byte-copy ≈ 43
+sentence-case scanning, W2b borrowed-slice trailing trim, and W1b Markdown output
+bookkeeping/normalization cleanup (see the cost section below). Re-measure on each
+machine; do not assume another machine's numbers. Read each transform row relative
+to this machine's own roofline controls (byte-copy ≈ 36
 GiB/s in this run is the practical memory-traffic anchor, though it is noisy at this
 size; byte-scan is lower because the shipped release profile is `opt-level = "s"` —
 size-optimized — leaving the scalar scan loop unvectorized).
 
 | Scenario | Median | Throughput |
 |----------|-------:|-----------:|
-| roofline-byte-scan | 0.033s | 3840.3 MiB/s |
-| roofline-byte-copy | 0.003s | 43530.7 MiB/s |
-| strip-html-plain (no `<`/`&`) | 0.306s | 418.3 MiB/s |
-| strip-html-heavy | 0.394s | 325.2 MiB/s |
-| strip-html-sparse-log | 0.313s | 409.4 MiB/s |
-| strip-markdown-heavy | 0.962s | 133.1 MiB/s |
-| strip-markdown-sparse-log | 0.354s | 361.4 MiB/s |
-| collapse-whitespace | 0.201s | 635.8 MiB/s |
-| trim-trailing | 0.229s | 557.9 MiB/s |
-| remove-blank-lines | 0.150s | 855.6 MiB/s |
-| unwrap-lines | 0.185s | 690.2 MiB/s |
-| case-lower-ascii | 0.109s | 1172.1 MiB/s |
-| case-sentence-unicode | 0.544s | 235.3 MiB/s |
-| dedupe-lines-repeated | 0.169s | 758.8 MiB/s |
-| dedupe-lines-unique | 0.177s | 721.5 MiB/s |
-| sort-lines | 0.218s | 588.0 MiB/s |
-| defang-iocs (URLs/emails/IPs/domains; output grows ~15%) | 1.034s | 123.7 MiB/s |
-| refang-iocs (input is the defanged buffer) | 0.400s | 369.7 MiB/s |
-| clean-urls-trackers | 0.476s | 268.8 MiB/s |
-| html-markdown-trim-log | 0.805s | 159.0 MiB/s |
-| full-menu-without-markdown | 0.956s | 133.9 MiB/s |
-| full-menu-without-collapse | 1.089s | 117.6 MiB/s |
-| full-menu-without-dedupe | 1.344s | 95.3 MiB/s |
-| full-menu-without-case | 1.254s | 102.1 MiB/s |
-| **default-log** (html+md+collapse+trim+blank) | 1.107s | **115.7 MiB/s** |
-| **full-menu-log** (+dedupe+unwrap+lowercase) | 1.259s | **101.6 MiB/s** |
-| **lossy-utf8-log** (invalid UTF-8, default pipeline) | 1.111s | **115.4 MiB/s** |
+| roofline-byte-scan | 0.032s | 4042.3 MiB/s |
+| roofline-byte-copy | 0.004s | 36132.7 MiB/s |
+| strip-html-plain (no `<`/`&`) | 0.292s | 438.2 MiB/s |
+| strip-html-heavy | 0.374s | 342.0 MiB/s |
+| strip-html-sparse-log | 0.297s | 431.0 MiB/s |
+| strip-markdown-heavy | 0.956s | 133.9 MiB/s |
+| strip-markdown-sparse-log | 0.217s | 591.1 MiB/s |
+| collapse-whitespace | 0.195s | 656.4 MiB/s |
+| trim-trailing | 0.222s | 576.0 MiB/s |
+| remove-blank-lines | 0.150s | 852.6 MiB/s |
+| unwrap-lines | 0.181s | 708.5 MiB/s |
+| case-lower-ascii | 0.107s | 1198.4 MiB/s |
+| case-sentence-unicode | 0.548s | 233.7 MiB/s |
+| dedupe-lines-repeated | 0.167s | 767.2 MiB/s |
+| dedupe-lines-unique | 0.174s | 737.3 MiB/s |
+| sort-lines | 0.219s | 584.7 MiB/s |
+| defang-iocs (URLs/emails/IPs/domains; output grows ~15%) | 1.009s | 126.9 MiB/s |
+| refang-iocs (input is the defanged buffer) | 0.388s | 381.4 MiB/s |
+| clean-urls-trackers | 0.468s | 273.6 MiB/s |
+| html-markdown-trim-log | 0.732s | 174.9 MiB/s |
+| full-menu-without-markdown | 0.938s | 136.5 MiB/s |
+| full-menu-without-collapse | 1.011s | 126.7 MiB/s |
+| full-menu-without-dedupe | 1.298s | 98.6 MiB/s |
+| full-menu-without-case | 1.180s | 108.4 MiB/s |
+| **default-log** (html+md+collapse+trim+blank) | 1.026s | **124.7 MiB/s** |
+| **full-menu-log** (+dedupe+unwrap+lowercase) | 1.177s | **108.8 MiB/s** |
+| **lossy-utf8-log** (invalid UTF-8, default pipeline) | 1.036s | **123.8 MiB/s** |
 
 Slow lanes (optimization targets): the remaining slow single-op cluster is heavy
-Markdown stripping and defang. Defang still emits multi-character bracket markers
-around every indicator character and grows output ~15%, but W5d removed much of the
-avoidable token-level overhead. Unicode sentence-case is no longer in the same slow
-cluster after W4b's streaming scanner, which avoids the temporary lowercase buffer
-and per-character uppercase allocations while preserving Unicode expansion. Refang
-is no longer in the slow lane after W5b's first-byte marker dispatch, and unique-line
-dedupe is no longer in that cluster after W5c's pre-sized containers. End-to-end
-clipboard pipelines (which don't include the IOC ops) sit at ~99–112 MiB/s in this
-run. The decomposition rows show the lowercase/dedupe/line tail still matters on
-this generated corpus, but not nearly as sharply as before W4/W5c and the W2 shared
-join/trim pre-sizing and slice rewrites.
+Markdown stripping and defang. Sparse/log-like Markdown is no longer in that slow
+cluster after W1b's suffix-based newline bookkeeping and in-place edge trim, but
+heavy Markdown still pays parser/event cost. Defang still emits multi-character
+bracket markers around every indicator character and grows output ~15%, but W5d
+removed much of the avoidable token-level overhead. Unicode sentence-case is no
+longer in the same slow cluster after W4b's streaming scanner, which avoids the
+temporary lowercase buffer and per-character uppercase allocations while preserving
+Unicode expansion. End-to-end clipboard pipelines (which don't include the IOC ops)
+sit at ~109–125 MiB/s in this run. The decomposition rows show the
+lowercase/dedupe/line tail still matters on this generated corpus, but not nearly as
+sharply as before W4/W5c and the W2 shared join/trim pre-sizing and slice rewrites.
 (For reference,
 the upstream FormatStripper track reported ~177/131 MiB/s default/full-menu on an
 Apple M4 — a different machine, codebase, and zeroization posture, so not a

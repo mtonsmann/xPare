@@ -65,7 +65,8 @@ current tree (see the decision log); they are listed for continuity.
   guarded by golden tests so output stays byte-for-byte identical. *(Partially
   banked: `collapse_whitespace` has a byte-oriented fast path; `strip_html` remains
   open because its newline-collapsing and document-trim semantics make a plaintext
-  shortcut correctness-sensitive.)*
+  shortcut correctness-sensitive; `strip_markdown` suffix-scans newline bookkeeping
+  and trims final output in place.)*
 - **W2 — Stream line ops.** Rewrite `trim_trailing_whitespace`, `remove_blank_lines`,
   `unwrap_lines`, and the line-list ops to stream into one output buffer instead of
   `collect`→`join`. *(Partially banked: `sort_lines` no longer allocates a per-line
@@ -280,5 +281,17 @@ let two agents edit the same file family at once.
   486.9 → 557.9 MiB/s (+14.6%), `html-markdown-trim-log` 152.6 → 159.0 (+4.2%),
   `default-log` 112.2 → 115.7 (+3.1%), `full-menu-log` 98.7 → 101.6 (+2.9%),
   and `lossy-utf8-log` 111.8 → 115.4 (+3.2%). No ABI, dependency, zeroization,
+  ordering, or privacy posture change.
+- 2026-06-06: W1b accepted for Markdown output bookkeeping: `MarkdownOutput::push_str`
+  now derives the newline-collapse state from the emitted text suffix instead of
+  scanning every byte of ordinary text, leading structural newlines are skipped when
+  the output is still empty, and final edge trimming mutates the output `String`
+  in place while preserving the exact ASCII trim set. Focused regressions pin
+  structural edge trimming and NBSP edge preservation. Same-branch 128 MiB /
+  5-sample comparison after W2b: `strip-markdown-sparse-log` 361.4 → 591.1 MiB/s
+  (+64%), `strip-markdown-heavy` 133.1 → 133.9 (+0.6%),
+  `html-markdown-trim-log` 159.0 → 174.9 (+10.0%), `default-log`
+  115.7 → 124.7 (+7.8%), `full-menu-log` 101.6 → 108.8 (+7.1%), and
+  `lossy-utf8-log` 115.4 → 123.8 (+7.3%). No ABI, dependency, zeroization,
   ordering, or privacy posture change.
 - _Append one entry per accepted optimization: date, scenario, before→after median._

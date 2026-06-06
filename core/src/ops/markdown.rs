@@ -192,9 +192,7 @@ impl MarkdownOutput {
 
     fn push_str(&mut self, value: &str) {
         self.text.push_str(value);
-        for &b in value.as_bytes() {
-            self.observe_byte(b);
-        }
+        self.observe_str_suffix(value);
     }
 
     fn push_char(&mut self, value: char) {
@@ -207,6 +205,9 @@ impl MarkdownOutput {
     }
 
     fn push_newline(&mut self) {
+        if self.text.is_empty() {
+            return;
+        }
         if self.trailing_newlines < 2 {
             self.text.push('\n');
             self.observe_newline();
@@ -217,12 +218,25 @@ impl MarkdownOutput {
         self.text
     }
 
-    fn observe_byte(&mut self, byte: u8) {
-        match byte {
-            b'\n' => self.observe_newline(),
-            b' ' | b'\t' => {}
-            _ => self.trailing_newlines = 0,
+    fn observe_str_suffix(&mut self, value: &str) {
+        let mut suffix_newlines = 0u8;
+        for &byte in value.as_bytes().iter().rev() {
+            match byte {
+                b' ' | b'\t' => {}
+                b'\n' => {
+                    suffix_newlines = (suffix_newlines + 1).min(2);
+                    if suffix_newlines == 2 {
+                        self.trailing_newlines = 2;
+                        return;
+                    }
+                }
+                _ => {
+                    self.trailing_newlines = suffix_newlines;
+                    return;
+                }
+            }
         }
+        self.trailing_newlines = (self.trailing_newlines + suffix_newlines).min(2);
     }
 
     fn observe_newline(&mut self) {
@@ -236,13 +250,35 @@ fn push_newline(out: &mut MarkdownOutput) {
     out.push_newline();
 }
 
-/// Trim leading/trailing whitespace of the whole document. A single allocation only
-/// when trimming actually changes the string.
-fn normalize(s: String) -> String {
-    let trimmed = s.trim_matches(|c: char| c == '\n' || c == ' ' || c == '\t' || c == '\r');
-    if trimmed.len() == s.len() {
-        s
-    } else {
-        trimmed.to_string()
+/// Trim leading/trailing ASCII whitespace of the whole document in place.
+fn normalize(mut s: String) -> String {
+    let (start, end) = {
+        let bytes = s.as_bytes();
+        let start = match bytes.iter().position(|&b| !is_edge_trim_byte(b)) {
+            Some(pos) => pos,
+            None => {
+                s.clear();
+                return s;
+            }
+        };
+        let end = match bytes.iter().rposition(|&b| !is_edge_trim_byte(b)) {
+            Some(pos) => pos + 1,
+            None => {
+                s.clear();
+                return s;
+            }
+        };
+        (start, end)
+    };
+    if end < s.len() {
+        s.truncate(end);
     }
+    if start > 0 {
+        s.drain(..start);
+    }
+    s
+}
+
+fn is_edge_trim_byte(byte: u8) -> bool {
+    matches!(byte, b'\n' | b' ' | b'\t' | b'\r')
 }
