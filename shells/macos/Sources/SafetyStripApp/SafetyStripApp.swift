@@ -357,8 +357,13 @@ private struct MenuContent: View {
             ))
             .disabled(!model.isSortEnabled)
         } label: {
-            Label("Sort lines",
-                  systemImage: model.isSortEnabled ? "checkmark.square.fill" : "square")
+            // Show a plain checkmark when on (matching the sibling toggles' ✓) and no
+            // glyph when off, instead of a heavy checkbox symbol that clashes with them.
+            if model.isSortEnabled {
+                Label("Sort lines", systemImage: "checkmark")
+            } else {
+                Text("Sort lines")
+            }
         }
         Toggle("Defang IOCs", isOn: Binding(
             get: { model.isDefangEnabled },
