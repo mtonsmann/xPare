@@ -12,7 +12,7 @@
 //!   check-entitlements  assert the macOS entitlements file is minimal
 //!   check-no-content-logging  assert no clipboard content is logged/persisted
 //!   check-clipboard-safety    assert default targets avoid the real clipboard
-//!   check-pipeline-zeroization assert fused core scratch buffers are wiped
+//!   check-pipeline-zeroization assert fused core scratch storage is wiped before release
 //!   check-c-ffi-surface       assert C/SwiftPM interop stays header-only and tiny
 //!   check-release-posture     assert official signing cannot broaden entitlements
 //!   check-supply-chain  cargo-deny: advisories + licenses + bans + sources
@@ -69,7 +69,7 @@ fn usage() {
          \x20 check-entitlements   assert the macOS entitlements file is minimal\n\
          \x20 check-no-content-logging  assert no clipboard content is logged/persisted\n\
          \x20 check-clipboard-safety     assert default targets avoid the real clipboard\n\
-         \x20 check-pipeline-zeroization assert fused core scratch buffers are wiped\n\
+         \x20 check-pipeline-zeroization assert fused core scratch storage is wiped before release\n\
          \x20 check-c-ffi-surface        assert C/SwiftPM interop stays header-only and tiny\n\
          \x20 check-release-posture      assert official signing cannot broaden entitlements\n\
          \x20 check-supply-chain   cargo-deny: advisories + licenses + bans + sources\n\
@@ -1172,8 +1172,8 @@ fn check_no_content_logging() -> Result<(), String> {
 //
 // Security finding class: fused pipeline scratch buffers can hold
 // clipboard-derived bytes just like full pipeline intermediates. They must be
-// wiped before reuse and on drop; otherwise an optimization silently weakens the
-// documented in-memory hygiene posture.
+// wiped before their storage is released or reallocated and on drop; otherwise an
+// optimization silently weakens the documented in-memory hygiene posture.
 
 fn pipeline_path() -> PathBuf {
     workspace_root().join("core/src/pipeline.rs")
@@ -1184,14 +1184,23 @@ fn validate_pipeline_zeroization(text: &str) -> Result<(), String> {
     if !text.contains("let mut collapsed = Zeroizing::new(Vec::new());") {
         missing.push("W3b collapsed-line scratch must be `Zeroizing::new(Vec::new())`");
     }
+    if !text.contains("fn prepare_collapse_scratch(scratch: &mut Vec<u8>, needed: usize)") {
+        missing.push("W3b collapsed-line scratch must use the prepare helper");
+    }
+    if !text.contains("if needed > scratch.capacity() {") {
+        missing.push("W3b collapsed-line scratch must check capacity before growth");
+    }
     if !text.contains("scratch.zeroize();") {
-        missing.push("W3b collapsed-line scratch must call `scratch.zeroize()` before reuse");
+        missing.push("W3b collapsed-line scratch must call `scratch.zeroize()` before growth");
+    }
+    if !text.contains("prepare_collapse_scratch(scratch, line.len());") {
+        missing.push("W3b collapse must prepare scratch before writing clipboard-derived bytes");
+    }
+    if !text.contains("scratch.reserve(needed);") {
+        missing.push("W3b collapsed-line scratch must reserve only after the growth wipe check");
     }
     if text.contains("let mut collapsed = Vec::new();") {
         missing.push("plain `Vec::new()` scratch reintroduces heap remanence");
-    }
-    if text.contains("scratch.clear();") {
-        missing.push("plain `scratch.clear()` drops logical length without wiping bytes");
     }
 
     if missing.is_empty() {
@@ -1216,13 +1225,14 @@ fn check_pipeline_zeroization() -> Result<(), String> {
              are not mechanically covered by the wipe posture:\n  {e}\n\
              \n\
              Fused transform scratch buffers hold clipboard-derived bytes. Keep them \
-             wrapped in `Zeroizing` and wipe them before reuse; do not replace those \
-             controls with `Vec::new()` or `clear()` just for speed.",
+             wrapped in `Zeroizing` and wipe them before capacity growth can release \
+             old storage; allocation-preserving reuse may use `clear()` because drop \
+             still wipes the transform-owned allocation.",
         )
     })?;
 
     println!(
-        "check-pipeline-zeroization: fused pipeline scratch buffers are zeroized before reuse and on drop."
+        "check-pipeline-zeroization: fused pipeline scratch storage is zeroized before release and on drop."
     );
     Ok(())
 }
@@ -1890,7 +1900,18 @@ mod tests {
         let text = std::fs::read_to_string(pipeline_path()).unwrap();
         let weakened = text.replace("scratch.zeroize();", "scratch.clear();");
         let err = validate_pipeline_zeroization(&weakened).unwrap_err();
-        assert!(err.contains("plain `scratch.clear()`"), "got: {err}");
+        assert!(err.contains("scratch.zeroize()"), "got: {err}");
+    }
+
+    #[test]
+    fn pipeline_zeroization_rejects_missing_growth_guard() {
+        let text = std::fs::read_to_string(pipeline_path()).unwrap();
+        let weakened = text.replace(
+            "if needed > scratch.capacity() {",
+            "if false { // missing capacity-growth guard",
+        );
+        let err = validate_pipeline_zeroization(&weakened).unwrap_err();
+        assert!(err.contains("check capacity"), "got: {err}");
     }
 
     // --- check-no-content-logging ---

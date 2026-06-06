@@ -9,13 +9,15 @@
 //! The input and every intermediate are clipboard-derived and may hold secrets
 //! (passwords, tokens). Each intermediate is held in a [`Zeroizing`] buffer so its
 //! bytes are wiped from the heap as soon as the next pass supersedes it, rather than
-//! lingering in freed memory until the allocator happens to reuse it. The final
-//! result is returned directly (the caller owns it, so no extra copy is made); the
-//! `core-ffi` shim zeroizes that output buffer when the caller frees it. So every
-//! buffer except the caller-owned result is wiped after use. The measurable cost is
-//! the per-intermediate wipe — tens of percent of throughput on 100+ MiB inputs, but
-//! negligible at clipboard scale (sub-MiB), where the absolute time is microseconds
-//! either way. Quantified in `docs/performance.md`.
+//! lingering in freed memory until the allocator happens to reuse it. Transform-local
+//! scratch buffers are wiped on drop and before capacity growth could release old
+//! storage; they are not wiped on every reuse while the allocation remains owned by
+//! the transform. The final result is returned directly (the caller owns it, so no
+//! extra copy is made); the `core-ffi` shim zeroizes that output buffer when the
+//! caller frees it. So every buffer except the caller-owned result is wiped after
+//! use. The measurable cost is the per-intermediate wipe — tens of percent of
+//! throughput on 100+ MiB inputs, but negligible at clipboard scale (sub-MiB), where
+//! the absolute time is microseconds either way. Quantified in `docs/performance.md`.
 
 use zeroize::{Zeroize, Zeroizing};
 
@@ -161,9 +163,9 @@ fn trim_non_newline_whitespace_end(line: &str) -> &str {
 /// `RemoveBlankLines`.
 ///
 /// This extends the two-op line cleanup fusion to the default pipeline's common
-/// three-op suffix. It keeps a reusable zeroizing per-line collapse scratch buffer
-/// rather than materializing and zeroizing the full collapse output before
-/// trimming/removing.
+/// three-op suffix. It keeps a reusable per-line collapse scratch allocation inside
+/// `Zeroizing` storage rather than materializing and zeroizing the full collapse
+/// output before trimming/removing.
 fn collapse_trim_then_remove_blank_lines(input: &str) -> String {
     let mut preserve_trailing_newline = input.ends_with('\n');
     let mut out = String::with_capacity(input.len());
@@ -212,9 +214,22 @@ fn push_collapsed_trimmed_nonblank_line(
     push_nonblank_line(out, trimmed, wrote_line);
 }
 
+fn prepare_collapse_scratch(scratch: &mut Vec<u8>, needed: usize) {
+    if needed > scratch.capacity() {
+        // Capacity growth can free the old allocation. Wipe the current allocation
+        // first; otherwise stale clipboard-derived bytes could be left behind in
+        // allocator-owned memory.
+        scratch.zeroize();
+    } else {
+        // The old bytes remain inside this transform-owned allocation and are wiped
+        // by the surrounding `Zeroizing<Vec<u8>>` on drop.
+        scratch.clear();
+    }
+    scratch.reserve(needed);
+}
+
 fn collapse_line<'a>(line: &'a str, scratch: &'a mut Vec<u8>) -> &'a str {
-    scratch.zeroize();
-    scratch.reserve(line.len());
+    prepare_collapse_scratch(scratch, line.len());
     let mut in_run = false;
     for &byte in line.as_bytes() {
         if byte == b' ' || byte == b'\t' {

@@ -309,10 +309,11 @@ let two agents edit the same file family at once.
   No ABI, dependency, zeroization, ordering, or privacy posture change.
 - 2026-06-06: W3b accepted for `CollapseWhitespace` → `TrimTrailingWhitespace` →
   `RemoveBlankLines` fusion: the pipeline executor now consumes the common adjacent
-  default-pipeline suffix as one private pass, reusing a per-line zeroizing collapse
-  scratch buffer instead of materializing and zeroizing the full collapse output
-  before line cleanup. A proptest equivalence check compares fused transform output
-  with the public unfused ops for both `as_given` and canonical ordering. Same-branch
+  default-pipeline suffix as one private pass, reusing a transform-local
+  boundary-zeroized collapse scratch buffer instead of materializing and zeroizing
+  the full collapse output before line cleanup. A proptest equivalence check compares
+  fused transform output with the public unfused ops for both `as_given` and
+  canonical ordering. Same-branch
   128 MiB / 5-sample comparison after W3: `default-log` 142.2 → 157.8 MiB/s
   (+11%), `full-menu-log` 122.7 → 133.4 (+8.7%), `lossy-utf8-log`
   142.2 → 158.2 (+11%), `full-menu-without-markdown` 160.4 → 178.2 (+11%),
@@ -321,16 +322,20 @@ let two agents edit the same file family at once.
 - 2026-06-06: Security review closure for the W3b fused-scratch zeroization finding:
   the issue class is fused core scratch buffers holding clipboard-derived bytes
   outside the pipeline's wipe posture. `collapse_trim_then_remove_blank_lines` now
-  wraps the collapsed-line scratch in `Zeroizing<Vec<u8>>` and `collapse_line`
-  zeroizes it before reuse; `cargo xtask check-pipeline-zeroization` blocks a
-  regression to plain `Vec::new()` or `scratch.clear()`. Same-worktree 128 MiB /
-  5-sample before/after on the rebased branch: `default-log` 195.5 → 160.6 MiB/s
-  (−18%), `full-menu-log` 159.9 → 136.0 (−15%), `lossy-utf8-log`
-  195.5 → 140.7 (−28%), `full-menu-without-markdown` 229.6 → 191.5 (−17%),
-  `full-menu-without-dedupe` 143.9 → 124.2 (−14%), and
-  `full-menu-without-case` 159.7 → 135.9 (−15%). This is an intentional privacy
-  posture repair, not an optimization regression to hide; `docs/performance.md`
-  now records the repaired baseline.
+  wraps the collapsed-line scratch in `Zeroizing<Vec<u8>>`, zeroizes it before
+  capacity growth can release old storage, and relies on drop-time zeroization for
+  allocation-preserving reuse. `cargo xtask check-pipeline-zeroization` blocks a
+  regression to plain `Vec::new()` or growth without `scratch.zeroize()`.
+  Threat-model calibration: zeroization is a best-effort persistence control for
+  SafetyStrip-owned heap storage after use, not a live-memory exfiltration control;
+  private scratch that remains owned by one transform does not need a hot-path wipe
+  on every line. Same-worktree 128 MiB / 5-sample conservative per-line-wipe →
+  boundary-wipe comparison: `default-log` 160.6 → 198.0 MiB/s (+23%),
+  `full-menu-log` 136.0 → 160.2 (+18%), `lossy-utf8-log` 140.7 → 195.8
+  (+39%), `full-menu-without-markdown` 191.5 → 229.2 (+20%),
+  `full-menu-without-dedupe` 124.2 → 144.9 (+17%), and
+  `full-menu-without-case` 135.9 → 161.2 (+19%). `docs/performance.md` now records
+  the revised baseline and scratch-zeroization policy.
 - 2026-06-06: Rejected a private `DedupeLines` → `UnwrapLines` →
   `ChangeCase(Lower)` full-menu-tail fusion after equivalence proptests passed but
   the 128 MiB / 5-sample throughput run regressed `full-menu-log`

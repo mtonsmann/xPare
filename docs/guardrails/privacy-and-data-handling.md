@@ -32,8 +32,9 @@ and is wiped from the buffer that crosses the boundary.
    that temporary is also `Zeroizing` and wiped on drop. Minimize transient copies of
    content; do not stash it in a global, a cache, or a long-lived object. Private
    fused-operation scratch buffers that hold clipboard-derived bytes are covered by
-   the same rule: keep them borrowed-only, wrap them in `Zeroizing`, or explicitly
-   wipe them before reuse and drop.
+   the same rule, but the boundary is storage lifetime rather than every logical
+   reuse: keep them borrowed-only, wrap them in `Zeroizing`, or explicitly wipe them
+   before capacity growth/reallocation and drop.
 5. **No telemetry / analytics / "phone home."** There is nothing to add here — there
    is no code that could, and there must not be.
 6. **Settings are configuration, not content.** Persisting the user's pipeline,
@@ -71,7 +72,7 @@ guardrails.
 | No log sink in the core | `#![deny(clippy::print_stdout, print_stderr, dbg_macro)]` + `clippy -D warnings` + no logging crate |
 | No content logged/persisted (incl. shells) | `cargo xtask check-no-content-logging` (scans shipped Rust + Swift source) |
 | Default checks avoid the real clipboard | `cargo xtask check-clipboard-safety` |
-| In-memory only / wipe | pipeline intermediates in `Zeroizing`; fused pipeline scratch buffers zeroized before reuse/drop; output buffer zeroized in `ss_buffer_free`; covered by `cargo test` and `cargo xtask check-pipeline-zeroization` |
+| In-memory only / wipe | pipeline intermediates in `Zeroizing`; fused pipeline scratch storage zeroized before release/reallocation and drop; output buffer zeroized in `ss_buffer_free`; covered by `cargo test` and `cargo xtask check-pipeline-zeroization` |
 | Minimal entitlements | `cargo xtask check-entitlements`; `cargo xtask check-release-posture`; `release.sh dist` signs executable and bundle with the checked-in entitlements and verifies both signed payloads |
 
 All of these are part of `cargo xtask ci`, which CI runs verbatim.
@@ -87,4 +88,4 @@ update `SECURITY.md` and the relevant guardrail, and update the enforcing check 
   that lets content escape the transform,
 - a new entitlement,
 - weakening the core's `print*`/`dbg!` denies, pipeline intermediate wiping, or
-  fused scratch-buffer zeroization.
+  fused scratch storage wipe-before-release posture.
