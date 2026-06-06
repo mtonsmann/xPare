@@ -80,6 +80,13 @@ fn apply_next(text: &str, ops: &[&Operation]) -> (String, usize) {
     {
         return (collapse_trim_then_remove_blank_lines(text), 3);
     }
+    if ops.len() >= 3
+        && matches!(ops[0], Operation::TrimTrailingWhitespace)
+        && matches!(ops[1], Operation::RemoveBlankLines)
+        && matches!(ops[2], Operation::DedupeLines)
+    {
+        return (trim_remove_blank_then_dedupe_lines(text), 3);
+    }
     if ops.len() >= 2
         && matches!(ops[0], Operation::TrimTrailingWhitespace)
         && matches!(ops[1], Operation::RemoveBlankLines)
@@ -146,6 +153,57 @@ fn trim_trailing_then_remove_blank_lines(input: &str) -> String {
         out.push('\n');
     }
     out
+}
+
+/// Fused `TrimTrailingWhitespace`, `RemoveBlankLines`, then `DedupeLines`.
+///
+/// This keeps dedupe keys as borrowed slices from the caller/intermediate input,
+/// matching the public `dedupe_lines` storage class while avoiding the cleaned-line
+/// intermediate that would otherwise feed dedupe.
+fn trim_remove_blank_then_dedupe_lines(input: &str) -> String {
+    let mut preserve_trailing_newline = input.ends_with('\n');
+    let mut out = String::with_capacity(input.len());
+    let mut wrote_line = false;
+    let mut saw_newline = false;
+    let mut start = 0usize;
+    let mut seen = std::collections::HashSet::new();
+    for (i, ch) in input.char_indices() {
+        if ch == '\n' {
+            saw_newline = true;
+            push_unique_trimmed_nonblank_line(
+                &mut out,
+                &input[start..i],
+                &mut seen,
+                &mut wrote_line,
+            );
+            start = i + 1;
+        }
+    }
+    if !preserve_trailing_newline {
+        let final_line = trim_non_newline_whitespace_end(&input[start..]);
+        if final_line.chars().all(char::is_whitespace) {
+            preserve_trailing_newline = saw_newline;
+        } else if seen.insert(final_line) {
+            push_nonblank_line(&mut out, final_line, &mut wrote_line);
+        }
+    }
+    if preserve_trailing_newline && wrote_line {
+        out.push('\n');
+    }
+    out
+}
+
+fn push_unique_trimmed_nonblank_line<'a>(
+    out: &mut String,
+    line: &'a str,
+    seen: &mut std::collections::HashSet<&'a str>,
+    wrote_line: &mut bool,
+) {
+    let trimmed = trim_non_newline_whitespace_end(line);
+    if trimmed.chars().all(char::is_whitespace) || !seen.insert(trimmed) {
+        return;
+    }
+    push_nonblank_line(out, trimmed, wrote_line);
 }
 
 fn push_trimmed_nonblank_line(out: &mut String, line: &str, wrote_line: &mut bool) {

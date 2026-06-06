@@ -82,7 +82,8 @@ current tree (see the decision log); they are listed for continuity.
   fused inside the pipeline executor, and the common `CollapseWhitespace` →
   `TrimTrailingWhitespace` → `RemoveBlankLines` suffix is fused when adjacent; the
   collapse/trim/blank fusion borrows already-collapse-normalized lines instead of
-  copying them through scratch.)*
+  copying them through scratch; adjacent `TrimTrailingWhitespace` →
+  `RemoveBlankLines` → `DedupeLines` is fused without owning dedupe keys.)*
 - **W4 — Byte-oriented fast paths.** ASCII-specialized loops falling back to the
   Unicode-safe path on non-ASCII; byte scans where char boundaries are irrelevant.
   Consider `memchr` only if local benches show a clear gain **and** dependency
@@ -481,4 +482,15 @@ let two agents edit the same file family at once.
   `full-menu-without-markdown` 308.5 → 362.2 (+18%), and
   `full-menu-without-dedupe` 184.9 → 210.4 (+14%). No ABI, dependency, ordering,
   privacy, or determinism change.
+- 2026-06-06: W3d accepted narrowly for
+  `TrimTrailingWhitespace` → `RemoveBlankLines` → `DedupeLines`: the fused path
+  trims borrowed line slices, skips blanks, and inserts borrowed dedupe keys into
+  the same `HashSet<&str>` storage class as public `dedupe_lines`, avoiding the
+  cleaned full-buffer intermediate without adding owned clipboard-content scratch.
+  A fused-vs-public property test covers as-given and canonical order. Same-worktree
+  128 MiB / 5-sample comparison after W3c: `full-menu-without-collapse`
+  250.5 → 290.8 MiB/s (+16%). The main `default-log` and `full-menu-log` rows only
+  nudged upward (`default-log` 290.9 → 294.6, `full-menu-log` 226.7 → 230.2), so
+  treat this as a decomposition-row win rather than a new default-pipeline ceiling.
+  No ABI, dependency, zeroization, ordering, privacy, or determinism change.
 - _Append one entry per accepted optimization: date, scenario, before→after median._

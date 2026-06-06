@@ -50,42 +50,43 @@ W1d borrowed first-pass pipeline input, W2c streaming `unwrap_lines`, plus W3
 `TrimTrailingWhitespace` → `RemoveBlankLines` fusion and W3b `CollapseWhitespace` →
 `TrimTrailingWhitespace` → `RemoveBlankLines` fusion with boundary-zeroized scratch
 and W3c borrowed-line fast path for already-collapse-normalized lines (see the cost
-section below).
+section below), plus W3d `TrimTrailingWhitespace` → `RemoveBlankLines` →
+`DedupeLines` fusion.
 Re-measure on each machine; do not assume another machine's numbers. Read each
 transform row relative to this machine's own roofline controls (byte-copy is noisy at
-this size and was ≈ 36 GiB/s in this run; byte-scan is vectorized under the
+this size and was ≈ 43 GiB/s in this run; byte-scan is vectorized under the
 speed-tuned release profile and can exceed the copy control because it does less
 write traffic).
 
 | Scenario | Median | Throughput |
 |----------|-------:|-----------:|
-| roofline-byte-scan | 0.002s | 58632.7 MiB/s |
-| roofline-byte-copy | 0.004s | 36374.0 MiB/s |
-| strip-html-plain (no `<`/`&`) | 0.043s | 3011.2 MiB/s |
-| strip-html-heavy | 0.238s | 538.7 MiB/s |
-| strip-html-sparse-log | 0.049s | 2625.8 MiB/s |
-| strip-markdown-heavy | 0.696s | 183.9 MiB/s |
-| strip-markdown-sparse-log | 0.121s | 1057.8 MiB/s |
-| collapse-whitespace | 0.103s | 1247.7 MiB/s |
-| trim-trailing | 0.101s | 1266.2 MiB/s |
-| remove-blank-lines | 0.050s | 2582.0 MiB/s |
-| unwrap-lines | 0.047s | 2732.2 MiB/s |
-| case-lower-ascii | 0.010s | 12662.8 MiB/s |
-| case-sentence-unicode | 0.403s | 317.5 MiB/s |
-| dedupe-lines-repeated | 0.072s | 1767.7 MiB/s |
-| dedupe-lines-unique | 0.077s | 1670.0 MiB/s |
-| sort-lines | 0.125s | 1021.3 MiB/s |
-| defang-iocs (URLs/emails/IPs/domains; output grows ~15%) | 0.493s | 259.4 MiB/s |
-| refang-iocs (input is the defanged buffer) | 0.120s | 1232.1 MiB/s |
-| clean-urls-trackers | 0.237s | 540.5 MiB/s |
-| html-markdown-trim-log | 0.389s | 328.8 MiB/s |
-| full-menu-without-markdown | 0.353s | 362.2 MiB/s |
-| full-menu-without-collapse | 0.511s | 250.5 MiB/s |
-| full-menu-without-dedupe | 0.608s | 210.4 MiB/s |
-| full-menu-without-case | 0.570s | 224.7 MiB/s |
-| **default-log** (html+md+collapse+trim+blank) | 0.440s | **290.9 MiB/s** |
-| **full-menu-log** (+dedupe+unwrap+lowercase) | 0.565s | **226.7 MiB/s** |
-| **lossy-utf8-log** (invalid UTF-8, default pipeline) | 0.449s | **285.4 MiB/s** |
+| roofline-byte-scan | 0.003s | 45603.0 MiB/s |
+| roofline-byte-copy | 0.003s | 43928.4 MiB/s |
+| strip-html-plain (no `<`/`&`) | 0.041s | 3089.7 MiB/s |
+| strip-html-heavy | 0.229s | 559.0 MiB/s |
+| strip-html-sparse-log | 0.047s | 2746.2 MiB/s |
+| strip-markdown-heavy | 0.800s | 160.0 MiB/s |
+| strip-markdown-sparse-log | 0.117s | 1096.0 MiB/s |
+| collapse-whitespace | 0.100s | 1277.0 MiB/s |
+| trim-trailing | 0.102s | 1254.9 MiB/s |
+| remove-blank-lines | 0.050s | 2570.2 MiB/s |
+| unwrap-lines | 0.044s | 2880.7 MiB/s |
+| case-lower-ascii | 0.010s | 13219.1 MiB/s |
+| case-sentence-unicode | 0.398s | 321.6 MiB/s |
+| dedupe-lines-repeated | 0.075s | 1712.1 MiB/s |
+| dedupe-lines-unique | 0.075s | 1702.8 MiB/s |
+| sort-lines | 0.123s | 1039.7 MiB/s |
+| defang-iocs (URLs/emails/IPs/domains; output grows ~15%) | 0.484s | 264.4 MiB/s |
+| refang-iocs (input is the defanged buffer) | 0.111s | 1333.5 MiB/s |
+| clean-urls-trackers | 0.228s | 560.3 MiB/s |
+| html-markdown-trim-log | 0.384s | 333.7 MiB/s |
+| full-menu-without-markdown | 0.352s | 363.9 MiB/s |
+| full-menu-without-collapse | 0.440s | 290.8 MiB/s |
+| full-menu-without-dedupe | 0.602s | 212.8 MiB/s |
+| full-menu-without-case | 0.553s | 231.5 MiB/s |
+| **default-log** (html+md+collapse+trim+blank) | 0.434s | **294.6 MiB/s** |
+| **full-menu-log** (+dedupe+unwrap+lowercase) | 0.556s | **230.2 MiB/s** |
+| **lossy-utf8-log** (invalid UTF-8, default pipeline) | 0.438s | **293.1 MiB/s** |
 
 Slow lanes (optimization targets): the remaining slow single-op cluster is heavy
 Markdown stripping and defang. Marker-free HTML is no longer in that slow cluster
