@@ -66,7 +66,8 @@ current tree (see the decision log); they are listed for continuity.
   banked: `collapse_whitespace` has a byte-oriented fast path; `strip_html` has a
   guarded marker-free text path that still preserves newline-collapsing and
   document-trim semantics; `strip_markdown` suffix-scans newline bookkeeping and
-  trims final output in place.)*
+  trims final output in place; `transform` borrows caller-owned input for the first
+  pass and only zeroizes operation outputs that feed later passes.)*
 - **W2 — Stream line ops.** Rewrite `trim_trailing_whitespace`, `remove_blank_lines`,
   `unwrap_lines`, and the line-list ops to stream into one output buffer instead of
   `collect`→`join`. *(Partially banked: `sort_lines` no longer allocates a per-line
@@ -439,4 +440,19 @@ let two agents edit the same file family at once.
   rule (`defang-iocs` 242.0 → 238.0, `clean-urls-trackers` 432.8 → 429.5). No ABI,
   dependency, zeroization, ordering, or privacy posture change; the change adds no
   transform-local scratch and only reduces fallback scanner work.
+- 2026-06-06: W1d accepted for pipeline first-pass borrowing: `transform` now applies
+  the first ordered operation directly to the caller-owned input and only wraps
+  operation outputs that will feed later passes in `Zeroizing`. This removes an
+  unnecessary SafetyStrip-owned full-input duplicate while keeping every
+  SafetyStrip-owned intermediate and fused scratch buffer covered by the wipe
+  posture; the caller input was already outside the core/FFI ownership boundary.
+  A focused pipeline regression covers first-output-to-later-operation flow, and
+  `check-pipeline-zeroization` still passes. Same-worktree 128 MiB / 5-sample
+  comparison after W5j: `strip-markdown-heavy` 157.8 → 182.6 MiB/s (+15%),
+  `strip-markdown-sparse-log` 704.9 → 1083.1 (+54%), `default-log` 221.2 → 249.6
+  (+13%), `full-menu-log` 183.1 → 202.5 (+11%), `lossy-utf8-log` 218.7 → 247.6
+  (+13%), `defang-iocs` 238.0 → 275.0 (+16%), `refang-iocs` 790.5 → 1323.9 (+67%),
+  and `clean-urls-trackers` 429.5 → 556.8 (+30%). No ABI, dependency, ordering, or
+  determinism change; the privacy posture remains within the documented ownership
+  boundary.
 - _Append one entry per accepted optimization: date, scenario, before→after median._

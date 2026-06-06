@@ -46,45 +46,45 @@ output pre-sizing for shared line joins, and W4b streaming sentence-case scannin
 W2b borrowed-slice trailing trim, W1b Markdown output bookkeeping/normalization
 cleanup, and W5e streaming URL cleaner token reconstruction plus W5h/W5i URL no-op
 token prefiltering and tracker-key dispatch, W7 speed-tuned release optimization,
-plus W3
+W1d borrowed first-pass pipeline input, plus W3
 `TrimTrailingWhitespace` → `RemoveBlankLines` fusion and W3b `CollapseWhitespace` →
 `TrimTrailingWhitespace` → `RemoveBlankLines` fusion with boundary-zeroized scratch
 (see the cost section below).
 Re-measure on each machine; do not assume another machine's numbers. Read each
-transform row relative to this machine's own roofline controls (byte-copy ≈ 44 GiB/s
+transform row relative to this machine's own roofline controls (byte-copy ≈ 38 GiB/s
 in this run is the practical memory-traffic anchor, though it is noisy at this size;
 byte-scan is now vectorized under the speed-tuned release profile and can exceed the
 copy control because it does less write traffic).
 
 | Scenario | Median | Throughput |
 |----------|-------:|-----------:|
-| roofline-byte-scan | 0.003s | 44567.6 MiB/s |
-| roofline-byte-copy | 0.003s | 44186.2 MiB/s |
-| strip-html-plain (no `<`/`&`) | 0.105s | 1222.8 MiB/s |
-| strip-html-heavy | 0.291s | 439.2 MiB/s |
-| strip-html-sparse-log | 0.111s | 1158.3 MiB/s |
-| strip-markdown-heavy | 0.811s | 157.8 MiB/s |
-| strip-markdown-sparse-log | 0.182s | 704.9 MiB/s |
-| collapse-whitespace | 0.182s | 704.1 MiB/s |
-| trim-trailing | 0.165s | 776.8 MiB/s |
-| remove-blank-lines | 0.111s | 1158.4 MiB/s |
-| unwrap-lines | 0.147s | 868.5 MiB/s |
-| case-lower-ascii | 0.074s | 1739.3 MiB/s |
-| case-sentence-unicode | 0.467s | 273.9 MiB/s |
-| dedupe-lines-repeated | 0.135s | 950.0 MiB/s |
-| dedupe-lines-unique | 0.135s | 945.1 MiB/s |
-| sort-lines | 0.185s | 692.8 MiB/s |
-| defang-iocs (URLs/emails/IPs/domains; output grows ~15%) | 0.538s | 238.0 MiB/s |
-| refang-iocs (input is the defanged buffer) | 0.187s | 790.5 MiB/s |
-| clean-urls-trackers | 0.298s | 429.5 MiB/s |
-| html-markdown-trim-log | 0.474s | 269.9 MiB/s |
-| full-menu-without-markdown | 0.471s | 271.9 MiB/s |
-| full-menu-without-collapse | 0.591s | 216.5 MiB/s |
-| full-menu-without-dedupe | 0.754s | 169.8 MiB/s |
-| full-menu-without-case | 0.698s | 183.3 MiB/s |
-| **default-log** (html+md+collapse+trim+blank) | 0.579s | **221.2 MiB/s** |
-| **full-menu-log** (+dedupe+unwrap+lowercase) | 0.699s | **183.1 MiB/s** |
-| **lossy-utf8-log** (invalid UTF-8, default pipeline) | 0.587s | **218.7 MiB/s** |
+| roofline-byte-scan | 0.003s | 44896.6 MiB/s |
+| roofline-byte-copy | 0.003s | 38857.6 MiB/s |
+| strip-html-plain (no `<`/`&`) | 0.041s | 3115.5 MiB/s |
+| strip-html-heavy | 0.231s | 555.1 MiB/s |
+| strip-html-sparse-log | 0.047s | 2702.4 MiB/s |
+| strip-markdown-heavy | 0.701s | 182.6 MiB/s |
+| strip-markdown-sparse-log | 0.118s | 1083.1 MiB/s |
+| collapse-whitespace | 0.118s | 1087.8 MiB/s |
+| trim-trailing | 0.101s | 1263.8 MiB/s |
+| remove-blank-lines | 0.050s | 2582.3 MiB/s |
+| unwrap-lines | 0.084s | 1532.7 MiB/s |
+| case-lower-ascii | 0.010s | 13374.0 MiB/s |
+| case-sentence-unicode | 0.399s | 320.9 MiB/s |
+| dedupe-lines-repeated | 0.070s | 1836.6 MiB/s |
+| dedupe-lines-unique | 0.072s | 1783.8 MiB/s |
+| sort-lines | 0.118s | 1083.7 MiB/s |
+| defang-iocs (URLs/emails/IPs/domains; output grows ~15%) | 0.465s | 275.0 MiB/s |
+| refang-iocs (input is the defanged buffer) | 0.112s | 1323.9 MiB/s |
+| clean-urls-trackers | 0.230s | 556.8 MiB/s |
+| html-markdown-trim-log | 0.408s | 314.1 MiB/s |
+| full-menu-without-markdown | 0.403s | 317.8 MiB/s |
+| full-menu-without-collapse | 0.531s | 241.1 MiB/s |
+| full-menu-without-dedupe | 0.691s | 185.4 MiB/s |
+| full-menu-without-case | 0.632s | 202.6 MiB/s |
+| **default-log** (html+md+collapse+trim+blank) | 0.513s | **249.6 MiB/s** |
+| **full-menu-log** (+dedupe+unwrap+lowercase) | 0.632s | **202.5 MiB/s** |
+| **lossy-utf8-log** (invalid UTF-8, default pipeline) | 0.518s | **247.6 MiB/s** |
 
 Slow lanes (optimization targets): the remaining slow single-op cluster is heavy
 Markdown stripping and defang. Marker-free HTML is no longer in that slow cluster
@@ -103,17 +103,20 @@ the final output, so it avoids per-token temporary strings and an intermediate
 survivor list, and skips trim/prefix work for prose tokens that cannot expose a
 URL prefix after punctuation trimming. Tracker-key checks dispatch by first byte so
 kept functional query keys do not scan the full tracker table. End-to-end clipboard
-pipelines (which don't include the IOC ops) sit at ~183–222 MiB/s in this run. The
+pipelines (which don't include the IOC ops) sit at ~203–250 MiB/s in this run. The
 release profile is now speed-tuned (`opt-level = 3`), which materially improves the
 parser, byte-scanner, line-op, and end-to-end rows at the cost of no longer choosing
-the smallest release artifacts by default. The W3 fusions remove the trim/remove-blank
+the smallest release artifacts by default. The pipeline now borrows caller-owned
+input for the first pass and only wraps operation outputs that feed later passes in
+`Zeroizing`, eliminating one unnecessary SafetyStrip-owned full-buffer duplicate
+while preserving intermediate wiping. The W3 fusions remove the trim/remove-blank
 intermediate and the common collapse/trim/remove suffix from the default path. The
-W3b fused collapse scratch is transform-local `Zeroizing` storage: it is wiped
-before capacity growth can release old bytes and on drop, but allocation-preserving
-reuse does not zeroize on every line. That preserves the wipe-before-release
-posture without giving back the raw W3b speedup, so the decomposition rows now
-point to Markdown parsing and the full-menu dedupe/unwrap/lowercase tail before
-marker-free HTML or basic line cleanup.
+W3b fused collapse scratch is transform-local `Zeroizing` storage: it is wiped before
+capacity growth can release old bytes and on drop, but allocation-preserving reuse
+does not zeroize on every line. That preserves the wipe-before-release posture
+without giving back the raw W3b speedup, so the decomposition rows now point to
+Markdown parsing and the full-menu dedupe/unwrap/lowercase tail before marker-free
+HTML or basic line cleanup.
 (For reference,
 the upstream FormatStripper track reported ~177/131 MiB/s default/full-menu on an
 Apple M4 — a different machine, codebase, and zeroization posture, so not a
@@ -121,11 +124,13 @@ like-for-like comparison.)
 
 ## Cost of intermediate zeroization
 
-The core holds every pipeline intermediate in a `Zeroizing` buffer so clipboard
-secrets are wiped from the heap after use (see `core/src/pipeline.rs` and
-[`SECURITY.md`](../SECURITY.md)). The wipes cost memory bandwidth. Measured on the
-same machine, 128 MiB, before vs. after enabling it (the final output is returned
-without an extra copy, so single-op scenarios are cheaper than the worst case):
+The core holds every operation output that becomes a pipeline intermediate in a
+`Zeroizing` buffer so clipboard secrets are wiped from the heap after use (see
+`core/src/pipeline.rs` and [`SECURITY.md`](../SECURITY.md)). The caller-owned input is
+borrowed for the first pass, and the final output is returned without an extra copy,
+so single-op scenarios avoid pipeline-intermediate wipes entirely. For multi-op
+pipelines, intermediate wipes cost memory bandwidth. Measured on the same machine,
+128 MiB, before vs. after enabling intermediate zeroization:
 
 | Scenario | Before (no zeroize) | After (shipped) | Δ |
 |----------|--------------------:|----------------:|---:|
@@ -168,8 +173,7 @@ do not improve the stated threat model.
 
 See the exec-plan's wave list. Highest-confidence remaining items: stream the
 remaining `collect`→`join` line ops (W2), fuse compatible adjacent passes (W3), and
-additional ASCII fast paths with Unicode fallbacks where semantics allow (W4). A
-speed-tuned `opt-level = 3` profile
-would likely lift the scalar-bound rows (scan, case, markdown) at a binary-size cost
-— evaluate per the acceptance rules. Each change must clear ≥ 5% median gain with no
-> 3% regression and all guardrails green.
+additional ASCII fast paths with Unicode fallbacks where semantics allow (W4). The
+speed-tuned `opt-level = 3` release profile and first-pass pipeline borrowing are
+already banked. Each change must clear ≥ 5% median gain with no > 3% regression and
+all guardrails green.

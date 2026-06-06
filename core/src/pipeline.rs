@@ -6,18 +6,20 @@
 //!
 //! ## Sensitive-data hygiene
 //!
-//! The input and every intermediate are clipboard-derived and may hold secrets
-//! (passwords, tokens). Each intermediate is held in a [`Zeroizing`] buffer so its
-//! bytes are wiped from the heap as soon as the next pass supersedes it, rather than
-//! lingering in freed memory until the allocator happens to reuse it. Transform-local
-//! scratch buffers are wiped on drop and before capacity growth could release old
-//! storage; they are not wiped on every reuse while the allocation remains owned by
-//! the transform. The final result is returned directly (the caller owns it, so no
-//! extra copy is made); the `core-ffi` shim zeroizes that output buffer when the
-//! caller frees it. So every buffer except the caller-owned result is wiped after
-//! use. The measurable cost is the per-intermediate wipe — tens of percent of
-//! throughput on 100+ MiB inputs, but negligible at clipboard scale (sub-MiB), where
-//! the absolute time is microseconds either way. Quantified in `docs/performance.md`.
+//! The caller-owned input and every SafetyStrip-owned intermediate are
+//! clipboard-derived and may hold secrets (passwords, tokens). The first operation
+//! borrows the caller input directly; each operation output that feeds another pass is
+//! then held in a [`Zeroizing`] buffer so its bytes are wiped from the heap as soon as
+//! the next pass supersedes it, rather than lingering in freed memory until the
+//! allocator happens to reuse it. Transform-local scratch buffers are wiped on drop
+//! and before capacity growth could release old storage; they are not wiped on every
+//! reuse while the allocation remains owned by the transform. The final result is
+//! returned directly (the caller owns it, so no extra copy is made); the `core-ffi`
+//! shim zeroizes that output buffer when the caller frees it. So every
+//! SafetyStrip-owned buffer except the caller-owned result is wiped after use. The
+//! measurable cost is the per-intermediate wipe — tens of percent of throughput on
+//! 100+ MiB inputs, but negligible at clipboard scale (sub-MiB), where the absolute
+//! time is microseconds either way. Quantified in `docs/performance.md`.
 
 use zeroize::{Zeroize, Zeroizing};
 
@@ -45,11 +47,18 @@ pub fn transform(input: &str, config: &Config) -> String {
     if config.ordering == Ordering::Canonical {
         ordered.sort_by_key(|op| op.canonical_rank());
     }
-    // Each intermediate lives in a Zeroizing buffer, wiped when the next pass replaces
-    // it (and the last input is wiped when this function returns). The FINAL output is
-    // returned directly — no extra copy — and the core-ffi shim wipes it on free.
-    let mut current = Zeroizing::new(input.to_string());
-    let mut i = 0usize;
+    // Borrow the caller-owned input for the first pass. Only operation outputs that
+    // feed another pass become SafetyStrip-owned intermediates and need `Zeroizing`.
+    let (first, consumed) = apply_next(input, &ordered);
+    let mut i = consumed;
+    if i == ordered.len() {
+        return first;
+    }
+
+    // Each intermediate output lives in a Zeroizing buffer, wiped when the next pass
+    // replaces it. The FINAL output is returned directly — no extra copy — and the
+    // core-ffi shim wipes it on free.
+    let mut current = Zeroizing::new(first);
     while i < ordered.len() {
         let (out, consumed) = apply_next(&current, &ordered[i..]);
         i += consumed;

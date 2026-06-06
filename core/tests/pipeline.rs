@@ -22,6 +22,17 @@ fn empty_pipeline_is_identity() {
 }
 
 #[test]
+fn first_operation_output_feeds_later_operations() {
+    let cfg = pipeline(vec![
+        Operation::CollapseWhitespace,
+        Operation::PrefixLines {
+            prefix: "| ".to_string(),
+        },
+    ]);
+    assert_eq!(transform("a   b\nc\t\td", &cfg), "| a b\n| c d");
+}
+
+#[test]
 fn collapse_then_trim_then_remove_blank() {
     // A classic "clean up a messy paste" pipeline.
     let cfg = pipeline(vec![
