@@ -73,7 +73,8 @@ current tree (see the decision log); they are listed for continuity.
   `collect`→`join`. *(Partially banked: `sort_lines` no longer allocates a per-line
   key on the case-sensitive path, and shared line joining pre-sizes its output from
   known borrowed line lengths; `trim_trailing_whitespace` trims borrowed input
-  slices instead of buffering each line.)*
+  slices instead of buffering each line; `unwrap_lines` streams directly into one
+  output buffer instead of collecting paragraph strings and joining them.)*
 - **W3 — Fuse compatible passes.** A planner that fuses adjacent ops (e.g. line-ending
   normalization + a line op, or collapse + trim where ordering permits) without
   changing visible semantics or the public config. Golden-tested fused-vs-unfused.
@@ -455,4 +456,14 @@ let two agents edit the same file family at once.
   and `clean-urls-trackers` 429.5 → 556.8 (+30%). No ABI, dependency, ordering, or
   determinism change; the privacy posture remains within the documented ownership
   boundary.
+- 2026-06-06: W2c accepted for `unwrap_lines`: the op now scans newline byte
+  positions and emits paragraphs directly into one output buffer, preserving the
+  existing CRLF/multi-CR line model, Unicode seam trimming, collapsed paragraph
+  separators, and no-trailing-newline behavior without collecting per-paragraph
+  `String`s. Focused goldens cover CRLF/multi-CR seams, and a property test compares
+  the streaming implementation against the previous paragraph-list model. Clean
+  `origin/main` versus branch same-session 128 MiB / 5-sample comparison:
+  `unwrap-lines` 1423.9 → 2751.9 MiB/s (+93%). No ABI, dependency, zeroization,
+  ordering, privacy, or determinism change; the change adds no transform-local
+  scratch and only removes intermediate paragraph allocations.
 - _Append one entry per accepted optimization: date, scenario, before→after median._

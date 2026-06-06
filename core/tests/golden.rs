@@ -183,6 +183,14 @@ fn unwrap_lines_collapses_consecutive_blanks_and_trims_seam() {
 }
 
 #[test]
+fn unwrap_lines_strips_crlf_and_multi_cr_line_endings() {
+    assert_eq!(
+        run(Operation::UnwrapLines, "one\r\r\ntwo\r\n\nthree\r"),
+        "one two\n\nthree"
+    );
+}
+
+#[test]
 fn unwrap_lines_strips_leading_and_trailing_blanks_no_trailing_newline() {
     assert_eq!(
         run(Operation::UnwrapLines, "\n\nhello\nworld\n\n"),
