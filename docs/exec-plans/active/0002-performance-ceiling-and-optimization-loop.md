@@ -69,7 +69,8 @@ current tree (see the decision log); they are listed for continuity.
 - **W2 — Stream line ops.** Rewrite `trim_trailing_whitespace`, `remove_blank_lines`,
   `unwrap_lines`, and the line-list ops to stream into one output buffer instead of
   `collect`→`join`. *(Partially banked: `sort_lines` no longer allocates a per-line
-  key on the case-sensitive path.)*
+  key on the case-sensitive path, and shared line joining pre-sizes its output from
+  known borrowed line lengths.)*
 - **W3 — Fuse compatible passes.** A planner that fuses adjacent ops (e.g. line-ending
   normalization + a line op, or collapse + trim where ordering permits) without
   changing visible semantics or the public config. Golden-tested fused-vs-unfused.
@@ -248,4 +249,14 @@ let two agents edit the same file family at once.
   62.2 → 122.1 MiB/s (+96%), `refang-iocs` 375.7 → 368.2 (−2.0%),
   `default-log` 109.9 → 108.8 (−1.0%), `full-menu-log` 96.7 → 96.2 (−0.5%).
   No ABI, dependency, zeroization, ordering, or privacy posture change.
+- 2026-06-06: W2 accepted for shared line-join allocation: `join_lines` now
+  pre-sizes its output buffer from the kept line lengths, separator count, and
+  trailing-newline flag, leaving the existing push order and visible output
+  unchanged. Two same-size runs were taken because the first had a noisy
+  `dedupe-lines-repeated` median; the confirming 128 MiB / 5-sample run after W5d
+  showed `remove-blank-lines` 758.4 → 819.5 MiB/s (+8.1%),
+  `sort-lines` 546.8 → 575.9 (+5.3%), `dedupe-lines-unique` 708.6 → 724.6
+  (+2.3%), `dedupe-lines-repeated` 752.3 → 754.9 (+0.3%), `default-log`
+  108.8 → 109.4 (+0.6%), and `full-menu-log` 96.2 → 96.4 (+0.2%). No ABI,
+  dependency, zeroization, ordering, or privacy posture change.
 - _Append one entry per accepted optimization: date, scenario, before→after median._

@@ -87,7 +87,9 @@ fn is_blank(content: &str) -> bool {
 /// trailing `'\n'` iff `trailing_newline` is set. Used by the line-preserving ops so
 /// they share one definition of trailing-newline handling.
 fn join_lines(contents: &[&str], trailing_newline: bool) -> String {
-    let mut out = String::new();
+    let body_len: usize = contents.iter().map(|c| c.len()).sum();
+    let separators = contents.len().saturating_sub(1);
+    let mut out = String::with_capacity(body_len + separators + usize::from(trailing_newline));
     for (i, c) in contents.iter().enumerate() {
         if i > 0 {
             out.push('\n');
