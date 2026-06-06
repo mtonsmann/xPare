@@ -421,9 +421,9 @@ fn is_bare_domain(s: &str) -> bool {
 pub fn refang(input: &str) -> String {
     // Single linear left-to-right scan with bounded lookahead: at each position, try
     // to match the longest marker; on a match, emit its replacement and advance past
-    // it; otherwise copy one char. This avoids the O(n*k) repeated-`replace` chain and
-    // any double-rewriting hazards, and never slices off a char boundary because we
-    // only advance by whole matched ASCII markers or one char.
+    // it; otherwise copy the literal span up to the next marker-trigger byte. This
+    // avoids the O(n*k) repeated-`replace` chain and any double-rewriting hazards.
+    // The span scanner only stops on ASCII bytes, which are always UTF-8 boundaries.
     let bytes = input.as_bytes();
     let mut out = String::with_capacity(input.len());
     let mut i = 0usize;
@@ -436,13 +436,7 @@ pub fn refang(input: &str) -> String {
             out.push_str(repl);
             i += len;
         } else {
-            // Copy the next whole UTF-8 char. The byte at i is a char boundary because
-            // every marker we skip is whole-ASCII; otherwise i advanced by one char.
-            let ch_len = utf8_char_len(bytes[i]);
-            // Defensive clamp so a truncated/invalid lead byte can never slice past the
-            // end (input is valid UTF-8, but stay panic-free regardless).
-            let end = (i + ch_len).min(n);
-            // Slice the original validated &str on a char boundary (no unsafe).
+            let end = next_refang_trigger(bytes, i + 1);
             out.push_str(&input[i..end]);
             i = end;
         }
@@ -479,19 +473,14 @@ fn bracket_marker(b: &[u8], close: u8) -> Option<(&'static str, usize)> {
     }
 }
 
-/// UTF-8 length (1..=4) implied by a leading byte. Used only to copy a whole char in
-/// `refang`'s fallback path; never panics and never needs the byte to be valid.
-fn utf8_char_len(lead: u8) -> usize {
-    if lead < 0x80 {
-        1
-    } else if lead >> 5 == 0b110 {
-        2
-    } else if lead >> 4 == 0b1110 {
-        3
-    } else if lead >> 3 == 0b11110 {
-        4
-    } else {
-        // Continuation or invalid lead byte: advance one to make progress.
-        1
+/// Return the next byte index that could start a refang marker, or `b.len()`.
+fn next_refang_trigger(b: &[u8], start: usize) -> usize {
+    let mut i = start;
+    while i < b.len() {
+        if matches!(b[i], b'[' | b'(' | b'h') {
+            break;
+        }
+        i += 1;
     }
+    i
 }

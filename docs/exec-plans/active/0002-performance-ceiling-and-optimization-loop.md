@@ -94,14 +94,14 @@ current tree (see the decision log); they are listed for continuity.
   synthetic rows. Keep the documented token/marker heuristics exact, avoid new parser
   dependencies, and favor bounded byte dispatch over repeated replacement or
   per-position table scans. *(Partially banked: `refang` dispatches by first marker
-  byte instead of checking every marker at every byte; `defang` avoids an extra
-  transformed-token wrapper allocation and prefilters marker families before
-  expensive idempotence checks, streams transformed cores directly into the final
-  output, and skips no-op tokens that contain none of the bytes any handled
-  indicator needs; `clean_urls` streams URL token reconstruction into the final
-  output instead of allocating per-token rebuilt strings and skips no-op prose
-  tokens that cannot expose a URL prefix after punctuation trimming; tracker-key
-  checks dispatch by first byte.)*
+  byte instead of checking every marker at every byte and copies literal spans up to
+  the next marker-trigger byte; `defang` avoids an extra transformed-token wrapper
+  allocation and prefilters marker families before expensive idempotence checks,
+  streams transformed cores directly into the final output, and skips no-op tokens
+  that contain none of the bytes any handled indicator needs; `clean_urls` streams
+  URL token reconstruction into the final output instead of allocating per-token
+  rebuilt strings and skips no-op prose tokens that cannot expose a URL prefix after
+  punctuation trimming; tracker-key checks dispatch by first byte.)*
 - **W6 — Shell responsiveness** (macOS): measure Swift↔Rust copies separately; move
   large transforms off the main actor while keeping pasteboard reads/writes on it;
   re-check `changeCount` before commit; keep `NSPasteboard.general` opt-in. Land the
@@ -428,4 +428,15 @@ let two agents edit the same file family at once.
   334.0 → 421.8 (+25%), `defang-iocs` 186.9 → 237.5 (+27%), and
   `clean-urls-trackers` 392.0 → 430.0 (+9.7%). The only targeted IOC row that moved
   down was `refang-iocs` 369.1 → 361.4 (−2.1%), inside the −3% rule.
+- 2026-06-06: W5j accepted for `refang`: when no marker matches at the current byte,
+  the fallback path now copies the whole literal span up to the next marker-trigger
+  byte (`[`, `(`, or `h`) instead of copying one UTF-8 character at a time. The
+  existing marker matcher still owns all substitutions, so bracket style handling,
+  longest-marker precedence, `hxxp` semantics, and Unicode literal preservation are
+  unchanged. A focused regression covers long literal spans, Unicode, and near-miss
+  marker text. Same-worktree 128 MiB / 5-sample comparison after W7:
+  `refang-iocs` 365.6 → 790.5 MiB/s (+116%). Adjacent rows stayed within the −3%
+  rule (`defang-iocs` 242.0 → 238.0, `clean-urls-trackers` 432.8 → 429.5). No ABI,
+  dependency, zeroization, ordering, or privacy posture change; the change adds no
+  transform-local scratch and only reduces fallback scanner work.
 - _Append one entry per accepted optimization: date, scenario, before→after median._

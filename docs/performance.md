@@ -41,11 +41,12 @@ pipeline intermediate zeroization** and the W1 byte-oriented
 `collapse_whitespace` path, W1c marker-free HTML text path, W4 ASCII Upper/Lower
 fast paths, and W5b IOC marker dispatch plus W5c pre-sized line dedupe containers
 and W5d/W5f/W5g defang allocation/marker guard cleanup, streaming token
-reconstruction, and no-op token prefiltering, W2 output pre-sizing for shared line
-joins, and W4b streaming sentence-case scanning, W2b borrowed-slice trailing trim,
-W1b Markdown output bookkeeping/normalization cleanup, and W5e streaming URL
-cleaner token reconstruction plus W5h/W5i URL no-op token prefiltering and
-tracker-key dispatch, W7 speed-tuned release optimization, plus W3
+reconstruction, and no-op token prefiltering, W5j refang literal-span copying, W2
+output pre-sizing for shared line joins, and W4b streaming sentence-case scanning,
+W2b borrowed-slice trailing trim, W1b Markdown output bookkeeping/normalization
+cleanup, and W5e streaming URL cleaner token reconstruction plus W5h/W5i URL no-op
+token prefiltering and tracker-key dispatch, W7 speed-tuned release optimization,
+plus W3
 `TrimTrailingWhitespace` → `RemoveBlankLines` fusion and W3b `CollapseWhitespace` →
 `TrimTrailingWhitespace` → `RemoveBlankLines` fusion with boundary-zeroized scratch
 (see the cost section below).
@@ -57,33 +58,33 @@ copy control because it does less write traffic).
 
 | Scenario | Median | Throughput |
 |----------|-------:|-----------:|
-| roofline-byte-scan | 0.002s | 56504.9 MiB/s |
-| roofline-byte-copy | 0.003s | 42980.1 MiB/s |
-| strip-html-plain (no `<`/`&`) | 0.107s | 1195.2 MiB/s |
-| strip-html-heavy | 0.303s | 421.8 MiB/s |
-| strip-html-sparse-log | 0.112s | 1141.4 MiB/s |
-| strip-markdown-heavy | 0.837s | 153.0 MiB/s |
-| strip-markdown-sparse-log | 0.186s | 687.1 MiB/s |
-| collapse-whitespace | 0.182s | 702.1 MiB/s |
-| trim-trailing | 0.164s | 778.7 MiB/s |
-| remove-blank-lines | 0.114s | 1118.6 MiB/s |
-| unwrap-lines | 0.148s | 863.5 MiB/s |
-| case-lower-ascii | 0.074s | 1738.7 MiB/s |
-| case-sentence-unicode | 0.471s | 271.7 MiB/s |
-| dedupe-lines-repeated | 0.134s | 952.1 MiB/s |
-| dedupe-lines-unique | 0.149s | 860.7 MiB/s |
-| sort-lines | 0.182s | 702.0 MiB/s |
-| defang-iocs (URLs/emails/IPs/domains; output grows ~15%) | 0.539s | 237.5 MiB/s |
-| refang-iocs (input is the defanged buffer) | 0.409s | 361.4 MiB/s |
-| clean-urls-trackers | 0.298s | 430.0 MiB/s |
-| html-markdown-trim-log | 0.473s | 270.7 MiB/s |
-| full-menu-without-markdown | 0.473s | 270.6 MiB/s |
-| full-menu-without-collapse | 0.595s | 215.1 MiB/s |
-| full-menu-without-dedupe | 0.757s | 169.1 MiB/s |
-| full-menu-without-case | 0.700s | 182.9 MiB/s |
-| **default-log** (html+md+collapse+trim+blank) | 0.578s | **221.6 MiB/s** |
-| **full-menu-log** (+dedupe+unwrap+lowercase) | 0.700s | **182.8 MiB/s** |
-| **lossy-utf8-log** (invalid UTF-8, default pipeline) | 0.587s | **218.6 MiB/s** |
+| roofline-byte-scan | 0.003s | 44567.6 MiB/s |
+| roofline-byte-copy | 0.003s | 44186.2 MiB/s |
+| strip-html-plain (no `<`/`&`) | 0.105s | 1222.8 MiB/s |
+| strip-html-heavy | 0.291s | 439.2 MiB/s |
+| strip-html-sparse-log | 0.111s | 1158.3 MiB/s |
+| strip-markdown-heavy | 0.811s | 157.8 MiB/s |
+| strip-markdown-sparse-log | 0.182s | 704.9 MiB/s |
+| collapse-whitespace | 0.182s | 704.1 MiB/s |
+| trim-trailing | 0.165s | 776.8 MiB/s |
+| remove-blank-lines | 0.111s | 1158.4 MiB/s |
+| unwrap-lines | 0.147s | 868.5 MiB/s |
+| case-lower-ascii | 0.074s | 1739.3 MiB/s |
+| case-sentence-unicode | 0.467s | 273.9 MiB/s |
+| dedupe-lines-repeated | 0.135s | 950.0 MiB/s |
+| dedupe-lines-unique | 0.135s | 945.1 MiB/s |
+| sort-lines | 0.185s | 692.8 MiB/s |
+| defang-iocs (URLs/emails/IPs/domains; output grows ~15%) | 0.538s | 238.0 MiB/s |
+| refang-iocs (input is the defanged buffer) | 0.187s | 790.5 MiB/s |
+| clean-urls-trackers | 0.298s | 429.5 MiB/s |
+| html-markdown-trim-log | 0.474s | 269.9 MiB/s |
+| full-menu-without-markdown | 0.471s | 271.9 MiB/s |
+| full-menu-without-collapse | 0.591s | 216.5 MiB/s |
+| full-menu-without-dedupe | 0.754s | 169.8 MiB/s |
+| full-menu-without-case | 0.698s | 183.3 MiB/s |
+| **default-log** (html+md+collapse+trim+blank) | 0.579s | **221.2 MiB/s** |
+| **full-menu-log** (+dedupe+unwrap+lowercase) | 0.699s | **183.1 MiB/s** |
+| **lossy-utf8-log** (invalid UTF-8, default pipeline) | 0.587s | **218.7 MiB/s** |
 
 Slow lanes (optimization targets): the remaining slow single-op cluster is heavy
 Markdown stripping and defang. Marker-free HTML is no longer in that slow cluster
@@ -91,10 +92,12 @@ after W1c's guarded plain-text path, and sparse/log-like Markdown is no longer t
 after W1b's suffix-based newline bookkeeping and in-place edge trim, but heavy
 Markdown still pays parser/event cost. Defang still emits multi-character bracket
 markers around every indicator character and grows output ~15%, but W5d/W5f/W5g
-removed avoidable token-level allocation and no-op classification overhead. Unicode
-sentence-case is no longer in the same slow cluster after W4b's streaming scanner,
-which avoids the temporary lowercase buffer and per-character uppercase allocations
-while preserving Unicode expansion. Clean URL stripping now streams URL token
+removed avoidable token-level allocation and no-op classification overhead. Refang
+now copies literal spans between marker-trigger bytes instead of paying the fallback
+path one character at a time. Unicode sentence-case is no longer in the same slow
+cluster after W4b's streaming scanner, which avoids the temporary lowercase buffer
+and per-character uppercase allocations while preserving Unicode expansion. Clean URL
+stripping now streams URL token
 reconstruction directly into
 the final output, so it avoids per-token temporary strings and an intermediate
 survivor list, and skips trim/prefix work for prose tokens that cannot expose a
