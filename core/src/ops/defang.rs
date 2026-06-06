@@ -191,11 +191,11 @@ fn defang_url(core: &str, style: BracketStyle) -> String {
     //    Note "https" is handled before "http" is irrelevant here since we match the
     //    full "://"-bearing prefixes; do the longer first regardless for clarity.
     let (scheme_out, rest) = if let Some(r) = core.strip_prefix("https://") {
-        ("hxxps".to_string(), Some(("://", r)))
+        ("hxxps", Some(("://", r)))
     } else if let Some(r) = core.strip_prefix("http://") {
-        ("hxxp".to_string(), Some(("://", r)))
+        ("hxxp", Some(("://", r)))
     } else {
-        (String::new(), None)
+        ("", None)
     };
 
     let (o, cl) = (style.open(), style.close());
@@ -205,7 +205,7 @@ fn defang_url(core: &str, style: BracketStyle) -> String {
         Some((_sep, after)) => {
             // We consumed "<scheme>://"; emit mangled scheme + bracketed separator,
             // then the rest with its dots bracketed.
-            out.push_str(&scheme_out);
+            out.push_str(scheme_out);
             out.push(o);
             out.push_str("://");
             out.push(cl);
@@ -421,24 +421,30 @@ pub fn refang(input: &str) -> String {
 /// If `b` starts with a defang marker, return its replacement and the marker's byte
 /// length. Longest markers are checked first so `[://]` wins over any shorter prefix.
 fn match_marker(b: &[u8]) -> Option<(&'static str, usize)> {
-    // (marker, replacement). Ordered longest-first within each starting bracket.
-    const TABLE: [(&[u8], &str); 9] = [
-        (b"[://]", "://"),
-        (b"(://)", "://"),
-        (b"[.]", "."),
-        (b"(.)", "."),
-        (b"[@]", "@"),
-        (b"(@)", "@"),
-        (b"[:]", ":"),
-        (b"(:)", ":"),
-        (b"hxxp", "http"),
-    ];
-    for (marker, repl) in TABLE {
-        if b.len() >= marker.len() && &b[..marker.len()] == marker {
-            return Some((repl, marker.len()));
-        }
+    match b.first().copied()? {
+        b'[' => bracket_marker(b, b']'),
+        b'(' => bracket_marker(b, b')'),
+        b'h' if b.starts_with(b"hxxp") => Some(("http", 4)),
+        _ => None,
     }
-    None
+}
+
+/// Match a square- or round-bracketed defang marker. Callers pass a slice known to
+/// start with the opening bracket and the expected closing bracket byte.
+fn bracket_marker(b: &[u8], close: u8) -> Option<(&'static str, usize)> {
+    // Longest first: the scheme separator marker must win before the shorter ':'.
+    if b.len() >= 5 && b[1] == b':' && b[2] == b'/' && b[3] == b'/' && b[4] == close {
+        Some(("://", 5))
+    } else if b.len() >= 3 && b[2] == close {
+        match b[1] {
+            b'.' => Some((".", 3)),
+            b'@' => Some(("@", 3)),
+            b':' => Some((":", 3)),
+            _ => None,
+        }
+    } else {
+        None
+    }
 }
 
 /// UTF-8 length (1..=4) implied by a leading byte. Used only to copy a whole char in

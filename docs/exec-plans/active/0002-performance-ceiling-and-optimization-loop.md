@@ -81,6 +81,11 @@ current tree (see the decision log); they are listed for continuity.
 - **W5 — Dedupe-specific.** Bench repeated/unique/long/adversarial lines separately;
   preserve exact first-occurrence semantics; consider pre-sizing the `HashSet`. Do
   **not** switch to a weaker hasher (adversarial-input risk).
+- **W5b — IOC-specific.** Defang/refang and URL cleaning are measured as separate
+  synthetic rows. Keep the documented token/marker heuristics exact, avoid new parser
+  dependencies, and favor bounded byte dispatch over repeated replacement or
+  per-position table scans. *(Partially banked: `refang` dispatches by first marker
+  byte instead of checking every marker at every byte.)*
 - **W6 — Shell responsiveness** (macOS): measure Swift↔Rust copies separately; move
   large transforms off the main actor while keeping pasteboard reads/writes on it;
   re-check `changeCount` before commit; keep `NSPasteboard.general` opt-in. Land the
@@ -217,4 +222,12 @@ let two agents edit the same file family at once.
   62.4 → 85.3 (+37%), `full-menu-log` 89.9 → 93.0 (+3.4%), `default-log`
   106.0 → 108.1 (+2%). No ABI, dependency, zeroization, ordering, or privacy
   posture change.
+- 2026-06-06: W5b accepted for `refang`: replace the per-position nine-marker table
+  scan with first-byte dispatch for `[`, `(`, and `h`, preserving longest-marker
+  semantics and both bracket styles. Also removed a tiny per-URL scheme allocation in
+  `defang_url`. Same-branch 128 MiB / 5-sample comparison after W4:
+  `refang-iocs` 44.6 → 378.7 MiB/s (+749%), `defang-iocs` 58.6 → 62.6 (+6.8%),
+  `clean-urls-trackers` 259.6 → 276.0 (+6.3%), `full-menu-log` 93.0 → 97.0
+  (+4.3%), `default-log` 108.1 → 109.0 (+0.8%). No ABI, dependency, zeroization,
+  ordering, or privacy posture change.
 - _Append one entry per accepted optimization: date, scenario, before→after median._
