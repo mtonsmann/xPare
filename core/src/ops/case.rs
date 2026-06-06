@@ -2,12 +2,13 @@
 //!
 //! **Implementation owner: pipeline stream (A2).**
 //!
-//! All transforms iterate over `char`s and use the full Unicode case-mapping
-//! methods ([`char::to_uppercase`] / [`char::to_lowercase`]), not the ASCII-only
-//! variants. Those methods return iterators because one input `char` can map to
-//! several output `char`s (e.g. `'ß'`.to_uppercase() yields `"SS"`, `'İ'`
-//! lowercases to `"i\u{307}"`). The implementations are panic-free (no indexing,
-//! no `unwrap`) and linear in the number of `char`s.
+//! Full Unicode case-mapping methods ([`char::to_uppercase`] /
+//! [`char::to_lowercase`]) are the semantic source of truth. Those methods return
+//! iterators because one input `char` can map to several output `char`s (e.g.
+//! `'ß'`.to_uppercase() yields `"SS"`, `'İ'` lowercases to `"i\u{307}"`). Whole-text
+//! upper/lower have an ASCII byte fast path and fall back to the Unicode path as soon
+//! as non-ASCII appears. The implementations are panic-free (no indexing, no
+//! `unwrap`) and linear in the number of bytes/chars.
 
 use crate::CaseKind;
 
@@ -25,6 +26,9 @@ pub fn change_case(input: &str, kind: CaseKind) -> String {
 
 /// Full Unicode uppercase of the entire text.
 fn to_upper(input: &str) -> String {
+    if input.is_ascii() {
+        return input.to_ascii_uppercase();
+    }
     let mut out = String::with_capacity(input.len());
     for ch in input.chars() {
         out.extend(ch.to_uppercase());
@@ -34,6 +38,9 @@ fn to_upper(input: &str) -> String {
 
 /// Full Unicode lowercase of the entire text.
 fn to_lower(input: &str) -> String {
+    if input.is_ascii() {
+        return input.to_ascii_lowercase();
+    }
     let mut out = String::with_capacity(input.len());
     for ch in input.chars() {
         out.extend(ch.to_lowercase());

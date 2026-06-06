@@ -35,53 +35,57 @@ make bench-large     # heavy log files up to 256 MB
 
 ## Local baseline
 
-Measured 2026-06-05 on **Apple M5 Pro, 18 cores, 48 GB, arm64**, via
+Measured 2026-06-06 on **Apple M5 Pro, 18 cores, 48 GB, arm64**, via
 `make perf PERF_MIB=128 PERF_SAMPLES=5` (median of 5), on the current code **with
 pipeline intermediate zeroization** and the W1 byte-oriented
-`collapse_whitespace` path (see the cost section below). Re-measure on each machine;
-do not assume another machine's numbers. Read each transform row relative to this
-machine's own roofline controls (byte-copy ≈ 55 GiB/s in this run is the practical
-memory-traffic anchor, though it is noisy at this size; byte-scan is lower because the shipped release profile is
-`opt-level = "s"` — size-optimized — leaving the scalar scan loop unvectorized).
+`collapse_whitespace` path plus W4 ASCII Upper/Lower fast paths (see the cost section
+below). Re-measure on each machine; do not assume another machine's numbers. Read
+each transform row relative to this machine's own roofline controls (byte-copy ≈ 35
+GiB/s in this run is the practical memory-traffic anchor, though it is noisy at this
+size; byte-scan is lower because the shipped release profile is `opt-level = "s"` —
+size-optimized — leaving the scalar scan loop unvectorized).
 
 | Scenario | Median | Throughput |
 |----------|-------:|-----------:|
-| roofline-byte-scan | 0.032s | 3997.8 MiB/s |
-| roofline-byte-copy | 0.002s | 55887.1 MiB/s |
-| strip-html-plain (no `<`/`&`) | 0.291s | 439.6 MiB/s |
-| strip-html-heavy | 0.338s | 379.2 MiB/s |
-| strip-html-sparse-log | 0.303s | 422.9 MiB/s |
-| strip-markdown-heavy | 0.840s | 152.4 MiB/s |
-| strip-markdown-sparse-log | 0.205s | 623.8 MiB/s |
-| collapse-whitespace | 0.178s | 719.9 MiB/s |
-| trim-trailing | 0.229s | 559.5 MiB/s |
-| remove-blank-lines | 0.160s | 800.6 MiB/s |
-| unwrap-lines | 0.171s | 747.2 MiB/s |
-| case-lower-ascii | 0.685s | 186.8 MiB/s |
-| case-sentence-unicode | 1.012s | 126.4 MiB/s |
-| dedupe-lines-repeated | 0.165s | 773.4 MiB/s |
-| dedupe-lines-unique | 0.266s | 481.6 MiB/s |
-| sort-lines | 0.204s | 627.7 MiB/s |
-| defang-iocs (URLs/emails/IPs/domains; output grows ~15%) | 1.792s | 71.4 MiB/s |
-| refang-iocs (input is the defanged buffer) | 2.848s | 51.9 MiB/s |
-| clean-urls-trackers | 0.401s | 319.0 MiB/s |
-| html-markdown-trim-log | 0.721s | 177.5 MiB/s |
-| full-menu-without-markdown | 0.988s | 129.5 MiB/s |
-| full-menu-without-collapse | 1.004s | 127.4 MiB/s |
-| full-menu-without-dedupe | 1.818s | 70.4 MiB/s |
-| full-menu-without-case | 1.166s | 109.8 MiB/s |
-| **default-log** (html+md+collapse+trim+blank) | 1.019s | **125.7 MiB/s** |
-| **full-menu-log** (+dedupe+unwrap+lowercase) | 1.163s | **110.0 MiB/s** |
-| **lossy-utf8-log** (invalid UTF-8, default pipeline) | 1.014s | **126.5 MiB/s** |
+| roofline-byte-scan | 0.035s | 3661.8 MiB/s |
+| roofline-byte-copy | 0.004s | 35845.6 MiB/s |
+| strip-html-plain (no `<`/`&`) | 0.313s | 408.9 MiB/s |
+| strip-html-heavy | 0.389s | 328.9 MiB/s |
+| strip-html-sparse-log | 0.314s | 407.6 MiB/s |
+| strip-markdown-heavy | 1.009s | 126.8 MiB/s |
+| strip-markdown-sparse-log | 0.364s | 351.3 MiB/s |
+| collapse-whitespace | 0.192s | 666.3 MiB/s |
+| trim-trailing | 0.280s | 456.8 MiB/s |
+| remove-blank-lines | 0.170s | 751.1 MiB/s |
+| unwrap-lines | 0.194s | 661.3 MiB/s |
+| case-lower-ascii | 0.112s | 1142.9 MiB/s |
+| case-sentence-unicode | 1.100s | 116.4 MiB/s |
+| dedupe-lines-repeated | 0.175s | 730.6 MiB/s |
+| dedupe-lines-unique | 0.284s | 450.7 MiB/s |
+| sort-lines | 0.244s | 523.8 MiB/s |
+| defang-iocs (URLs/emails/IPs/domains; output grows ~15%) | 2.185s | 58.6 MiB/s |
+| refang-iocs (input is the defanged buffer) | 3.316s | 44.6 MiB/s |
+| clean-urls-trackers | 0.493s | 259.6 MiB/s |
+| html-markdown-trim-log | 0.882s | 145.1 MiB/s |
+| full-menu-without-markdown | 1.050s | 121.9 MiB/s |
+| full-menu-without-collapse | 1.189s | 107.6 MiB/s |
+| full-menu-without-dedupe | 1.501s | 85.3 MiB/s |
+| full-menu-without-case | 1.361s | 94.1 MiB/s |
+| **default-log** (html+md+collapse+trim+blank) | 1.184s | **108.1 MiB/s** |
+| **full-menu-log** (+dedupe+unwrap+lowercase) | 1.376s | **93.0 MiB/s** |
+| **lossy-utf8-log** (invalid UTF-8, default pipeline) | 1.214s | **105.7 MiB/s** |
 
 Slow lanes (optimization targets): **defang** and **refang** are now the slowest
 single-op rows — each emits (or reverses) multi-character bracket markers around
 every indicator character, so they do the heaviest per-byte work and defang's output
 grows ~15%; refang is slower still because it is a longest-match marker scan over the
 already-expanded buffer. After those come Markdown stripping, Unicode sentence-case,
-and unique-line dedupe. End-to-end clipboard pipelines (which don't include the IOC
-ops) sit at ~110–126 MiB/s. The decomposition rows show the lowercase/dedupe tail
-dominates the full-menu log path on this generated corpus. (For reference,
+and unique-line dedupe. ASCII lowercase is no longer a slow lane after the W4 fast
+path; the full-menu tail is now dominated more by dedupe/unwrap and zeroized
+multi-pass cost than by lowercase itself. End-to-end clipboard pipelines (which
+don't include the IOC ops) sit at ~93–108 MiB/s in this run. The decomposition rows
+show the lowercase/dedupe tail still matters on this generated corpus, but not nearly
+as sharply as before W4. (For reference,
 the upstream FormatStripper track reported ~177/131 MiB/s default/full-menu on an
 Apple M4 — a different machine, codebase, and zeroization posture, so not a
 like-for-like comparison.)

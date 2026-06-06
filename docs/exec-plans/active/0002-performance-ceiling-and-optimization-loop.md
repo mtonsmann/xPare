@@ -76,7 +76,8 @@ current tree (see the decision log); they are listed for continuity.
 - **W4 — Byte-oriented fast paths.** ASCII-specialized loops falling back to the
   Unicode-safe path on non-ASCII; byte scans where char boundaries are irrelevant.
   Consider `memchr` only if local benches show a clear gain **and** dependency
-  guardrails approve it.
+  guardrails approve it. *(Partially banked: whole-text Upper/Lower use standard
+  ASCII fast paths with full Unicode fallback.)*
 - **W5 — Dedupe-specific.** Bench repeated/unique/long/adversarial lines separately;
   preserve exact first-occurrence semantics; consider pre-sizing the `HashSet`. Do
   **not** switch to a weaker hasher (adversarial-input risk).
@@ -207,4 +208,13 @@ let two agents edit the same file family at once.
   `collapse-whitespace` 533.2 → 685.0 MiB/s (+28%), `default-log` 111.0 → 116.6
   (+5%), `full-menu-log` 97.8 → 102.3 (+4.6%), `lossy-utf8-log` 110.7 → 116.5
   (+5.2%).
+- 2026-06-06: Wave 0 re-run after the canonical-ordering / IOC updates used
+  read-only profiling, correctness-risk, and shell/FFI subagents. W4 accepted for
+  whole-text ASCII Upper/Lower: `to_upper`/`to_lower` now use the standard library's
+  ASCII case path when `input.is_ascii()`, falling back to full Unicode mappings for
+  any non-ASCII input. Same-worktree 128 MiB / 5-sample comparison:
+  `case-lower-ascii` 179.6 → 1142.9 MiB/s (+536%), `full-menu-without-dedupe`
+  62.4 → 85.3 (+37%), `full-menu-log` 89.9 → 93.0 (+3.4%), `default-log`
+  106.0 → 108.1 (+2%). No ABI, dependency, zeroization, ordering, or privacy
+  posture change.
 - _Append one entry per accepted optimization: date, scenario, before→after median._

@@ -183,6 +183,19 @@ fn unwrap_lines_empty_and_all_blank() {
 // ---------------------------------------------------------------------------
 
 #[test]
+fn case_upper_ascii() {
+    assert_eq!(
+        run(
+            Operation::ChangeCase {
+                case: CaseKind::Upper
+            },
+            "abc xyz 123!"
+        ),
+        "ABC XYZ 123!"
+    );
+}
+
+#[test]
 fn case_upper_unicode_expanding() {
     // German eszett uppercases to two chars; this is why we use full Unicode mapping.
     assert_eq!(
@@ -197,6 +210,19 @@ fn case_upper_unicode_expanding() {
 }
 
 #[test]
+fn case_lower_ascii() {
+    assert_eq!(
+        run(
+            Operation::ChangeCase {
+                case: CaseKind::Lower
+            },
+            "ABC XYZ 123!"
+        ),
+        "abc xyz 123!"
+    );
+}
+
+#[test]
 fn case_lower_unicode() {
     assert_eq!(
         run(
@@ -206,6 +232,19 @@ fn case_lower_unicode() {
             "GRÜßE"
         ),
         "grüße"
+    );
+}
+
+#[test]
+fn case_lower_unicode_expanding_fallback() {
+    assert_eq!(
+        run(
+            Operation::ChangeCase {
+                case: CaseKind::Lower
+            },
+            "İ"
+        ),
+        "i\u{307}"
     );
 }
 
