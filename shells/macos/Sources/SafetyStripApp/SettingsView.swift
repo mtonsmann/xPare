@@ -100,6 +100,7 @@ private func opLabel(_ op: SafetyStripCore.Operation) -> String {
     switch op {
     case .stripHtml: return "Strip HTML"
     case .stripMarkdown: return "Strip Markdown"
+    case .htmlToMarkdown: return "Convert HTML to Markdown"
     case .collapseWhitespace: return "Collapse whitespace"
     case .trimTrailingWhitespace: return "Trim trailing whitespace"
     case .removeBlankLines: return "Remove blank lines"

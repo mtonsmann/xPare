@@ -95,6 +95,10 @@ Clipboard markup is attacker-influenced, so the core treats all input as hostile
   representation through `StripHtml`; the canonical sanitization order is
   `StripHtml` → `StripMarkdown`. See
   [the transform guardrail](docs/guardrails/transform-correctness-and-adversarial-input.md).
+- **HTML-to-Markdown is explicit conversion, not sanitization policy** — the
+  one-shot converter consumes raw HTML to preserve structure, but still drops
+  `<script>`/`<style>` bodies and unsafe link schemes. It is not injected into
+  continuous mode or the canonical sanitization pipeline.
 - **Size limits are enforced before the core transform** — the macOS shell refuses
   extracted text above its RAM-proportional limit, and the FFI rejects anything above
   `SS_MAX_INPUT_BYTES` before reading or allocating. The macOS shell also checks raw
@@ -134,6 +138,8 @@ security-relevant ones:
   minimal.
 - **`StripMarkdown` alone is not a sanitizer** for hostile `<script>` content — use
   `StripHtml` → `StripMarkdown`.
+- **`HtmlToMarkdown` is not a browser-grade sanitizer or renderer** — it is a
+  dependency-free clipboard converter for common copied-web fragments.
 
 ## Reporting a vulnerability
 

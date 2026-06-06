@@ -39,6 +39,7 @@ pub const CAPABILITIES_JSON: &str = concat!(
     r#"","config_version":2,"ordering":["canonical","as_given"],"operations":["#,
     r#"{"op":"strip_html"},"#,
     r#"{"op":"strip_markdown"},"#,
+    r#"{"op":"html_to_markdown"},"#,
     r#"{"op":"collapse_whitespace"},"#,
     r#"{"op":"trim_trailing_whitespace"},"#,
     r#"{"op":"remove_blank_lines"},"#,

@@ -124,6 +124,23 @@ to kill active content, then `StripMarkdown` to clean residual formatting. Relyi
 on `StripMarkdown` *alone* to neutralize a script body is not the supported posture
 (see Known limitations).
 
+### D6a — HTML-to-Markdown conversion is one-shot and dependency-free
+
+`html_to_markdown` is a small safe-Rust converter for common copied-web fragments:
+headings, paragraphs, links, lists, blockquotes, inline emphasis/code, preformatted
+code blocks, line breaks, and simple table rows. **Why not a parser/converter
+dependency:** this is a convenience command, not a browser-grade import pipeline,
+and the current project posture favors a tiny auditable core dependency tree. The
+converter keeps the existing `strip_html` sanitizer unchanged and reuses its
+bounded curated entity decoder.
+
+Security framing: the converter drops comments, declarations, processing
+instructions, and `<script>`/`<style>` raw-text bodies. It emits link destinations
+only for inert schemes (`http`, `https`, `mailto`) and relative/hash URLs; unsafe
+schemes such as `javascript:`, `data:`, `vbscript:`, and `file:` are dropped while
+link text survives. It is surfaced by the shell as an explicit one-shot command, so
+continuous mode never silently converts every copied web fragment to Markdown.
+
 ### D7 — Buffer ownership: leaked `Box<[u8]>`, freed + zeroized
 
 `ss_transform` returns the output as a `(ptr, len)` pair over a leaked `Box<[u8]>`;
@@ -187,19 +204,19 @@ from that — it is not a free UI choice.
   `CollapseWhitespace`, `DedupeLines`, and the new `Defang` / `Refang` /
   `CleanUrls`). They compose additively — each is an independent stage refining the
   same buffer — and the idempotent ones are safe to run on every clipboard change.
-- **Reductions** replace the buffer with a *derived subset* (`ExtractEmails`,
-  `ExtractUrls`). They do **not** compose (extracting URLs from an email list yields
-  nothing), they are terminal, and silently reducing every copy in continuous mode
-  is never what the user wants.
+- **Reductions/conversions** replace the buffer with a derived representation
+  (`ExtractEmails`, `ExtractUrls`, `HtmlToMarkdown`). They do **not** compose
+  predictably as always-on policy, they are terminal user commands, and silently
+  converting every copy in continuous mode is never what the user wants.
 
 This dictates two interaction models in the shell:
 
 - **Persistent toggles** — rewrites that make sense always-on. Stored in the ordered
   `operations` pipeline, eligible for continuous mode. The menu's *Clean* section.
 - **One-shot commands** — a transient single-op config run on demand, never
-  persisted, never auto-run. *All reductions are commands;* so is `Refang`
-  (re-activating received IOCs is a deliberate act, not a standing policy). The
-  menu's *Extract* section, parallel to "Strip clipboard now".
+  persisted, never auto-run. *All reductions/conversions are commands;* so is
+  `Refang` (re-activating received IOCs is a deliberate act, not a standing
+  policy). The menu's *Extract / convert* section, parallel to "Strip clipboard now".
 
 The **core does not know about this split** — every op stays a plain pipeline entry,
 so the CLI and power users can still compose extraction inside a pipeline. The
@@ -278,6 +295,8 @@ tests:
   `core/src/ops/html.rs`.
 - **Markdown** (parser options, inline content, block structure, tables, embedded
   HTML): `core/src/ops/markdown.rs`.
+- **HTML-to-Markdown** (common copied-web structure, dropped active content,
+  safe-link filtering): `core/src/ops/html_to_markdown.rs`.
 - **Whitespace** (`collapse_whitespace`, `trim_trailing_whitespace`):
   `core/src/ops/whitespace.rs`.
 - **Lines** (the shared line model, `unwrap_lines`, sort/dedupe/prefix/suffix/
@@ -438,6 +457,10 @@ These are accepted trade-offs, documented so they are not mistaken for defects.
   reference. Unknown but well-formed `&name;` references are emitted **verbatim**
   (never dropped, never panicked on). Numeric references are fully supported, with
   out-of-range/surrogate values mapped to U+FFFD.
+- **HTML-to-Markdown is a small clipboard converter, not full HTML5 import.** It
+  preserves common copied-web structure and safe links, but it is not a DOM builder,
+  CSS-aware renderer, or full table/list normalizer. It intentionally drops unsafe
+  link schemes and active-content bodies while keeping visible text.
 - **Email/URL extraction is heuristic, not a parser.** `extract_emails` /
   `extract_urls` tokenize on whitespace and apply a documented heuristic (see
   `ops/lines.rs`); they are deliberately not RFC 5322 / RFC 3986 compliant and may

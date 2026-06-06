@@ -117,6 +117,7 @@ fn apply(text: &str, op: &Operation) -> String {
     match op {
         Operation::StripHtml => ops::html::strip_html(text),
         Operation::StripMarkdown => ops::markdown::strip_markdown(text),
+        Operation::HtmlToMarkdown => ops::html_to_markdown::html_to_markdown(text),
         Operation::CollapseWhitespace => ops::whitespace::collapse_whitespace(text),
         Operation::TrimTrailingWhitespace => ops::whitespace::trim_trailing_whitespace(text),
         Operation::RemoveBlankLines => ops::lines::remove_blank_lines(text),

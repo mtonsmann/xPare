@@ -501,6 +501,54 @@ struct StripControllerTests {
         ])
     }
 
+    /// HTML-to-Markdown is the one transient command that must consume the raw HTML
+    /// representation; injecting strip_html first would destroy the structure it is
+    /// meant to preserve.
+    @Test func runOnceHtmlToMarkdownUsesRawHtmlWithoutStripHtml() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let transformer = RecordingTransformer(output: "# Title")
+        let pb = FakePasteboard(snapshot:
+            PasteboardSnapshot(text: "<h1>Title</h1>", kind: .html))
+        let controller = StripController(
+            settings: Settings(mode: .onDemand, operations: [.stripHtml]),
+            pasteboard: pb,
+            transformer: transformer,
+            defaults: defaults
+        )
+
+        let outcome = await controller.runOnce(operations: [.htmlToMarkdown])
+        #expect(outcome == .stripped(changed: true))
+        #expect(pb.writes == ["# Title"])
+        #expect(transformer.configs == [
+            TransformConfig(operations: [.htmlToMarkdown])
+        ])
+        #expect(controller.settings.operations == [.stripHtml])
+    }
+
+    /// The conversion command is honest about representation: without HTML on the
+    /// clipboard it does not flatten RTF/plain content as a side effect.
+    @Test func runOnceHtmlToMarkdownIsNotApplicableWithoutHtml() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let transformer = RecordingTransformer(output: "should not run")
+        let pb = FakePasteboard(snapshot:
+            PasteboardSnapshot(text: "plain text", kind: .plain))
+        let controller = StripController(
+            settings: Settings(mode: .onDemand, operations: []),
+            pasteboard: pb,
+            transformer: transformer,
+            defaults: defaults
+        )
+
+        let outcome = await controller.runOnce(operations: [.htmlToMarkdown])
+        #expect(outcome == .notApplicable)
+        #expect(transformer.callCount == 0)
+        #expect(pb.writes.isEmpty)
+    }
+
     /// Continuous mode must refuse to run a reduction even if one is in the pipeline
     /// (D12): it would silently replace every copied buffer with a derived subset. An
     /// on-demand trigger still runs it.

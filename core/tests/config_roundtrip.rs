@@ -15,6 +15,7 @@ fn all_operations() -> Vec<Operation> {
     vec![
         Operation::StripHtml,
         Operation::StripMarkdown,
+        Operation::HtmlToMarkdown,
         Operation::CollapseWhitespace,
         Operation::TrimTrailingWhitespace,
         Operation::RemoveBlankLines,
@@ -211,6 +212,7 @@ fn operation_strategy() -> impl Strategy<Value = Operation> {
     prop_oneof![
         Just(Operation::StripHtml),
         Just(Operation::StripMarkdown),
+        Just(Operation::HtmlToMarkdown),
         Just(Operation::CollapseWhitespace),
         Just(Operation::TrimTrailingWhitespace),
         Just(Operation::RemoveBlankLines),
