@@ -96,7 +96,8 @@ current tree (see the decision log); they are listed for continuity.
   per-position table scans. *(Partially banked: `refang` dispatches by first marker
   byte instead of checking every marker at every byte; `defang` avoids an extra
   transformed-token wrapper allocation and prefilters marker families before
-  expensive idempotence checks.)*
+  expensive idempotence checks; `clean_urls` streams URL token reconstruction into
+  the final output instead of allocating per-token rebuilt strings.)*
 - **W6 — Shell responsiveness** (macOS): measure Swift↔Rust copies separately; move
   large transforms off the main actor while keeping pasteboard reads/writes on it;
   re-check `changeCount` before commit; keep `NSPasteboard.general` opt-in. Land the
@@ -354,4 +355,16 @@ let two agents edit the same file family at once.
   `default-log` 156.3 → 194.9 (+25%), `full-menu-log` 132.0 → 158.7 (+20%),
   and `lossy-utf8-log` 154.6 → 193.5 (+25%). No ABI, dependency, zeroization,
   ordering, or privacy posture change.
+- 2026-06-06: W5e accepted for `clean_urls`: URL candidates now stream their
+  cleaned token reconstruction directly into the transform output, and surviving
+  query pairs are emitted as they are scanned instead of first collecting a
+  `Vec<&str>`. This removes temporary rebuilt URL strings and the survivor list
+  while preserving the documented token, punctuation, query, fragment, tracker-key,
+  and idempotence rules. Same-worktree 128 MiB / 5-sample comparison against fresh
+  `origin/main`: `clean-urls-trackers` 278.2 → 310.4 MiB/s (+11.6%),
+  `default-log` 195.9 → 195.0 (−0.5%), `full-menu-log` 156.0 → 158.6 (+1.7%),
+  and `lossy-utf8-log` 191.1 → 193.4 (+1.2%). The unrelated IOC rows stayed within
+  the −3% rule (`defang-iocs` 129.9 → 128.1, `refang-iocs` 379.3 → 369.9). No ABI,
+  dependency, zeroization, ordering, or privacy posture change; the change removes
+  short-lived allocations and adds no transform-local scratch.
 - _Append one entry per accepted optimization: date, scenario, before→after median._

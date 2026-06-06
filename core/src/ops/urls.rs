@@ -120,7 +120,7 @@ pub fn clean_urls(input: &str) -> String {
     for (idx, ch) in input.char_indices() {
         if ch.is_whitespace() {
             if let Some(start) = token_start.take() {
-                out.push_str(&clean_token(&input[start..idx]));
+                push_clean_token(&mut out, &input[start..idx]);
             }
             out.push(ch);
         } else if token_start.is_none() {
@@ -128,17 +128,17 @@ pub fn clean_urls(input: &str) -> String {
         }
     }
     if let Some(start) = token_start {
-        out.push_str(&clean_token(&input[start..]));
+        push_clean_token(&mut out, &input[start..]);
     }
     out
 }
 
-/// Clean a single non-whitespace token. Non-URL tokens are returned borrowed-as-is
-/// (no allocation); URL tokens are rebuilt with trackers removed.
-fn clean_token(token: &str) -> std::borrow::Cow<'_, str> {
+/// Append a single non-whitespace token, cleaning URL candidates in place.
+fn push_clean_token(out: &mut String, token: &str) {
     let trimmed = trim_token_punct(token);
     if !is_url(trimmed) {
-        return std::borrow::Cow::Borrowed(token);
+        out.push_str(token);
+        return;
     }
     // Recover the exact surrounding punctuation we trimmed so we can re-emit it.
     // `trimmed` is a sub-slice of `token`, so subtracting pointer offsets is the
@@ -148,21 +148,14 @@ fn clean_token(token: &str) -> std::borrow::Cow<'_, str> {
     let prefix = &token[..prefix_len];
     let suffix = &token[prefix_len + trimmed.len()..];
 
-    let cleaned_core = clean_url_core(trimmed);
-    // If nothing changed and there was no surrounding punctuation, borrow the input.
-    if prefix.is_empty() && suffix.is_empty() && cleaned_core == trimmed {
-        return std::borrow::Cow::Borrowed(token);
-    }
-    let mut s = String::with_capacity(prefix.len() + cleaned_core.len() + suffix.len());
-    s.push_str(prefix);
-    s.push_str(&cleaned_core);
-    s.push_str(suffix);
-    std::borrow::Cow::Owned(s)
+    out.push_str(prefix);
+    push_clean_url_core(out, trimmed);
+    out.push_str(suffix);
 }
 
 /// Clean the URL "core" (punctuation already trimmed): split base/query/fragment,
 /// drop tracker pairs, reassemble.
-fn clean_url_core(core: &str) -> String {
+fn push_clean_url_core(out: &mut String, core: &str) {
     // Locate the first '?' and the first '#'. Per the URL grammar, a '#' before any
     // '?' means there is no query (the '?' would live inside the fragment).
     let hash = core.find('#');
@@ -176,12 +169,11 @@ fn clean_url_core(core: &str) -> String {
         (None, None) => (core, None, None),
     };
 
-    let mut out = String::with_capacity(core.len());
     out.push_str(base);
 
     if let Some(query) = query {
         // Keep surviving pairs in order, exact spelling.
-        let mut survivors: Vec<&str> = Vec::new();
+        let mut wrote_pair = false;
         for pair in query.split('&') {
             if pair.is_empty() {
                 // Drop empty pairs from '&&' or leading/trailing '&'.
@@ -194,14 +186,11 @@ fn clean_url_core(core: &str) -> String {
                 None => pair,
             };
             if !is_tracker_key(key) {
-                survivors.push(pair);
-            }
-        }
-        if !survivors.is_empty() {
-            out.push('?');
-            for (i, pair) in survivors.iter().enumerate() {
-                if i > 0 {
+                if wrote_pair {
                     out.push('&');
+                } else {
+                    out.push('?');
+                    wrote_pair = true;
                 }
                 out.push_str(pair);
             }
@@ -212,6 +201,4 @@ fn clean_url_core(core: &str) -> String {
         out.push('#');
         out.push_str(fragment);
     }
-
-    out
 }
