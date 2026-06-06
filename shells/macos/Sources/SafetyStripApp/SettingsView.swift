@@ -35,25 +35,8 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Sort lines") {
-                Toggle("Descending", isOn: Binding(
-                    get: { model.sortFlags().descending },
-                    set: { model.setSortFlags(descending: $0,
-                                              caseInsensitive: model.sortFlags().caseInsensitive) }
-                ))
-                .disabled(!model.isSortEnabled)
-                Toggle("Case-insensitive", isOn: Binding(
-                    get: { model.sortFlags().caseInsensitive },
-                    set: { model.setSortFlags(descending: model.sortFlags().descending,
-                                              caseInsensitive: $0) }
-                ))
-                .disabled(!model.isSortEnabled)
-                if !model.isSortEnabled {
-                    Text("Turn on “Sort lines” in the menu to configure these.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
+            // Sort's flags now live in the menu's "Sort options" submenu (one home per
+            // control), so they're intentionally not duplicated here.
 
             Section("Pipeline order") {
                 Toggle("Manual order (drag to arrange)", isOn: Binding(

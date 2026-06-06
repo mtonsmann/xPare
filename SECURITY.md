@@ -20,7 +20,7 @@ for the boundary and module map see [`ARCHITECTURE.md`](ARCHITECTURE.md).
 | **In-memory only + wipe** | Content lives in memory only for the transform; pipeline intermediates and the buffer that crosses the boundary are wiped after use | The core holds each pipeline intermediate in a `Zeroizing` buffer (wiped on drop); `ss_buffer_free` zeroizes the returned buffer before freeing it (`zeroize` crate) |
 | **Memory safety** | The untrusted-input parser cannot be memory-unsafe | `#![forbid(unsafe_code)]` in the core + `cargo xtask check-unsafe-forbid`; all `unsafe` is isolated to the tiny `core-ffi` shim, which uses `catch_unwind` so a panic is never UB across FFI |
 | **No telemetry / analytics** | The tool phones home to no one | Same mechanisms as "no network" + "no persistence" — there is no code that could |
-| **Minimal OS privilege** | The macOS shell requests the least it can | App Sandbox + Hardened Runtime; entitlements file is *only* `app-sandbox = true`, verified by `cargo xtask check-entitlements`; no Accessibility / Input Monitoring (hotkey uses Carbon `RegisterEventHotKey`); in-place clipboard rewrite only, never paste simulation |
+| **Minimal OS privilege** | The macOS shell requests the least it can | App Sandbox + Hardened Runtime; entitlements file is *only* `app-sandbox = true`, verified by `cargo xtask check-entitlements`; official Developer ID releases sign with that file and verify the signed entitlement payload is still minimal; no Accessibility / Input Monitoring (hotkey uses Carbon `RegisterEventHotKey`); in-place clipboard rewrite only, never paste simulation |
 | **Stable, auditable boundary** | The core/shell contract is small and frozen | Checked-in C header + `cargo xtask check-abi` (drift fails CI) |
 
 Every check above is part of `cargo xtask ci`, which CI runs verbatim
@@ -46,6 +46,18 @@ world.**
 
 See the boundary diagram in [`ARCHITECTURE.md`](ARCHITECTURE.md#the-trust-boundary).
 
+## Threat model boundaries
+
+SafetyStrip protects users from **SafetyStrip itself** becoming a leak, persistence
+sink, over-privileged clipboard tool, or memory-unsafe parser. It does not claim to
+protect the clipboard from every same-user local process. On macOS, other local
+apps may be able to read or write the general pasteboard; a malicious or buggy local
+pasteboard writer can replace content before SafetyStrip reads it, race a rewrite,
+or feed oversized/rich malformed data. SafetyStrip treats that as a local
+pasteboard race or denial-of-service condition, not as a confidentiality boundary it
+can enforce. The enforced guarantees are that SafetyStrip will not exfiltrate,
+persist, log, or memory-unsafely parse the content it is handed.
+
 ## Handling of adversarial input
 
 Clipboard markup is attacker-influenced, so the core treats all input as hostile:
@@ -62,6 +74,13 @@ Clipboard markup is attacker-influenced, so the core treats all input as hostile
   representation through `StripHtml`; the canonical sanitization order is
   `StripHtml` → `StripMarkdown`. See
   [the transform guardrail](docs/guardrails/transform-correctness-and-adversarial-input.md).
+- **Size limits are enforced before the core transform** — the macOS shell refuses
+  extracted text above its RAM-proportional limit, and the FFI rejects anything above
+  `SS_MAX_INPUT_BYTES` before reading or allocating. The macOS shell also checks raw
+  HTML/RTF representation bytes before decoding them when AppKit exposes those
+  bytes. Rich-format extraction itself is still platform work, so the limit is a
+  pre-core-transform guard, not a streaming rich-format parser for every native
+  format.
 
 ## Known limitations (security-relevant)
 
@@ -74,7 +93,22 @@ security-relevant ones:
   large inputs — see [`docs/performance.md`](docs/performance.md)). It remains
   *best-effort*: the caller's own input buffer (e.g. the shell's pasteboard read) and
   the OS clipboard itself are outside the core's control, and the allocator may retain
-  freed pages briefly before reuse.
+  freed pages briefly before reuse. The invalid-UTF-8 FFI path is covered by this:
+  when lossy decoding needs an owned replacement string, that temporary copy is held
+  in a `Zeroizing` buffer and wiped on drop; the caller's original byte buffer remains
+  outside the FFI's ownership.
+- **Continuous mode is best-effort under local races.** It polls the pasteboard
+  `changeCount`; it does not lock the system pasteboard or prove that no other local
+  writer changed it before SafetyStrip read or after it rewrote the pasteboard. The
+  shell suppresses SafetyStrip self-write generations, coalesces continuous callbacks
+  while a strip is running, and drops stale transform completions if `changeCount`
+  moved in flight. SafetyStrip still performs content-free outcomes only and applies
+  the same size limits to each attempted run.
+- **Official release sandboxing is part of the release gate.** Unsigned/ad-hoc
+  previews are for testing and are not official downloadable binaries. `make dist`
+  and the release workflow require the checked-in App Sandbox entitlements for the
+  Developer ID signature and verify the signed app's entitlement payload is still
+  minimal.
 - **`StripMarkdown` alone is not a sanitizer** for hostile `<script>` content — use
   `StripHtml` → `StripMarkdown`.
 

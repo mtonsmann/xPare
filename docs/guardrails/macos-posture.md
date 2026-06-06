@@ -33,24 +33,28 @@ should distrust, so the posture is deliberately minimal and is checked mechanica
 
    The checked-in entitlements file lives at
    `shells/macos/SafetyStrip.entitlements` (the path `check-entitlements` reads).
+4. **Official Developer ID releases must use that entitlements file.** Unsigned or
+   ad-hoc preview builds are not official binaries. `release.sh dist` defaults to
+   `shells/macos/SafetyStrip.entitlements`, rejects alternate resolved paths, signs
+   with it, and verifies the signed payload with `codesign -d --entitlements :-`.
 
 ### Hotkey
 
-4. **Use Carbon `RegisterEventHotKey`** for the global hotkey (default **⌥⌘V**).
+5. **Use Carbon `RegisterEventHotKey`** for the global hotkey (default **⌥⌘V**).
    **Do not** use `CGEventTap` or a global `NSEvent` monitor: those require the
    Accessibility or Input Monitoring TCC grants. `RegisterEventHotKey` registers one
    specific chord and needs neither, which is the whole point.
 
 ### Pasteboard
 
-5. **In-place rewrite only.** Read `NSPasteboard.general`, extract the best text
+6. **In-place rewrite only.** Read `NSPasteboard.general`, extract the best text
    representation (prefer the HTML rep → core `StripHtml`), transform via the core,
    and write the result back to the same pasteboard. **Never** simulate a paste
    (synthesizing Cmd-V) — that needs Accessibility and can target the wrong app.
-6. **No persistence or logging of pasteboard content** — see
+7. **No persistence or logging of pasteboard content** — see
    [privacy-and-data-handling](privacy-and-data-handling.md). Free the core's output
    buffer with `ss_buffer_free` (it is zeroized on free).
-7. **Refuse oversized clipboards gracefully.** Before handing pasteboard text to the
+8. **Refuse oversized clipboards gracefully.** Before handing pasteboard text to the
    core, check it against a RAM-proportional ceiling
    (`StripController.defaultMaxInputBytes()` = `min(SS_MAX_INPUT_BYTES,
    physicalMemory / 10)`). A larger clipboard yields a content-free "too large"
@@ -58,17 +62,28 @@ should distrust, so the posture is deliberately minimal and is checked mechanica
    paste. This mirrors the OS clipboard's own memory-bound nature; the core's
    `SS_MAX_INPUT_BYTES` (ABI v2) is the hard backstop beneath it. See `DESIGN.md`
    → *Performance & large inputs → Input size ceiling*.
+9. **Treat local pasteboard writers as a race/DoS boundary, not a confidentiality
+   boundary.** Another same-user process can write the general pasteboard before a
+   read, during a transform, or after the in-place rewrite. SafetyStrip must still
+   avoid logging/persistence/exfiltration and must bound each transform, but it does
+   not claim to lock the pasteboard against local writers.
 
 ### Continuous mode
 
-8. **Owned poller on `changeCount`, fully torn down when off.** Continuous mode polls
+10. **Owned poller on `changeCount`, fully torn down when off.** Continuous mode polls
    `NSPasteboard.general.changeCount` on a **500 ms** default interval. When the mode
    is disabled the timer/poller object must be invalidated **and** niled — no loop
    runs when the feature is off. On-demand mode (the default) does no polling at all.
+11. **No stronger ordering is implied.** Polling is best-effort; it can miss
+   intermediate values if multiple writes happen between ticks and it can race a
+   writer before the read or after the rewrite. The shell suppresses SafetyStrip
+   self-write generations, drops stale transform completions when `changeCount`
+   moved in flight, and coalesces callbacks while a strip is running. Those controls
+   belong in the shell and must not change the core ABI.
 
 ### Responsiveness
 
-9. **Transform off the main thread; indicate only when it's slow.** `stripNow` runs
+12. **Transform off the main thread; indicate only when it's slow.** `stripNow` runs
    the core transform on a background task — the menu-bar UI must never block, even on
    a large clipboard. It is **threshold-gated**: `onStrippingChange(true)` fires only
    if a run outlasts `busyThreshold` (default 400 ms), and `(false)` when it finishes,
@@ -94,6 +109,9 @@ you from. Full rationale: [`DESIGN.md`](../../DESIGN.md) (D8, D9) and
   **requires** `app-sandbox = true`, and **fails** on any banned key/prefix above. A
   missing file is a failure (the entitlements file is a required deliverable). The
   check is a portable XML scan (no `plutil`), so it runs on the Linux CI gate too.
+- `shells/macos/release.sh dist` — resolves the same file by default, rejects
+  alternate resolved paths, refuses to sign if it is missing, and verifies that the
+  signed payload is still minimal after Developer ID signing.
 - The macOS build smoke (`swift build`) runs best-effort on macOS CI.
 
 ## What a PR must call out
@@ -101,6 +119,8 @@ you from. Full rationale: [`DESIGN.md`](../../DESIGN.md) (D8, D9) and
 - **Any new entitlement** — this is a posture change; justify it, and update this
   guardrail and `SECURITY.md`. (Expect strong resistance: the intended file is
   *only* app-sandbox.)
+- Any release-signing path that omits the checked-in entitlements, accepts alternate
+  entitlement files, or disables the post-signing entitlement verification.
 - Any change to the hotkey registration mechanism (must remain Accessibility-free).
 - Any change to pasteboard read/write that could persist, log, or copy content, or
   that introduces paste simulation.

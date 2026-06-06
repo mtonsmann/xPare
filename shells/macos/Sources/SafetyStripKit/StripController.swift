@@ -48,6 +48,9 @@ public final class StripController {
 
     private var monitor: ClipboardMonitor?
     private var hotkey: HotkeyManager?
+    private var lastSelfWriteChangeCount: Int?
+    private var continuousStripInFlight = false
+    private var continuousStripPending = false
 
     /// Called on the main actor when the controller starts (`true`) or stops
     /// (`false`) showing the threshold-gated "Stripping…" indicator. Set by the UI.
@@ -100,6 +103,8 @@ public final class StripController {
     public func deactivate() {
         monitor?.stop()
         monitor = nil
+        continuousStripInFlight = false
+        continuousStripPending = false
         hotkey?.unregister()
         hotkey = nil
     }
@@ -147,7 +152,8 @@ public final class StripController {
     ) async -> StripOutcome {
         await perform(trigger: trigger) { snapshot in
             var ops = operations
-            if snapshot.kind == .html, !ops.contains(.stripHtml) {
+            if snapshot.kind == .html {
+                ops.removeAll { $0 == .stripHtml }
                 ops.insert(.stripHtml, at: 0)
             }
             return TransformConfig(operations: ops)
@@ -162,12 +168,24 @@ public final class StripController {
         trigger: StripTrigger,
         makeConfig: (PasteboardSnapshot) -> TransformConfig
     ) async -> StripOutcome {
-        guard let snapshot = pasteboard.readBest() else {
+        if trigger == .clipboardChanged,
+           pasteboard.changeCount == lastSelfWriteChangeCount {
+            return .stripped(changed: false)
+        }
+
+        let read: PasteboardRead
+        switch pasteboard.readBest(maxRepresentationBytes: maxInputBytes) {
+        case .content(let content):
+            read = content
+        case .empty:
             return .empty
+        case .tooLarge(let bytes, _):
+            return .tooLarge(bytes: bytes)
         }
 
         // Safety ceiling: refuse an oversized clipboard rather than risk an
         // out-of-memory abort transforming it. The clipboard is left untouched.
+        let snapshot = read.snapshot
         let byteCount = snapshot.text.utf8.count
         if byteCount > maxInputBytes {
             return .tooLarge(bytes: byteCount)
@@ -214,6 +232,10 @@ public final class StripController {
             return .failed
         }
 
+        guard pasteboard.changeCount == read.changeCount else {
+            return .stripped(changed: false)
+        }
+
         // Only rewrite when the result actually differs from what a plain paste would
         // have produced, to avoid bumping the change count needlessly. For HTML/RTF
         // sources there was no plain string to compare to, so we always write.
@@ -221,17 +243,18 @@ public final class StripController {
         if let priorPlain, priorPlain == output {
             return .stripped(changed: false)
         }
-        pasteboard.writePlain(output)
+        lastSelfWriteChangeCount = pasteboard.writePlain(output)
         return .stripped(changed: true)
     }
 
     /// Build the config to run for a given snapshot. The user's ordered
     /// operations are applied as-is, except that an HTML source is always run
     /// through `strip_html` first (the shell contract prefers `public.html` and
-    /// hands it to the core's stripper), even if the user did not list it.
+    /// hands it to the core's stripper), even if the user listed it later.
     func effectiveConfig(for snapshot: PasteboardSnapshot) -> TransformConfig {
         var ops: [SafetyStripCore.Operation] = settings.operations
-        if snapshot.kind == .html, !ops.contains(.stripHtml) {
+        if snapshot.kind == .html {
+            ops.removeAll { $0 == .stripHtml }
             ops.insert(.stripHtml, at: 0)
         }
         return TransformConfig(operations: ops)
@@ -259,7 +282,7 @@ public final class StripController {
             if monitor == nil {
                 monitor = ClipboardMonitor(pasteboard: pasteboard) { [weak self] in
                     guard let self else { return }
-                    Task { @MainActor in _ = await self.stripNow(trigger: .clipboardChanged) }
+                    self.handleContinuousClipboardChange()
                 }
             }
             monitor?.start(intervalMs: settings.pollIntervalMs)
@@ -267,6 +290,34 @@ public final class StripController {
             // Hard requirement: no timer/loop runs when continuous is off.
             monitor?.stop()
             monitor = nil
+        }
+    }
+
+    private func handleContinuousClipboardChange() {
+        if pasteboard.changeCount == lastSelfWriteChangeCount {
+            return
+        }
+
+        if continuousStripInFlight {
+            continuousStripPending = true
+            return
+        }
+
+        continuousStripInFlight = true
+        Task { @MainActor [weak self] in
+            await self?.drainContinuousStrips()
+        }
+    }
+
+    private func drainContinuousStrips() async {
+        while true {
+            continuousStripPending = false
+            _ = await stripNow(trigger: .clipboardChanged)
+
+            if !continuousStripPending {
+                continuousStripInFlight = false
+                return
+            }
         }
     }
 }

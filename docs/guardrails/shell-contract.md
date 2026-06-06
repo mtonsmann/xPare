@@ -25,16 +25,25 @@ new platform.
    plain representation**. Prefer the HTML representation and feed it to the core's
    `StripHtml` — that is the path that neutralizes `<script>`/`<style>` and tags.
    Falling back to a plain-text representation is fine when no rich form exists. This
-   extraction is the shell's (best-effort, platform-specific) job.
+   extraction is the shell's (best-effort, platform-specific) job. The shell's size
+   ceiling applies to raw rich representation bytes when the platform exposes them,
+   and to extracted text before calling the core. Do not rely on this as a universal
+   streaming pre-parse limit for every native format.
 2. **Clipboard write (in place).** Write the transformed text **back to the clipboard
    in place**. Never simulate a paste (e.g. synthesizing Cmd-V/Ctrl-V) — that needs
    intrusive input permissions and can fire into the wrong app. Replace the
-   clipboard's own contents only.
+   clipboard's own contents only. This is not a lock against same-user local
+   pasteboard writers; another process may race the read/transform/rewrite window.
 3. **Change detection.** Support a **continuous mode** that watches the platform
    clipboard change signal and auto-cleans. It must be an **owned watcher that is
    fully torn down (stopped and released) when the mode is off** — no loop/timer runs
    when disabled. Default poll interval: **500 ms** where the platform has no change
-   event. On-demand mode (the default) does no watching.
+   event. On-demand mode (the default) does no watching. Polling is best-effort:
+   repeated writes can collapse between ticks, and a write can happen while a
+   transform of an older snapshot is still running. Shells should suppress their own
+   write generations, drop stale completions when the clipboard generation changed,
+   and coalesce callbacks while a strip is already running; those controls are shell
+   concerns, not ABI changes.
 4. **Tray / menu-bar UI.** A lightweight status-area UI: toggle continuous mode,
    trigger an on-demand clean, open settings, quit. No main window required.
 5. **Global hotkey.** A configurable hotkey for the on-demand clean (default

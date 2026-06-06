@@ -26,6 +26,14 @@ The boundary that enforces this is the core/shell split: the core is the untrust
 parser and cannot be memory-unsafe or leak; the shell is the only thing that talks
 to the OS. See [`SECURITY.md`](SECURITY.md) for the posture as a checklist.
 
+The explicit non-goal is defending the system pasteboard from every same-user local
+process. Another local app may write the pasteboard before SafetyStrip reads it,
+replace it while a transform is in flight, or feed rich/oversized data to consume
+resources. SafetyStrip's security promise is narrower and enforceable: when it is
+the component handling clipboard content, it does not exfiltrate, persist, log, or
+memory-unsafely parse that content, and it refuses oversized text before calling the
+core.
+
 ## Decision log
 
 These are settled. Each entry is a decision, the choice, and why.
@@ -134,6 +142,13 @@ loop runs when the feature is off* — not a paused timer, but no timer object a
 On-demand mode (the default) does no polling: a hotkey triggers a single
 read → transform → in-place rewrite.
 
+This is a best-effort convenience, not a pasteboard lock or an inter-process
+compare-and-swap. The shell suppresses SafetyStrip self-write generations, drops a
+transform completion if `changeCount` moved while it was running, and coalesces
+continuous callbacks while a strip is already in flight. A local pasteboard writer
+can still race before the read or after the rewrite; those controls are shell-only
+and do not change the core ABI.
+
 ### D9 — Global hotkey: Carbon `RegisterEventHotKey`
 
 The macOS hotkey (default **⌥⌘V**) uses Carbon's `RegisterEventHotKey`. **Why not a
@@ -236,6 +251,11 @@ the rare case a user wants to place an ambiguous op (e.g. `ChangeCase`) themselv
   simulates a paste (`Cmd-V`), which would need Accessibility and could fire into
   the wrong app; it only replaces the clipboard's own contents. See
   [the macOS posture guardrail](docs/guardrails/macos-posture.md).
+- **Release posture:** unsigned/ad-hoc preview archives are test artifacts, not
+  official binaries. Official `make dist` / release-workflow assets must be
+  Developer ID signed with the checked-in App Sandbox entitlements, then notarized
+  and stapled; the release script verifies the signed entitlement payload is still
+  minimal.
 - **Dependencies:** only boring, audited, API-stable crates with no OS/IO/network
   capability — `serde`/`serde_json` (config), `pulldown-cmark` (Markdown), `zeroize`
   (buffer wipe); `cbindgen` and `proptest` are tooling/dev-only; `libfuzzer-sys` and
@@ -401,7 +421,9 @@ These are accepted trade-offs, documented so they are not mistaken for defects.
   throughput cost on very large inputs (see [`docs/performance.md`](docs/performance.md)).
   It remains best-effort: the caller's input buffer and the OS clipboard itself are
   outside the core's control, and the allocator may briefly retain freed pages before
-  reuse.
+  reuse. The invalid-UTF-8 FFI path is fixed within that ownership model: if lossy
+  decoding creates an owned replacement string, that temporary is `Zeroizing` and is
+  wiped on drop; the original caller-owned byte buffer remains outside the boundary.
 - **`StripMarkdown` alone is not a script-neutralizing sanitizer.** It delegates
   *embedded* HTML to `strip_html` best-effort, but the supported path for hostile
   content is `StripHtml` → `StripMarkdown`. Do not rely on `StripMarkdown` by itself
@@ -425,7 +447,11 @@ These are accepted trade-offs, documented so they are not mistaken for defects.
   contract under *Transform semantics*.
 - **Rich→plain extraction is the shell's best-effort.** The core transforms whatever
   text the shell extracts; choosing the best clipboard representation (preferring
-  HTML) is a shell responsibility and is itself heuristic per platform.
+  HTML) is a shell responsibility and is itself heuristic per platform. The macOS
+  shell checks raw HTML/RTF representation bytes before decoding them when AppKit
+  exposes those bytes, then re-checks extracted UTF-8 before calling the core. This
+  is still not a streaming rich-format parser: platform formats without raw byte
+  access may require materialization before the extracted-text ceiling can apply.
 - **No full Xcode build in this environment.** The development environment is
   Command-Line-Tools-only, so `swift build` compiles the macOS shell sources but a
   signed, notarized `.app` is documented rather than produced. The C ABI, the FFI
@@ -433,7 +459,9 @@ These are accepted trade-offs, documented so they are not mistaken for defects.
 - **Continuous mode is polling, not event-driven.** macOS exposes no clipboard-change
   notification, so the poller checks `changeCount` on an interval (default 500 ms);
   there is an inherent up-to-interval latency in continuous mode (on-demand mode is
-  immediate).
+  immediate). It suppresses SafetyStrip self-writes and drops stale transform
+  completions, but it does not serialize every same-user pasteboard race: a local
+  writer can still change the pasteboard before SafetyStrip reads or after it writes.
 
 ## Adopt if the project grows
 

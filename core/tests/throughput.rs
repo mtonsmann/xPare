@@ -34,7 +34,7 @@ use std::fmt::Write as _;
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
-use safetystrip_core::{transform, CaseKind, Config, Operation};
+use safetystrip_core::{transform, BracketStyle, CaseKind, Config, Operation};
 
 const MIB: usize = 1024 * 1024;
 
@@ -150,6 +150,28 @@ fn build_mixed_ws(target: usize) -> String {
 fn build_unicode(target: usize) -> String {
     repeat_to(
         "Hello WORLD. this is a TEST sentence! straße ärger Größe. другой язык здесь. ",
+        target,
+    )
+}
+
+/// Prose peppered with every indicator class `defang` rewrites — URLs, emails,
+/// IPv4, IPv6, and bare domains — so the tokenizer + classifiers all do real work.
+fn build_iocs(target: usize) -> String {
+    repeat_to(
+        "Contact ops@example.com or visit https://www.example.com/path?q=1 today. \
+         Block 192.168.10.20 and 2001:db8::dead:beef at the edge, and avoid \
+         evil-domain.example.org plus http://tracker.test/landing for now. ",
+        target,
+    )
+}
+
+/// URLs carrying a realistic mix of tracking and functional query params, so
+/// `clean_urls` parses and rebuilds a non-trivial query string on every token.
+fn build_tracker_urls(target: usize) -> String {
+    repeat_to(
+        "https://shop.example.com/p/12345?utm_source=newsletter&utm_medium=email&\
+         utm_campaign=spring&fbclid=AbCdEf123&id=42&ref=home&page=3#reviews and \
+         some prose between the links. ",
         target,
     )
 }
@@ -304,6 +326,8 @@ fn throughput_baseline() {
     let markdown = build_markdown(target);
     let mixed_ws = build_mixed_ws(target);
     let unicode = build_unicode(target);
+    let iocs = build_iocs(target);
+    let tracker_urls = build_tracker_urls(target);
 
     bench_transform(
         "strip-html-plain",
@@ -436,6 +460,45 @@ fn throughput_baseline() {
             descending: false,
             case_insensitive: false,
         }]),
+        n,
+        false,
+        floor,
+        &mut failures,
+    );
+    bench_transform(
+        "defang-iocs",
+        &iocs,
+        &cfg(vec![Operation::Defang {
+            style: BracketStyle::Square,
+        }]),
+        n,
+        false,
+        floor,
+        &mut failures,
+    );
+    {
+        // Refang over already-defanged input (the realistic case): defang the IOC
+        // buffer once, then measure the inverse pass.
+        let defanged = transform(
+            &iocs,
+            &cfg(vec![Operation::Defang {
+                style: BracketStyle::Square,
+            }]),
+        );
+        bench_transform(
+            "refang-iocs",
+            &defanged,
+            &cfg(vec![Operation::Refang]),
+            n,
+            false,
+            floor,
+            &mut failures,
+        );
+    }
+    bench_transform(
+        "clean-urls-trackers",
+        &tracker_urls,
+        &cfg(vec![Operation::CleanUrls]),
         n,
         false,
         floor,

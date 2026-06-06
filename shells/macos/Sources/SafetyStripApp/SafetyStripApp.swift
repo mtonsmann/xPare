@@ -338,6 +338,21 @@ private struct MenuContent: View {
             get: { model.isSortEnabled },
             set: { model.setSort(enabled: $0) }
         ))
+        // Sort's two flags as a native submenu next to the on/off toggle (disabled
+        // until sort is on). Bounded-choice params belong in submenus (D12).
+        Menu("Sort options") {
+            Toggle("Descending", isOn: Binding(
+                get: { model.sortFlags().descending },
+                set: { model.setSortFlags(descending: $0,
+                                          caseInsensitive: model.sortFlags().caseInsensitive) }
+            ))
+            Toggle("Case-insensitive", isOn: Binding(
+                get: { model.sortFlags().caseInsensitive },
+                set: { model.setSortFlags(descending: model.sortFlags().descending,
+                                          caseInsensitive: $0) }
+            ))
+        }
+        .disabled(!model.isSortEnabled)
         Toggle("Defang IOCs", isOn: Binding(
             get: { model.isDefangEnabled },
             set: { model.setDefang(enabled: $0) }
