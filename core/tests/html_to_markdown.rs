@@ -32,6 +32,18 @@ fn drops_active_content_and_unsafe_links() {
 }
 
 #[test]
+fn escapes_entity_decoded_raw_html_markdown() {
+    let input = concat!(
+        "<p>&lt;script&gt;alert(1)&lt;/script&gt;</p>",
+        "<p>&lt;img src=x onerror=alert(1)&gt;</p>"
+    );
+    assert_eq!(
+        html_to_markdown(input),
+        "\\<script\\>alert(1)\\</script\\>\n\n\\<img src=x onerror=alert(1)\\>"
+    );
+}
+
+#[test]
 fn converts_preformatted_code() {
     let input = "<pre><code>fn main() {\n  println!(\"x\");\n}</code></pre>";
     assert_eq!(
@@ -41,9 +53,24 @@ fn converts_preformatted_code() {
 }
 
 #[test]
+fn preformatted_code_fence_outgrows_copied_backticks() {
+    let input = "<pre>```\n&lt;img src=x onerror=alert(1)&gt;</pre>";
+    assert_eq!(
+        html_to_markdown(input),
+        "````\n```\n<img src=x onerror=alert(1)>\n````"
+    );
+}
+
+#[test]
+fn inline_code_delimiter_outgrows_copied_backticks() {
+    let input = "<p><code>`&lt;script&gt;`</code></p>";
+    assert_eq!(html_to_markdown(input), "`` `<script>` ``");
+}
+
+#[test]
 fn handles_malformed_tags_without_panicking() {
     assert_eq!(html_to_markdown("keep<script>forever"), "keep");
-    assert_eq!(html_to_markdown("a < b and <not-closed"), "a < b and");
+    assert_eq!(html_to_markdown("a < b and <not-closed"), "a \\< b and");
     assert_eq!(html_to_markdown("x<!-- never closed"), "x");
 }
 

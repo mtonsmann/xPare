@@ -138,8 +138,11 @@ Security framing: the converter drops comments, declarations, processing
 instructions, and `<script>`/`<style>` raw-text bodies. It emits link destinations
 only for inert schemes (`http`, `https`, `mailto`) and relative/hash URLs; unsafe
 schemes such as `javascript:`, `data:`, `vbscript:`, and `file:` are dropped while
-link text survives. It is surfaced by the shell as an explicit one-shot command, so
-continuous mode never silently converts every copied web fragment to Markdown.
+link text survives. Entity-decoded text is escaped so raw HTML stays inert in the
+Markdown source, and inline/pre code delimiters are chosen longer than any copied
+backtick run so code content cannot break out of its Markdown wrapper. It is
+surfaced by the shell as an explicit one-shot command, so continuous mode never
+silently converts every copied web fragment to Markdown.
 
 ### D7 — Buffer ownership: leaked `Box<[u8]>`, freed + zeroized
 

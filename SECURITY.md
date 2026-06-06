@@ -97,8 +97,10 @@ Clipboard markup is attacker-influenced, so the core treats all input as hostile
   [the transform guardrail](docs/guardrails/transform-correctness-and-adversarial-input.md).
 - **HTML-to-Markdown is explicit conversion, not sanitization policy** — the
   one-shot converter consumes raw HTML to preserve structure, but still drops
-  `<script>`/`<style>` bodies and unsafe link schemes. It is not injected into
-  continuous mode or the canonical sanitization pipeline.
+  `<script>`/`<style>` bodies and unsafe link schemes. Entity-decoded text is
+  escaped where Markdown could reinterpret it as raw HTML, and copied code/pre
+  content uses delimiters that cannot be closed by the copied backtick run. It is
+  not injected into continuous mode or the canonical sanitization pipeline.
 - **Size limits are enforced before the core transform** — the macOS shell refuses
   extracted text above its RAM-proportional limit, and the FFI rejects anything above
   `SS_MAX_INPUT_BYTES` before reading or allocating. The macOS shell also checks raw

@@ -20,11 +20,15 @@
 //!   `data:`, `vbscript:`, and `file:` are dropped while keeping link text.
 //! * HTML entities are decoded with the same bounded curated decoder used by
 //!   `strip_html`.
+//! * Entity-decoded Markdown text escapes raw HTML delimiters, and code/pre
+//!   delimiters are chosen longer than any copied backtick run, so inert copied
+//!   content cannot break out as active Markdown HTML.
 //!
 //! The output is Markdown plain text. It is intentionally suitable for a one-shot
 //! "convert clipboard to Markdown" command, not a persistent cleanup toggle.
 
 use super::html;
+use zeroize::Zeroizing;
 
 /// Convert a common copied-web HTML fragment to Markdown plain text.
 pub fn html_to_markdown(input: &str) -> String {
@@ -213,6 +217,8 @@ struct MarkdownOut {
     pending_space: bool,
     pre_depth: usize,
     code_depth: usize,
+    pre_buffer: Zeroizing<String>,
+    code_buffer: Zeroizing<String>,
     list_stack: Vec<ListKind>,
     link_stack: Vec<Option<String>>,
     first_cell_in_row: bool,
@@ -225,6 +231,8 @@ impl MarkdownOut {
             pending_space: false,
             pre_depth: 0,
             code_depth: 0,
+            pre_buffer: Zeroizing::new(String::new()),
+            code_buffer: Zeroizing::new(String::new()),
             list_stack: Vec::new(),
             link_stack: Vec::new(),
             first_cell_in_row: true,
@@ -272,12 +280,16 @@ impl MarkdownOut {
         } else if eq_ignore_ascii_case(name, "code") {
             if self.pre_depth == 0 {
                 self.flush_pending_space();
-                self.text.push('`');
+                if self.code_depth == 0 {
+                    self.code_buffer.clear();
+                }
                 self.code_depth += 1;
             }
         } else if eq_ignore_ascii_case(name, "pre") {
             self.ensure_blank_line();
-            self.text.push_str("```\n");
+            if self.pre_depth == 0 {
+                self.pre_buffer.clear();
+            }
             self.pre_depth += 1;
         } else if eq_ignore_ascii_case(name, "blockquote") {
             self.ensure_blank_line();
@@ -322,19 +334,18 @@ impl MarkdownOut {
             self.text.push('_');
         } else if eq_ignore_ascii_case(name, "code") {
             if self.pre_depth == 0 && self.code_depth > 0 {
-                self.trim_trailing_inline();
-                self.text.push('`');
                 self.code_depth -= 1;
+                if self.code_depth == 0 {
+                    self.flush_inline_code();
+                }
             }
         } else if eq_ignore_ascii_case(name, "pre") {
             if self.pre_depth > 0 {
                 self.pre_depth -= 1;
             }
-            if !self.text.ends_with('\n') {
-                self.text.push('\n');
+            if self.pre_depth == 0 {
+                self.flush_pre_block();
             }
-            self.text.push_str("```\n\n");
-            self.pending_space = false;
         } else if eq_ignore_ascii_case(name, "blockquote") || eq_ignore_ascii_case(name, "table") {
             self.ensure_blank_line();
         } else if eq_ignore_ascii_case(name, "tr") {
@@ -375,17 +386,16 @@ impl MarkdownOut {
         }
         let decoded = html::decode_entities(raw);
         if self.pre_depth > 0 {
-            self.text.push_str(&decoded);
+            self.pre_buffer.push_str(&decoded);
             self.pending_space = false;
             return;
         }
         if self.code_depth > 0 {
-            self.flush_pending_space();
             for c in decoded.chars() {
                 if c == '\n' || c == '\r' {
-                    self.pending_space = true;
+                    self.code_buffer.push(' ');
                 } else {
-                    self.text.push(c);
+                    self.code_buffer.push(c);
                 }
             }
             return;
@@ -431,6 +441,36 @@ impl MarkdownOut {
         while matches!(self.text.as_bytes().last(), Some(b' ' | b'\t')) {
             self.text.pop();
         }
+    }
+
+    fn flush_inline_code(&mut self) {
+        let delimiter = backtick_delimiter(&self.code_buffer, 1);
+        self.text.push_str(&delimiter);
+        let needs_edge_space = self.code_buffer.starts_with('`') || self.code_buffer.ends_with('`');
+        if needs_edge_space {
+            self.text.push(' ');
+        }
+        self.text.push_str(&self.code_buffer);
+        if needs_edge_space {
+            self.text.push(' ');
+        }
+        self.text.push_str(&delimiter);
+        self.code_buffer.clear();
+        self.pending_space = false;
+    }
+
+    fn flush_pre_block(&mut self) {
+        let delimiter = backtick_delimiter(&self.pre_buffer, 3);
+        self.text.push_str(&delimiter);
+        self.text.push('\n');
+        self.text.push_str(&self.pre_buffer);
+        if !self.pre_buffer.ends_with('\n') {
+            self.text.push('\n');
+        }
+        self.text.push_str(&delimiter);
+        self.text.push_str("\n\n");
+        self.pre_buffer.clear();
+        self.pending_space = false;
     }
 
     fn finish(mut self) -> String {
@@ -558,12 +598,31 @@ fn safe_link_destination(href: &str) -> Option<String> {
 
 fn push_escaped_text_char(out: &mut String, c: char) {
     match c {
-        '\\' | '*' | '_' | '[' | ']' | '`' | '|' => {
+        '\\' | '*' | '_' | '[' | ']' | '`' | '|' | '<' | '>' => {
             out.push('\\');
             out.push(c);
         }
         _ => out.push(c),
     }
+}
+
+fn backtick_delimiter(content: &str, minimum: usize) -> String {
+    let needed = max_run(content, '`').saturating_add(1).max(minimum);
+    "`".repeat(needed)
+}
+
+fn max_run(content: &str, needle: char) -> usize {
+    let mut longest = 0usize;
+    let mut current = 0usize;
+    for c in content.chars() {
+        if c == needle {
+            current = current.saturating_add(1);
+            longest = longest.max(current);
+        } else {
+            current = 0;
+        }
+    }
+    longest
 }
 
 fn needs_space_before(out: &str) -> bool {
