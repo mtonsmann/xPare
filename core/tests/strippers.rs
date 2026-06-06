@@ -316,6 +316,29 @@ mod markdown_regression {
     }
 
     #[test]
+    fn plain_log_soft_breaks_and_paragraphs() {
+        let input = "\
+2026-06-05T00:00:00Z INFO request_id=alpha service=api
+2026-06-05T00:00:00Z WARN request_id=beta service=api
+
+2026-06-05T00:00:00Z DEBUG request_id=gamma service=api";
+        assert_eq!(
+            strip_markdown(input),
+            "2026-06-05T00:00:00Z INFO request_id=alpha service=api \
+2026-06-05T00:00:00Z WARN request_id=beta service=api\n\n\
+2026-06-05T00:00:00Z DEBUG request_id=gamma service=api"
+        );
+    }
+
+    #[test]
+    fn plain_log_fast_path_preserves_non_ascii_edge_whitespace() {
+        assert_eq!(
+            strip_markdown("\u{00a0}edge\nvalue\u{00a0}"),
+            "\u{00a0}edge value\u{00a0}"
+        );
+    }
+
+    #[test]
     fn hard_break_becomes_newline() {
         // Trailing backslash is a hard break.
         assert_eq!(strip_markdown("line one\\\nline two"), "line one\nline two");

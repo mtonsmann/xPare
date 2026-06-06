@@ -38,15 +38,16 @@ make bench-large     # heavy log files up to 256 MB
 Measured 2026-06-06 on **Apple M5 Pro, 18 cores, 48 GB, arm64**, via
 `make perf PERF_MIB=128 PERF_SAMPLES=5` (median of 5), on the current code **with
 pipeline intermediate zeroization** and the W1 byte-oriented
-`collapse_whitespace` path, W1c marker-free HTML text path, W4 ASCII Upper/Lower
-fast paths, and W5b IOC marker dispatch plus W5c pre-sized line dedupe containers
-and W5d/W5f/W5g defang allocation/marker guard cleanup, streaming token
-reconstruction, and no-op token prefiltering, W5j refang literal-span copying, W2
-output pre-sizing for shared line joins, and W4b streaming sentence-case scanning,
-W2b borrowed-slice trailing trim, W1b Markdown output bookkeeping/normalization
-cleanup, and W5e streaming URL cleaner token reconstruction plus W5h/W5i URL no-op
-token prefiltering and tracker-key dispatch, W7 speed-tuned release optimization,
-W1d borrowed first-pass pipeline input, W2c streaming `unwrap_lines`, plus W3
+`collapse_whitespace` path, W1c marker-free HTML text path, W1e guarded plain/log
+Markdown fast path, W4 ASCII Upper/Lower fast paths, and W5b IOC marker dispatch
+plus W5c pre-sized line dedupe containers and W5d/W5f/W5g defang
+allocation/marker guard cleanup, streaming token reconstruction, and no-op token
+prefiltering, W5j refang literal-span copying, W2 output pre-sizing for shared line
+joins, and W4b streaming sentence-case scanning, W2b borrowed-slice trailing trim,
+W1b Markdown output bookkeeping/normalization cleanup, and W5e streaming URL
+cleaner token reconstruction plus W5h/W5i URL no-op token prefiltering and
+tracker-key dispatch, W7 speed-tuned release optimization, W1d borrowed first-pass
+pipeline input, W2c streaming `unwrap_lines`, plus W3
 `TrimTrailingWhitespace` → `RemoveBlankLines` fusion and W3b `CollapseWhitespace` →
 `TrimTrailingWhitespace` → `RemoveBlankLines` fusion with boundary-zeroized scratch
 and W3c borrowed-line fast path for already-collapse-normalized lines (see the cost
@@ -61,39 +62,40 @@ write traffic).
 
 | Scenario | Median | Throughput |
 |----------|-------:|-----------:|
-| roofline-byte-scan | 0.002s | 60609.7 MiB/s |
-| roofline-byte-copy | 0.003s | 42739.1 MiB/s |
-| strip-html-plain (no `<`/`&`) | 0.049s | 2638.8 MiB/s |
-| strip-html-heavy | 0.252s | 507.2 MiB/s |
-| strip-html-sparse-log | 0.048s | 2659.0 MiB/s |
-| strip-markdown-heavy | 0.699s | 183.2 MiB/s |
-| strip-markdown-sparse-log | 0.121s | 1054.7 MiB/s |
-| collapse-whitespace | 0.120s | 1068.7 MiB/s |
-| trim-trailing | 0.099s | 1295.5 MiB/s |
-| remove-blank-lines | 0.050s | 2570.7 MiB/s |
-| unwrap-lines | 0.047s | 2750.6 MiB/s |
-| case-lower-ascii | 0.010s | 13095.2 MiB/s |
-| case-sentence-unicode | 0.403s | 317.8 MiB/s |
-| dedupe-lines-repeated | 0.074s | 1730.6 MiB/s |
-| dedupe-lines-unique | 0.078s | 1651.1 MiB/s |
-| sort-lines | 0.122s | 1048.9 MiB/s |
-| defang-iocs (URLs/emails/IPs/domains; output grows ~15%) | 0.511s | 250.7 MiB/s |
-| refang-iocs (input is the defanged buffer) | 0.113s | 1303.0 MiB/s |
-| clean-urls-trackers | 0.241s | 531.1 MiB/s |
-| html-markdown-trim-log | 0.390s | 328.6 MiB/s |
-| full-menu-without-markdown | 0.282s | 454.3 MiB/s |
-| full-menu-without-collapse | 0.445s | 287.9 MiB/s |
-| full-menu-without-dedupe | 0.638s | 200.6 MiB/s |
-| full-menu-without-case | 0.496s | 258.0 MiB/s |
-| **default-log** (html+md+collapse+trim+blank) | 0.470s | **272.2 MiB/s** |
-| **full-menu-log** (+dedupe+unwrap+lowercase) | 0.522s | **245.4 MiB/s** |
-| **lossy-utf8-log** (invalid UTF-8, default pipeline) | 0.497s | **258.1 MiB/s** |
+| roofline-byte-scan | 0.003s | 50700.6 MiB/s |
+| roofline-byte-copy | 0.003s | 43494.9 MiB/s |
+| strip-html-plain (no `<`/`&`) | 0.042s | 3078.9 MiB/s |
+| strip-html-heavy | 0.232s | 552.4 MiB/s |
+| strip-html-sparse-log | 0.047s | 2709.9 MiB/s |
+| strip-markdown-heavy | 0.694s | 184.4 MiB/s |
+| strip-markdown-sparse-log | 0.108s | 1185.8 MiB/s |
+| collapse-whitespace | 0.121s | 1058.3 MiB/s |
+| trim-trailing | 0.098s | 1303.9 MiB/s |
+| remove-blank-lines | 0.051s | 2513.9 MiB/s |
+| unwrap-lines | 0.045s | 2813.8 MiB/s |
+| case-lower-ascii | 0.010s | 13173.2 MiB/s |
+| case-sentence-unicode | 0.408s | 313.6 MiB/s |
+| dedupe-lines-repeated | 0.075s | 1714.2 MiB/s |
+| dedupe-lines-unique | 0.075s | 1697.1 MiB/s |
+| sort-lines | 0.123s | 1042.3 MiB/s |
+| defang-iocs (URLs/emails/IPs/domains; output grows ~15%) | 0.483s | 264.9 MiB/s |
+| refang-iocs (input is the defanged buffer) | 0.113s | 1306.9 MiB/s |
+| clean-urls-trackers | 0.232s | 552.1 MiB/s |
+| html-markdown-trim-log | 0.342s | 374.4 MiB/s |
+| full-menu-without-markdown | 0.280s | 457.8 MiB/s |
+| full-menu-without-collapse | 0.398s | 322.0 MiB/s |
+| full-menu-without-dedupe | 0.591s | 216.4 MiB/s |
+| full-menu-without-case | 0.448s | 285.5 MiB/s |
+| **default-log** (html+md+collapse+trim+blank) | 0.423s | **302.9 MiB/s** |
+| **full-menu-log** (+dedupe+unwrap+lowercase) | 0.449s | **285.2 MiB/s** |
+| **lossy-utf8-log** (invalid UTF-8, default pipeline) | 0.476s | **269.7 MiB/s** |
 
 Slow lanes (optimization targets): the remaining slow single-op cluster is heavy
 Markdown stripping and defang. Marker-free HTML is no longer in that slow cluster
 after W1c's guarded plain-text path, and sparse/log-like Markdown is no longer there
-after W1b's suffix-based newline bookkeeping and in-place edge trim, but heavy
-Markdown still pays parser/event cost. Defang still emits multi-character bracket
+after W1b's suffix-based newline bookkeeping/in-place edge trim and W1e's guarded
+plain/log fast path, but heavy Markdown still pays parser/event cost. Defang still
+emits multi-character bracket
 markers around every indicator character and grows output ~15%, but W5d/W5f/W5g
 removed avoidable token-level allocation and no-op classification overhead. Refang
 now copies literal spans between marker-trigger bytes instead of paying the fallback

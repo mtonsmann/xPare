@@ -65,9 +65,10 @@ current tree (see the decision log); they are listed for continuity.
   guarded by golden tests so output stays byte-for-byte identical. *(Partially
   banked: `collapse_whitespace` has a byte-oriented fast path; `strip_html` has a
   guarded marker-free text path that still preserves newline-collapsing and
-  document-trim semantics; `strip_markdown` suffix-scans newline bookkeeping and
-  trims final output in place; `transform` borrows caller-owned input for the first
-  pass and only zeroizes operation outputs that feed later passes.)*
+  document-trim semantics; `strip_markdown` suffix-scans newline bookkeeping,
+  trims final output in place, and has a strict plain/log fast path that preserves
+  soft-break and paragraph behavior; `transform` borrows caller-owned input for
+  the first pass and only zeroizes operation outputs that feed later passes.)*
 - **W2 — Stream line ops.** Rewrite `trim_trailing_whitespace`, `remove_blank_lines`,
   `unwrap_lines`, and the line-list ops to stream into one output buffer instead of
   `collect`→`join`. *(Partially banked: `sort_lines` no longer allocates a per-line
@@ -509,4 +510,20 @@ let two agents edit the same file family at once.
   `full-menu-without-case` 215.2 → 258.0 (+27%). `default-log` has no dedupe and
   is not the target for this fusion. No ABI, dependency, zeroization, ordering,
   privacy, or determinism change.
+- 2026-06-06: W1e accepted for `strip_markdown` plain/log input: before invoking
+  `pulldown-cmark`, Markdown now tries a strict eligibility scanner for marker-free
+  log-like text and renders exactly the parser's plain-text behavior for that subset
+  (soft breaks become spaces, blank-line paragraph separators become `\n\n`, and
+  ASCII document-edge trim is preserved by construction). The fast path rejects
+  raw HTML/entities, hard breaks, headings, lists, blockquotes, tables, emphasis,
+  code, links/images, setext/thematic lines, non-intraword underscores, and leading
+  or trailing ASCII line whitespace, then falls back to the parser. Internal
+  property coverage compares eligible generated inputs against the parser helper,
+  and regression goldens pin log hyphens/intraword underscores plus NBSP behavior.
+  Parent W3e commit versus branch same-session 128 MiB / 5-sample comparison:
+  `strip-markdown-sparse-log` 1068.2 → 1185.8 MiB/s (+11%),
+  `html-markdown-trim-log` 331.1 → 374.4 (+13%), `default-log`
+  274.0 → 302.9 (+11%), `full-menu-log` 260.4 → 285.2 (+9.5%), and
+  `lossy-utf8-log` 272.0 → 269.7 (−0.8%). No ABI, dependency, zeroization,
+  ordering, privacy, or determinism change.
 - _Append one entry per accepted optimization: date, scenario, before→after median._
