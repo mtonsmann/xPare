@@ -120,9 +120,10 @@ make fuzz-overnight FUZZ_HOURS=8 FUZZ_TARGETS="transform_pipeline strip_html"
 ```
 
 Available targets are discovered mechanically with `cargo +nightly fuzz list`.
-Run the target(s) covering any core transform you change, and commit any new
-crashing input found under `fuzz/` so it is replayed as a regression. CI runs a
-short best-effort nightly fuzz smoke (`continue-on-error`) through the same
+Run the target(s) covering any core transform you change, and keep any new crashing
+input as a checked-in regression under `fuzz/regressions/<target>/` (the overnight
+script stages these for you — see [Triaging a finding](#triaging-a-finding)). CI runs
+a short best-effort nightly fuzz smoke (`continue-on-error`) through the same
 `cargo xtask check-fuzz` path; the required signal is the property/corpus tests
 in `cargo xtask ci`.
 
@@ -133,6 +134,37 @@ by default, caps workers by available memory, writes logs under `fuzz-runs/`, an
 refuses to add load when the machine is already near the target unless
 `FUZZ_ALLOW_OVERCOMMIT=1` is set. Use `FUZZ_DRY_RUN=1 make fuzz-overnight` to
 check the selected targets and worker count without starting libFuzzer.
+
+### Triaging a finding
+
+`scripts/overnight-fuzz.sh` triages automatically. After each target it re-runs every
+new `crash`/`oom`/`timeout` artifact **single-threaded** — a unit starved during a
+saturated multi-worker run is a contention artifact, not a bug, and is dropped here —
+then minimizes and decodes the genuine ones and stages a committable reproducer plus a
+triage note under `fuzz/regressions/<target>/`. Pass `--auto-commit` to commit each as
+it is found (on a fresh branch if you are on `main`), or run the printed `git`
+one-liner yourself. `--no-triage` skips the step.
+
+To triage by hand (or a finding from a plain `cargo fuzz run`):
+
+```sh
+# 1. Minimize — never share or commit the raw blob.
+cargo +nightly fuzz tmin <target> fuzz/artifacts/<target>/crash-…
+
+# 2. Decode — for arbitrary-based targets (e.g. transform_pipeline) this prints the
+#    structured input (the synthesized operation pipeline), not opaque bytes.
+cargo +nightly fuzz fmt <target> <minimized-input>
+
+# 3. Keep it as a permanent regression: copy the minimized input into
+#    fuzz/regressions/<target>/ (checked in, unlike corpus/ and artifacts/) and commit.
+cargo +nightly fuzz run <target> fuzz/regressions/<target>/<file> -- -runs=1  # confirm
+```
+
+To report a finding upstream, open a GitHub issue with the target name, toolchain +
+commit SHA, the libFuzzer/sanitizer output, the decoded input, and the **minimized**
+reproducer attached — not a tarball. Closing the finding means more than the one fix:
+keep the committed regression, add a focused test for the behavior, and follow the
+[finding-closure guardrail](docs/guardrails/review-finding-closure.md).
 
 ## Pull requests
 
