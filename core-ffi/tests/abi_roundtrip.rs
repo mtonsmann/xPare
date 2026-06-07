@@ -443,9 +443,14 @@ fn transform_fuzz_lite_boundary_never_panics() {
     // random bytes exercise real work behind the boundary.
     let cfg = config(r#"{"version":2,"operations":[{"op":"strip_html"},{"op":"strip_markdown"}]}"#);
 
+    // Under Miri (which interprets MIR ~two orders of magnitude slower) a smaller
+    // sweep still exercises the pointer/slice/buffer protocol on every input shape;
+    // native runs keep the full sweep. The point of running this under Miri is UB
+    // detection in the boundary, not input coverage (cargo-fuzz owns coverage).
+    let iterations = if cfg!(miri) { 64 } else { 1000 };
     let mut rng = XorShift64::new(0x5afe_5719_2026_0604);
 
-    for _ in 0..1000 {
+    for _ in 0..iterations {
         // Length 0..=255, biased toward small but including empties.
         let len = (rng.next_u64() % 256) as usize;
         let mut buf = Vec::with_capacity(len);

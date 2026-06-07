@@ -60,7 +60,9 @@ so it can be audited in one sitting. Built as `staticlib` + `cdylib` + `rlib`
 (lib name `safetystrip_ffi`). Every entry point validates pointers, lossy-decodes
 input UTF-8, and wraps the call to the core in `catch_unwind`, so a panic becomes
 an error code instead of undefined behavior across the boundary. Returned buffers
-are zeroized on free. See [the FFI guardrail](docs/guardrails/ffi-boundary-and-abi-stability.md).
+are zeroized on free. Because this is the only `unsafe` in the tree, its boundary
+tests run under Miri's undefined-behavior detector (`cargo xtask check-miri`;
+nightly, best-effort). See [the FFI guardrail](docs/guardrails/ffi-boundary-and-abi-stability.md).
 
 ### `cli/` — `safetystrip-cli` (binary `safetystrip`)
 
@@ -75,9 +77,10 @@ Subcommands: `capabilities`, `transform`.
 The portable enforcer of the invariants (no external cargo plugins), so the same
 checks run locally and in CI. Subcommands: `gen-header`, `check-abi`,
 `check-unsafe-forbid`, `check-core-deps`, `check-no-network`, `check-entitlements`,
-`check-no-content-logging`, `check-clipboard-safety`, `check-agent-workflow`, and
-`ci` (fmt + clippy + test + every structural check). See [the dependency
-guardrail](docs/guardrails/dependency-posture.md).
+`check-no-content-logging`, `check-clipboard-safety`, `check-agent-workflow`,
+`check-miri` (run the `core-ffi` boundary tests under Miri; nightly, best-effort,
+outside the required gate), and `ci` (fmt + clippy + test + every structural check).
+See [the dependency guardrail](docs/guardrails/dependency-posture.md).
 
 ### `fuzz/` — `safetystrip-fuzz`
 
