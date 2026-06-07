@@ -13,6 +13,7 @@
 //!   check-no-content-logging  assert no clipboard content is logged/persisted
 //!   check-clipboard-safety    assert default targets avoid the real clipboard
 //!   check-pipeline-zeroization assert fused core scratch storage is wiped before release
+//!   check-agent-workflow      assert the AI-native workflow docs exist with required headings
 //!   check-c-ffi-surface       assert C/SwiftPM interop stays header-only and tiny
 //!   check-release-posture     assert official signing cannot broaden entitlements
 //!   check-supply-chain  cargo-deny: advisories + licenses + bans + sources
@@ -40,6 +41,7 @@ fn main() -> ExitCode {
         Some("check-no-content-logging") => report(check_no_content_logging()),
         Some("check-clipboard-safety") => report(check_clipboard_safety()),
         Some("check-pipeline-zeroization") => report(check_pipeline_zeroization()),
+        Some("check-agent-workflow") => report(check_agent_workflow()),
         Some("check-c-ffi-surface") => report(check_c_ffi_surface()),
         Some("check-release-posture") => report(check_release_posture()),
         Some("check-supply-chain") => report(check_supply_chain()),
@@ -72,6 +74,7 @@ fn usage() {
          \x20 check-no-content-logging  assert no clipboard content is logged/persisted\n\
          \x20 check-clipboard-safety     assert default targets avoid the real clipboard\n\
          \x20 check-pipeline-zeroization assert fused core scratch storage is wiped before release\n\
+         \x20 check-agent-workflow       assert the AI-native workflow docs exist with required headings\n\
          \x20 check-c-ffi-surface        assert C/SwiftPM interop stays header-only and tiny\n\
          \x20 check-release-posture      assert official signing cannot broaden entitlements\n\
          \x20 check-supply-chain   cargo-deny: advisories + licenses + bans + sources\n\
@@ -1667,6 +1670,103 @@ fn check_fuzz() -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
+// check-agent-workflow
+// ---------------------------------------------------------------------------
+//
+// The AI-native engineering loop is encoded in repo-native docs (see
+// docs/agent-workflow.md). Those files only stay load-bearing if they keep their
+// structure: this check fails CI if one is deleted or loses a required section, so
+// the workflow cannot silently rot into a stale README. It is a pure structural
+// check (no external tools), matching the other docs-structure guards.
+
+/// The workflow files and the section headings each must keep. Headings are matched
+/// as exact lines (after trimming) so a rename or accidental deletion fails the
+/// check, but reordering or adding sections is fine. Kept intentionally small and
+/// stable: these are the load-bearing sections, not every heading.
+const AGENT_WORKFLOW_FILES: &[(&str, &[&str])] = &[
+    ("docs/agent-workflow.md", &["## The loop", "## North star"]),
+    (
+        "docs/templates/correctness-brief.md",
+        &["## Change class", "## Evidence packet", "## Proof gaps"],
+    ),
+    (
+        ".github/pull_request_template.md",
+        &["## Change class", "## Commands run"],
+    ),
+    ("docs/agent-tasks/core-transform.md", AGENT_TASK_HEADINGS),
+    ("docs/agent-tasks/ffi-boundary.md", AGENT_TASK_HEADINGS),
+    ("docs/agent-tasks/security-privacy.md", AGENT_TASK_HEADINGS),
+    ("docs/agent-tasks/dependency-ci.md", AGENT_TASK_HEADINGS),
+    (
+        "docs/agent-tasks/review-finding-closure.md",
+        AGENT_TASK_HEADINGS,
+    ),
+];
+
+/// Sections every agent-task prompt template must carry, so each stays a complete,
+/// self-contained, copy-paste-ready task rather than a stub.
+const AGENT_TASK_HEADINGS: &[&str] = &[
+    "## Files to read",
+    "## Hard constraints",
+    "## Required evidence",
+    "## Proof gaps to report",
+];
+
+/// Validate one workflow file's text against its required headings. Returns the
+/// headings that are missing (empty = OK). Heading match is on trimmed full lines so
+/// a partial-substring or a heading demoted to prose does not count.
+fn missing_workflow_headings(text: &str, required: &[&str]) -> Vec<String> {
+    required
+        .iter()
+        .filter(|heading| !text.lines().any(|line| line.trim() == **heading))
+        .map(|heading| (*heading).to_string())
+        .collect()
+}
+
+/// Assert every AI-native workflow doc exists and still carries its required
+/// sections. This keeps `docs/agent-workflow.md` and its templates from silently
+/// drifting or disappearing.
+fn check_agent_workflow() -> Result<(), String> {
+    let root = workspace_root();
+    let mut errors: Vec<String> = Vec::new();
+
+    for (rel, required) in AGENT_WORKFLOW_FILES {
+        let path = root.join(rel);
+        match std::fs::read_to_string(&path) {
+            Ok(text) => {
+                let missing = missing_workflow_headings(&text, required);
+                if !missing.is_empty() {
+                    errors.push(format!(
+                        "{rel} is missing section(s): {}",
+                        missing.join(", ")
+                    ));
+                }
+            }
+            Err(_) => errors.push(format!("{rel} is missing")),
+        }
+    }
+
+    if errors.is_empty() {
+        println!(
+            "check-agent-workflow: all {} AI-native workflow doc(s) present with required headings.",
+            AGENT_WORKFLOW_FILES.len()
+        );
+        Ok(())
+    } else {
+        Err(format!(
+            "check-agent-workflow: FAIL —\n\x20 {}\n\
+             \n\
+             SafetyStrip's evidence-first workflow lives in repo-native docs so future\n\
+             agents have a clear loop (see docs/agent-workflow.md). These files must stay\n\
+             present and structured. Restore the missing file or section; do not delete the\n\
+             workflow docs to make this check pass. If a section is intentionally renamed,\n\
+             update AGENT_WORKFLOW_FILES in xtask/src/main.rs in the same PR.",
+            errors.join("\n  ")
+        ))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // ci
 // ---------------------------------------------------------------------------
 
@@ -1734,6 +1834,10 @@ fn run_ci() -> ExitCode {
         return ExitCode::FAILURE;
     }
     if let Err(msg) = check_pipeline_zeroization() {
+        eprintln!("{msg}");
+        return ExitCode::FAILURE;
+    }
+    if let Err(msg) = check_agent_workflow() {
         eprintln!("{msg}");
         return ExitCode::FAILURE;
     }
@@ -2111,6 +2215,40 @@ mod tests {
         );
         let err = validate_pipeline_zeroization(&weakened).unwrap_err();
         assert!(err.contains("check capacity"), "got: {err}");
+    }
+
+    // --- check-agent-workflow ---
+
+    #[test]
+    fn current_agent_workflow_passes() {
+        check_agent_workflow().unwrap();
+    }
+
+    #[test]
+    fn agent_workflow_detects_missing_heading() {
+        let text = "# Agent task\n\n## Files to read\n\n## Hard constraints\n";
+        let missing = missing_workflow_headings(text, AGENT_TASK_HEADINGS);
+        assert_eq!(
+            missing,
+            vec![
+                "## Required evidence".to_string(),
+                "## Proof gaps to report".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn agent_workflow_heading_match_is_whole_line_not_substring() {
+        // A heading demoted to prose (no leading `##`) must not satisfy the check.
+        let text = "Files to read are listed below.\n";
+        assert_eq!(
+            missing_workflow_headings(text, &["## Files to read"]),
+            vec!["## Files to read".to_string()]
+        );
+        // Exact heading line (with surrounding whitespace) is accepted.
+        assert!(
+            missing_workflow_headings("  ## Files to read  \n", &["## Files to read"]).is_empty()
+        );
     }
 
     // --- check-no-content-logging ---

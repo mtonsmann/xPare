@@ -289,6 +289,46 @@ order-sensitive pipelines are unsurprising — while the **macOS shell** uses ca
 by default and exposes a "Manual order" (`as_given`) mode with a drag-reorder list for
 the rare case a user wants to place an ambiguous op (e.g. `ChangeCase`) themselves.
 
+### D14 — Cedar-style verification-guided development (without Cedar)
+
+The repo's engineering loop is **evidence-first**: a change is judged by the
+correctness evidence it ships, not by the plausibility of the diff. The loop —
+classify → correctness brief → invariants → tests/properties/fuzz → smallest patch →
+deterministic gates → evidence packet — is encoded as repo-native docs
+([`docs/agent-workflow.md`](docs/agent-workflow.md), the brief and PR templates, and
+per-change-class task prompts under `docs/agent-tasks/`) and kept from rotting by the
+`check-agent-workflow` structural check. **Why:** agents make producing a plausible
+patch cheap; what stays expensive — and is the actual product — is trustworthy
+evidence. Making the evidence a required, mechanically-checked artifact is what keeps
+quality from regressing as authoring gets faster. "Agents propose; deterministic
+tools dispose."
+
+The technical centerpiece is an **executable reference interpreter** for the
+pipeline. Production `transform` fuses adjacent operations and folds intermediates
+through `Zeroizing` storage; a test-only reference
+([`core/tests/reference_transform.rs`](core/tests/reference_transform.rs)) resolves
+the ordering and applies operations strictly one at a time via the public `ops::*`
+functions, with no fusion. A differential property (`transform == reference`, 1024
+cases) makes every fused fast path provably equal to naive sequential application for
+any config that triggers it; companion properties pin canonical ordering to an
+explicitly sorted `as_given` run, re-assert determinism, and bound an accepted
+config's output growth by the per-op factor product.
+
+**Cedar is the inspiration, not a dependency.** AWS's Cedar pairs its production
+authorization engine with a simple executable specification and proves them
+equivalent by differential random testing — the discipline this borrows. SafetyStrip
+is **not** an authorization-policy engine and has no need for a policy language, so it
+does **not** add Cedar (or any policy/DSL crate); doing so would import a large
+capability surface for a problem the project does not have. What it adopts is the
+*method*: executable reference semantics, property-based and differential random
+testing, reference-vs-production equivalence, and repo-native evidence requirements.
+
+This is verification-*guided* development, not formal verification. It does not prove
+the whole core correct, does not prove the sanitizers correct against browser/RFC
+semantics, and does not formally prove FFI memory behavior. A bounded proof track
+(e.g. Kani over the saturating growth-envelope arithmetic) is recorded as future work
+in [`docs/deferred-work.md`](docs/deferred-work.md), not forced into this pass.
+
 ### Other settled choices
 
 - **macOS posture:** App Sandbox + Hardened Runtime, **minimal entitlements**. The

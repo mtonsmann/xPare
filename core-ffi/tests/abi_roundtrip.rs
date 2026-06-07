@@ -394,6 +394,24 @@ fn transform_amplifying_config_is_invalid_config() {
 }
 
 // ---------------------------------------------------------------------------
+// 6b. ss_buffer_free contract: a null pointer is a documented no-op (so a caller
+//     can unconditionally free the out-param even on the error path, where it is
+//     null). It must not crash, double-free, or otherwise misbehave for any len.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn buffer_free_null_pointer_is_a_noop() {
+    // Several lengths, including the 0 the error path produces and a nonzero one a
+    // confused caller might pass alongside a null pointer. None may dereference.
+    for len in [0usize, 1, 64, 4096] {
+        // SAFETY: `ptr` is null, which `ss_buffer_free` documents as a no-op; it
+        // checks `ptr.is_null()` and returns before constructing any slice/box, so
+        // the accompanying `len` is irrelevant and never used.
+        unsafe { ss_buffer_free(std::ptr::null_mut(), len) };
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 7. Fuzz-lite: many pseudo-random byte inputs through the boundary. Guards the
 //    FFI shim itself (pointer/slice/buffer handling), complementing cargo-fuzz
 //    which targets the core. Deterministic LCG/xorshift — no `rand` dependency.

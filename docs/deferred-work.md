@@ -29,6 +29,16 @@ Nothing here is committed scope; it's a memory aid for the next maintainer.
   app on a full Xcode toolchain (this environment is Command-Line-Tools only, so the
   app is built but never launched). (0001 → Follow-ups)
 
+## From exec-plan 0012 — AI-native, evidence-first workflow + reference semantics
+
+- **Bounded proof harness (Kani) over the resource envelope.** A small `kani` proof
+  track for the crisp arithmetic/resource parts only: the saturating growth
+  multiplication cannot wrap to acceptance, the operation-count bound is enforced, and
+  the canonical-rank ordering is a total order. Deferred so it does not destabilize
+  normal stable development; the same properties are currently covered by the
+  `reference_transform` growth-envelope property and `config_roundtrip` saturation
+  tests. Do **not** attempt to Kani-prove the full text transformer. (0012 → Phase 3)
+
 ## From exec-plan 0004 — extraction, defang/refang, URL cleaning
 
 - ~~**In-menu sort-flag submenu.**~~ Done — sort is a single "Sort lines: <mode>"

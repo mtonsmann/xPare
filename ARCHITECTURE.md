@@ -75,8 +75,8 @@ Subcommands: `capabilities`, `transform`.
 The portable enforcer of the invariants (no external cargo plugins), so the same
 checks run locally and in CI. Subcommands: `gen-header`, `check-abi`,
 `check-unsafe-forbid`, `check-core-deps`, `check-no-network`, `check-entitlements`,
-`check-no-content-logging`, `check-clipboard-safety`, and `ci` (fmt + clippy + test +
-every structural check). See [the dependency
+`check-no-content-logging`, `check-clipboard-safety`, `check-agent-workflow`, and
+`ci` (fmt + clippy + test + every structural check). See [the dependency
 guardrail](docs/guardrails/dependency-posture.md).
 
 ### `fuzz/` — `safetystrip-fuzz`
@@ -175,6 +175,8 @@ therefore CI). Fix the code to satisfy the check; never weaken the check.
 | Default checks avoid the real clipboard | `check-clipboard-safety` (no default Make target depends on a real-clipboard smoke) | `xtask`, `Makefile` |
 | Pipeline intermediates and fused scratch storage wiped before release | `Zeroizing` buffers in the pipeline + `check-pipeline-zeroization` + `ss_buffer_free` zeroizes output | `core/src/pipeline.rs`, `xtask`, `core-ffi` |
 | Deterministic output | `transform(x,c) == transform(x,c)` property test | `core` tests |
+| Optimized pipeline == reference semantics | differential property test: production `transform` equals a one-op-at-a-time reference interpreter (so every fused fast path stays byte-for-byte equal to sequential application, and canonical ordering equals an explicitly sorted `as_given` run) | `core/tests/reference_transform.rs` |
+| AI-native workflow docs present & structured | `check-agent-workflow` (the workflow doc, brief/PR templates, and per-class task prompts exist with required headings) | `xtask`, `docs/agent-workflow.md` |
 | Minimal macOS entitlements | checked-in entitlements file + `check-entitlements`; `release.sh dist` requires it for Developer ID signing and verifies the signed payload is still minimal | `xtask`, `shells/macos/` |
 
 The single gate that runs all of the above is `cargo xtask ci`; CI runs the exact
