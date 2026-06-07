@@ -131,7 +131,8 @@ With no targets, it discovers every target with `cargo +nightly fuzz list` and
 splits the total runtime across them. It targets about 85% system-load saturation
 by default, caps workers by available memory, writes logs under `fuzz-runs/`, and
 refuses to add load when the machine is already near the target unless
-`FUZZ_ALLOW_OVERCOMMIT=1` is set.
+`FUZZ_ALLOW_OVERCOMMIT=1` is set. Use `FUZZ_DRY_RUN=1 make fuzz-overnight` to
+check the selected targets and worker count without starting libFuzzer.
 
 ## Pull requests
 

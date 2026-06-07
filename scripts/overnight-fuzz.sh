@@ -13,9 +13,10 @@ Arguments:
 
 Environment:
   FUZZ_LOAD_PERCENT            Target system load, default 85. Keep this 80-90.
-  FUZZ_MIN_FREE_MIB_PER_WORKER Available-memory budget per worker, default 1024.
+  FUZZ_MIN_FREE_MIB_PER_WORKER Available-memory budget per worker, default 512.
   FUZZ_RESERVE_MIB             Memory to leave untouched, default 2048.
   FUZZ_ALLOW_OVERCOMMIT=1      Run one worker even when current load is already high.
+  FUZZ_DRY_RUN=1               Print the selected targets/workers and exit.
 USAGE
 }
 
@@ -63,7 +64,7 @@ cores=$(
 )
 
 load_percent="${FUZZ_LOAD_PERCENT:-85}"
-min_free_mib_per_worker="${FUZZ_MIN_FREE_MIB_PER_WORKER:-1024}"
+min_free_mib_per_worker="${FUZZ_MIN_FREE_MIB_PER_WORKER:-512}"
 reserve_mib="${FUZZ_RESERVE_MIB:-2048}"
 
 current_load=$(
@@ -71,19 +72,18 @@ current_load=$(
 )
 
 workers=$(
-    awk -v cores="$cores" -v current="$current_load" -v pct="$load_percent" '
+    awk -v cores="$cores" -v pct="$load_percent" '
         BEGIN {
             desired = cores * pct / 100.0
-            spare = desired - current
-            workers = int(spare)
-            if (spare > 0 && workers < 1) {
-                workers = 1
+            workers = int(desired)
+            if (workers < desired) {
+                workers += 1
             }
             if (workers > cores) {
                 workers = cores
             }
-            if (workers < 0) {
-                workers = 0
+            if (workers < 1) {
+                workers = 1
             }
             print workers
         }
@@ -163,6 +163,14 @@ workers/jobs: $workers
 available MiB:${available_mib:-unknown}
 log dir:      $log_dir
 EOF
+
+if [ "${FUZZ_DRY_RUN:-0}" = "1" ]; then
+    printf 'selected targets:\n'
+    for target in $targets; do
+        printf '  %s\n' "$target"
+    done
+    exit 0
+fi
 
 failed=0
 for target in $targets; do
