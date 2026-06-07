@@ -28,26 +28,33 @@ hangs, stays deterministic, neutralizes active content."
 3. **Be deterministic.** Same `(input, config)` ⇒ same output, with no dependence on
    environment, time, locale, or hash-set iteration order. (`dedupe_lines` uses a
    `HashSet` for membership only and emits in original order — copy that pattern.)
-4. **Preserve the documented contract.** Each op's exact, frozen rules live in the
+4. **Keep accepted configs inside the resource envelope.** `parse_config` rejects
+   configs with too many operations, overlong free-text parameters, or `\r`/`\n`
+   inside `PrefixLines`/`SuffixLines`/`JoinWith`/`SplitOn` parameters. This blocks
+   resource-amplifying configs before `transform` sees them. If you add a new
+   free-text parameter or an operation that can expand line count/output size, update
+   `Config::validate`, the config tests, and `transform_pipeline` fuzz sanitization
+   in the same diff.
+5. **Preserve the documented contract.** Each op's exact, frozen rules live in the
    doc comment on its function — that is the source of truth. If you change behavior,
    change the doc comment in the same diff and update the tests. Do not silently
    drift `strip_html`'s block set, the entity table, the HTML-to-Markdown safe-link
    and raw-HTML escaping policy, the line model, the unwrap rule, or the
    title/sentence-case rules.
-5. **Honor the sanitization boundary.** `strip_html` is the security workhorse that
+6. **Honor the sanitization boundary.** `strip_html` is the security workhorse that
    neutralizes `<script>`/`<style>` and removes tags; the shell runs it on the
    clipboard's HTML representation. `strip_markdown` removes Markdown formatting and
    delegates *embedded* HTML to `strip_html` best-effort, but is **not** itself the
    script-neutralizing boundary. The canonical order is **`StripHtml` →
    `StripMarkdown`**. Do not weaken `strip_html`'s raw-text handling, and do not
    reframe `strip_markdown` as the sanitizer.
-6. **Adding a transform is data, not API.** A new operation is a new `Operation`
+7. **Adding a transform is data, not API.** A new operation is a new `Operation`
    enum variant in `config.rs`, a match arm in `pipeline.rs`, an entry in
    `CAPABILITIES_JSON` (`core/src/lib.rs`), and its own pure function in `ops/`. It
    must **not** touch the C ABI (see [ffi-boundary-and-abi-stability](ffi-boundary-and-abi-stability.md))
    and must keep the core's dependency tree on the allowlist
    (see [dependency-posture](dependency-posture.md)).
-7. **Keep the core pure.** No OS, IO, network, logging, or global mutable state. A
+8. **Keep the core pure.** No OS, IO, network, logging, or global mutable state. A
    stray `println!`/`dbg!` is a compile error by design — leave it that way.
 
 ## The documented op rules (where they live)
@@ -67,6 +74,7 @@ hangs, stays deterministic, neutralizes active content."
 
 - **Property + regression tests:** `cargo test -p safetystrip-core`. New behavior
   needs both a regression test (the right answer) **and** adversarial-input coverage.
+  Config-envelope changes belong in `core/tests/config_roundtrip.rs`.
 - **Determinism property test:** `transform(x,c) == transform(x,c)`.
 - **Fuzzing (never-panics):** run the target(s) covering what you changed —
   `cargo +nightly fuzz run strip_html | strip_markdown | defang | clean_urls |

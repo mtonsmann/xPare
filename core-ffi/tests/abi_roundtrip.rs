@@ -377,6 +377,22 @@ fn transform_unsupported_version_is_invalid_config() {
     assert!(result.bytes.is_empty());
 }
 
+#[test]
+fn transform_amplifying_config_is_invalid_config() {
+    // A pipeline whose worst-case output growth exceeds the envelope (three
+    // 256-byte affixes -> ~257^3) is rejected at the boundary as ErrInvalidConfig,
+    // so the infallible (and here, would-be resource-exhausting) transform is never
+    // entered. No parameter contains a line break, so this exercises the growth
+    // bound specifically — the class the overnight fuzz run surfaced.
+    let big = "a".repeat(256);
+    let cfg = config(&format!(
+        r#"{{"version":2,"operations":[{{"op":"prefix_lines","prefix":"{big}"}},{{"op":"suffix_lines","suffix":"{big}"}},{{"op":"prefix_lines","prefix":"{big}"}}]}}"#
+    ));
+    let result = transform(b"x", &cfg);
+    assert_eq!(result.status, SsStatus::ErrInvalidConfig);
+    assert!(result.bytes.is_empty());
+}
+
 // ---------------------------------------------------------------------------
 // 7. Fuzz-lite: many pseudo-random byte inputs through the boundary. Guards the
 //    FFI shim itself (pointer/slice/buffer handling), complementing cargo-fuzz

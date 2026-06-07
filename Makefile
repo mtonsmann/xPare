@@ -17,6 +17,8 @@ PERF_MIB ?= 64
 PERF_SAMPLES ?= 3
 PERF_MIN_MIB_PER_SEC ?=
 FUZZ_SMOKE_SECONDS ?= 30
+FUZZ_HOURS ?= 8
+FUZZ_TARGETS ?=
 
 # Release packaging (see shells/macos/release.sh and docs/release-model.md).
 # dist/github-release are gated and need Developer ID credentials + a vX.Y.Z tag.
@@ -27,7 +29,7 @@ CERT_NAME ?=
 NOTARY_PROFILE ?=
 SIGN_ENTITLEMENTS ?=
 
-.PHONY: help build test lint fmt fmt-check ci checks supply-chain lint-actions lint-shell header bench bench-large perf fuzz fuzz-smoke zizmor app run preview dist github-release clean clean-release
+.PHONY: help build test lint fmt fmt-check ci checks supply-chain lint-actions lint-shell header bench bench-large perf fuzz fuzz-smoke fuzz-overnight zizmor app run preview dist github-release clean clean-release
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -90,6 +92,9 @@ fuzz: ## Build all fuzz targets (auto-installs nightly/cargo-fuzz if needed)
 
 fuzz-smoke: ## Build and briefly run all fuzz targets (FUZZ_SMOKE_SECONDS=30)
 	SS_FUZZ_SMOKE_SECONDS=$(FUZZ_SMOKE_SECONDS) $(CARGO) run -p xtask -- check-fuzz
+
+fuzz-overnight: ## Resource-sized local fuzz run across all targets (FUZZ_HOURS=8 [FUZZ_TARGETS=...])
+	scripts/overnight-fuzz.sh $(FUZZ_HOURS) $(FUZZ_TARGETS)
 
 zizmor: ## Audit GitHub Actions config via the canonical workflow lint gate
 	$(CARGO) run -p xtask -- check-workflows

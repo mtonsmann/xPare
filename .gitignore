@@ -8,6 +8,8 @@ Cargo.lock.bak
 /fuzz/corpus
 /fuzz/artifacts
 /fuzz/coverage
+/fuzz/fuzz-*.log
+/fuzz-runs/
 
 # Swift / SwiftPM
 shells/macos/.build
