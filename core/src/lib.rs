@@ -23,6 +23,7 @@ mod pipeline;
 
 pub use config::{
     parse_config, BracketStyle, CaseKind, Config, ConfigError, Operation, Ordering, CONFIG_VERSION,
+    MAX_CONFIG_OPERATIONS, MAX_CONFIG_TEXT_PARAM_BYTES,
 };
 pub use pipeline::transform;
 

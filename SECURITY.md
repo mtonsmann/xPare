@@ -108,6 +108,11 @@ Clipboard markup is attacker-influenced, so the core treats all input as hostile
   bytes. Rich-format extraction itself is still platform work, so the limit is a
   pre-core-transform guard, not a streaming rich-format parser for every native
   format.
+- **Configs are envelope-bounded before transform** — `parse_config` rejects configs
+  with too many operations, overlong free-text parameters, or `\r`/`\n` inside
+  prefix/suffix/join/split parameters. This is a config compatibility tightening,
+  not an ABI or privacy-posture change: invalid configs fail as `ErrInvalidConfig`
+  at the FFI boundary instead of entering the infallible transform path.
 - **Optional masking is an output rewrite, not a new data path** — `MaskIdentifiers`
   replaces selected email/IPv4/IPv6 tokens with fixed placeholders inside the same
   pure core pipeline. It adds no network, persistence, logging, entitlement, or

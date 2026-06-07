@@ -7,6 +7,7 @@
 use proptest::prelude::*;
 use safetystrip_core::{
     parse_config, BracketStyle, CaseKind, Config, ConfigError, Operation, Ordering, CONFIG_VERSION,
+    MAX_CONFIG_OPERATIONS, MAX_CONFIG_TEXT_PARAM_BYTES,
 };
 
 /// Every `Operation` variant, with representative parameter values, so the fixture
@@ -195,6 +196,113 @@ fn explicit_as_given_parses() {
     assert_eq!(cfg.ordering, Ordering::AsGiven);
 }
 
+#[test]
+fn accepts_max_operations() {
+    let cfg = Config::as_given(vec![Operation::CollapseWhitespace; MAX_CONFIG_OPERATIONS]);
+    let json = serde_json::to_string(&cfg).expect("serialize");
+    assert_eq!(parse_config(&json).expect("parse"), cfg);
+}
+
+#[test]
+fn rejects_too_many_operations() {
+    let cfg = Config::as_given(vec![
+        Operation::CollapseWhitespace;
+        MAX_CONFIG_OPERATIONS + 1
+    ]);
+    let json = serde_json::to_string(&cfg).expect("serialize");
+    assert!(matches!(
+        parse_config(&json),
+        Err(ConfigError::TooManyOperations {
+            found,
+            max: MAX_CONFIG_OPERATIONS,
+        }) if found == MAX_CONFIG_OPERATIONS + 1
+    ));
+}
+
+#[test]
+fn accepts_boundary_text_params() {
+    for op in text_param_ops("a".repeat(MAX_CONFIG_TEXT_PARAM_BYTES)) {
+        let cfg = Config::as_given(vec![op.clone()]);
+        let json = serde_json::to_string(&cfg).expect("serialize");
+        assert_eq!(parse_config(&json).expect("parse"), cfg, "{op:?}");
+    }
+}
+
+#[test]
+fn rejects_oversized_text_params() {
+    for op in text_param_ops("a".repeat(MAX_CONFIG_TEXT_PARAM_BYTES + 1)) {
+        let cfg = Config::as_given(vec![op.clone()]);
+        let json = serde_json::to_string(&cfg).expect("serialize");
+        assert!(
+            matches!(
+                parse_config(&json),
+                Err(ConfigError::TextParamTooLong {
+                    found,
+                    max: MAX_CONFIG_TEXT_PARAM_BYTES,
+                    ..
+                }) if found == MAX_CONFIG_TEXT_PARAM_BYTES + 1
+            ),
+            "{op:?}"
+        );
+    }
+}
+
+#[test]
+fn rejects_line_breaks_in_text_params() {
+    for line_break in ["\n", "\r"] {
+        for op in text_param_ops(format!("before{line_break}after")) {
+            let cfg = Config::as_given(vec![op.clone()]);
+            let json = serde_json::to_string(&cfg).expect("serialize");
+            assert!(
+                matches!(
+                    parse_config(&json),
+                    Err(ConfigError::TextParamContainsLineBreak { .. })
+                ),
+                "{op:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn rejects_fuzz_oom_line_affix_pattern_before_transform() {
+    let mut ops = vec![Operation::PrefixLines {
+        prefix: "~~~\n+c-\0\n\0\0\0".into(),
+    }];
+    ops.extend(
+        std::iter::repeat(Operation::PrefixLines {
+            prefix: "> ".into(),
+        })
+        .take(8),
+    );
+    ops.push(Operation::StripMarkdown);
+
+    let cfg = Config::as_given(ops);
+    let json = serde_json::to_string(&cfg).expect("serialize");
+    assert!(matches!(
+        parse_config(&json),
+        Err(ConfigError::TextParamContainsLineBreak {
+            op: "prefix_lines",
+            param: "prefix",
+        })
+    ));
+}
+
+fn text_param_ops(value: String) -> Vec<Operation> {
+    vec![
+        Operation::PrefixLines {
+            prefix: value.clone(),
+        },
+        Operation::SuffixLines {
+            suffix: value.clone(),
+        },
+        Operation::JoinWith {
+            separator: value.clone(),
+        },
+        Operation::SplitOn { delimiter: value },
+    ]
+}
+
 // ---------------------------------------------------------------------------
 // Proptest: arbitrary Config values round-trip.
 // ---------------------------------------------------------------------------
@@ -209,11 +317,26 @@ fn case_kind_strategy() -> impl Strategy<Value = CaseKind> {
     ]
 }
 
+/// Strategy for an arbitrary valid free-text operation parameter. Keep generated
+/// params well inside the configured byte limit while still exercising JSON escaping.
+fn valid_param_string() -> impl Strategy<Value = String> {
+    prop::collection::vec(
+        prop_oneof![
+            Just(' '),
+            Just('\t'),
+            Just('"'),
+            Just('\\'),
+            Just('\0'),
+            any::<char>().prop_filter("no CR/LF", |c| *c != '\n' && *c != '\r'),
+        ],
+        0..32,
+    )
+    .prop_map(|chars| chars.into_iter().collect())
+}
+
 /// Strategy for an arbitrary `Operation`, including arbitrary string parameters
 /// (so the JSON escaping of separators/prefixes is exercised too).
 fn operation_strategy() -> impl Strategy<Value = Operation> {
-    // Arbitrary UTF-8 strings, including control chars and quotes, to stress escaping.
-    let s = ".*";
     prop_oneof![
         Just(Operation::StripHtml),
         Just(Operation::StripMarkdown),
@@ -230,10 +353,10 @@ fn operation_strategy() -> impl Strategy<Value = Operation> {
             }
         }),
         Just(Operation::DedupeLines),
-        s.prop_map(|prefix| Operation::PrefixLines { prefix }),
-        s.prop_map(|suffix| Operation::SuffixLines { suffix }),
-        s.prop_map(|separator| Operation::JoinWith { separator }),
-        s.prop_map(|delimiter| Operation::SplitOn { delimiter }),
+        valid_param_string().prop_map(|prefix| Operation::PrefixLines { prefix }),
+        valid_param_string().prop_map(|suffix| Operation::SuffixLines { suffix }),
+        valid_param_string().prop_map(|separator| Operation::JoinWith { separator }),
+        valid_param_string().prop_map(|delimiter| Operation::SplitOn { delimiter }),
         Just(Operation::ExtractEmails),
         Just(Operation::ExtractUrls),
         prop_oneof![Just(BracketStyle::Square), Just(BracketStyle::Round)]
@@ -249,7 +372,7 @@ fn operation_strategy() -> impl Strategy<Value = Operation> {
 /// ordering mode so both serialize/round-trip).
 fn config_strategy() -> impl Strategy<Value = Config> {
     (
-        prop::collection::vec(operation_strategy(), 0..12),
+        prop::collection::vec(operation_strategy(), 0..=MAX_CONFIG_OPERATIONS),
         prop_oneof![Just(Ordering::Canonical), Just(Ordering::AsGiven)],
     )
         .prop_map(|(operations, ordering)| Config {
