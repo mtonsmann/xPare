@@ -57,9 +57,10 @@ architecture choice explicit.
 
 `.github/workflows/release.yml` runs on `v*` tags:
 
-1. **validate** (always): checkout → `cargo run -p xtask -- ci` (the full gate) →
-   build the FFI staticlib + `swift build -c release` → `make preview` → upload the
-   unsigned preview as a workflow artifact.
+1. **validate** (always): checkout → require a successful manual Release Fuzz run
+   on the exact tag SHA → `cargo run -p xtask -- ci` (the full gate) → build the
+   FFI staticlib + `swift build -c release` → `make preview` → upload the unsigned
+   preview as a workflow artifact.
 2. **publish-official** (gated): only when repo variable
    `SAFETYSTRIP_ENABLE_OFFICIAL_RELEASE == 'true'` **and** the Apple secrets are
    present. It re-checks `shells/macos/SafetyStrip.entitlements`, imports the
@@ -71,6 +72,21 @@ architecture choice explicit.
 
 Signing/notary credentials are **never** required for pull-request CI. Absent them,
 CI still builds and tests, but must not publish an artifact as an official binary.
+
+## Release fuzz gate
+
+Run the manual Release Fuzz workflow on the release-candidate ref before tagging
+or rerunning the final release:
+
+```sh
+gh workflow run release-fuzz.yml --ref v1.2.3-rc.1 -f minutes_per_target=30
+```
+
+The workflow uses the same `cargo xtask check-fuzz` path as local `make
+fuzz-smoke`, but with a release-scale per-target budget and uploaded corpus/crash
+artifacts. The release workflow queries GitHub Actions for a successful Release
+Fuzz run whose `head_sha` is the exact release tag commit; if the final tag points
+at a different SHA, the release fails until fuzz is rerun on that SHA.
 
 ## Local official release (after credentials exist)
 

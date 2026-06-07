@@ -96,8 +96,8 @@ fuzz-smoke: ## Build and briefly run all fuzz targets (FUZZ_SMOKE_SECONDS=30)
 fuzz-overnight: ## Resource-sized local fuzz run across all targets (FUZZ_HOURS=8 [FUZZ_TARGETS=...])
 	scripts/overnight-fuzz.sh $(FUZZ_HOURS) $(FUZZ_TARGETS)
 
-zizmor: ## Audit the GitHub Actions config (workflows + dependabot) for security (needs zizmor)
-	zizmor .github/
+zizmor: ## Audit GitHub Actions config via the canonical workflow lint gate
+	$(CARGO) run -p xtask -- check-workflows
 
 app: ## Build the macOS menu-bar .app bundle (dist/SafetyStrip.app)
 	cd shells/macos && ./package-app.sh
