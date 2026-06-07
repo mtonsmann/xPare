@@ -215,6 +215,14 @@ fuzz_target!(|case: PipelineInput| {
     } else {
         Config::as_given(operations)
     };
-    // Invariant under test: infallible + panic-free for every (input, config).
+    // Gate on the product config envelope, exactly as the FFI/CLI boundary does:
+    // production never reaches `transform` with a config `parse_config` would reject,
+    // so neither should the fuzzer. This keeps the target exploring product-reachable
+    // `(input, config)` pairs and stops it rediscovering the resource-exhaustion class
+    // that `Config::validate` now rejects up front (the pipeline-amplification OOMs).
+    if config.validate().is_err() {
+        return;
+    }
+    // Invariant under test: infallible + panic-free for every reachable (input, config).
     let _ = transform(&text, &config);
 });

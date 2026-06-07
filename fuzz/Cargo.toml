@@ -63,3 +63,17 @@ path = "fuzz_targets/mask_identifiers.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "html_to_markdown"
+path = "fuzz_targets/html_to_markdown.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_config"
+path = "fuzz_targets/parse_config.rs"
+test = false
+doc = false
+bench = false
