@@ -7,7 +7,7 @@
 use proptest::prelude::*;
 use safetystrip_core::{
     parse_config, BracketStyle, CaseKind, Config, ConfigError, Operation, Ordering, CONFIG_VERSION,
-    MAX_CONFIG_OPERATIONS, MAX_CONFIG_TEXT_PARAM_BYTES,
+    MAX_CONFIG_OPERATIONS, MAX_CONFIG_TEXT_PARAM_BYTES, MAX_PIPELINE_GROWTH_FACTOR,
 };
 
 /// Every `Operation` variant, with representative parameter values, so the fixture
@@ -288,6 +288,115 @@ fn rejects_fuzz_oom_line_affix_pattern_before_transform() {
     ));
 }
 
+/// A realistic clean-up pipeline (coerce rich text, quote each line, join to CSV)
+/// uses short parameters, so its worst-case growth product is tiny and it must be
+/// accepted. Guards the amplification bound against false-rejecting real configs.
+#[test]
+fn accepts_realistic_pipeline_growth() {
+    // Products: StripHtml/StripMarkdown/CollapseWhitespace = 1; PrefixLines "> " =
+    // 1+2 = 3; JoinWith ", " = 2. Total = 6, far below MAX_PIPELINE_GROWTH_FACTOR.
+    let cfg = Config::as_given(vec![
+        Operation::StripHtml,
+        Operation::StripMarkdown,
+        Operation::CollapseWhitespace,
+        Operation::PrefixLines {
+            prefix: "> ".into(),
+        },
+        Operation::JoinWith {
+            separator: ", ".into(),
+        },
+    ]);
+    let json = serde_json::to_string(&cfg).expect("serialize");
+    assert_eq!(parse_config(&json).expect("parse"), cfg);
+}
+
+/// A single boundary-size affix is a linear-time pass (factor 257), so it stays
+/// under the cap and is accepted — the bound targets *composition*, not one big op.
+#[test]
+fn accepts_single_boundary_affix() {
+    let cfg = Config::as_given(vec![Operation::PrefixLines {
+        prefix: "a".repeat(MAX_CONFIG_TEXT_PARAM_BYTES),
+    }]);
+    let json = serde_json::to_string(&cfg).expect("serialize");
+    assert_eq!(parse_config(&json).expect("parse"), cfg);
+}
+
+/// The core finding from the overnight fuzz run: a config of individually
+/// envelope-legal operations whose *composition* amplifies a tiny input without
+/// bound (a `SplitOn` re-maximizes the line count so each following affix/join
+/// re-amplifies). None of these parameters contain a line break, so this is rejected
+/// specifically by the growth bound — not the line-break or param-length rules —
+/// before the infallible `transform` is ever entered.
+#[test]
+fn rejects_amplifying_pipeline_growth() {
+    let big = "x".repeat(MAX_CONFIG_TEXT_PARAM_BYTES); // no '\n'/'\r'
+    let cfg = Config::as_given(vec![
+        Operation::SplitOn {
+            delimiter: "x".into(),
+        },
+        Operation::PrefixLines {
+            prefix: big.clone(),
+        },
+        Operation::JoinWith {
+            separator: big.clone(),
+        },
+        Operation::SplitOn {
+            delimiter: "y".into(),
+        },
+        Operation::PrefixLines { prefix: big },
+    ]);
+    let json = serde_json::to_string(&cfg).expect("serialize");
+    match parse_config(&json) {
+        Err(ConfigError::PipelineMayAmplify { factor, max }) => {
+            assert_eq!(max, MAX_PIPELINE_GROWTH_FACTOR);
+            assert!(
+                factor > MAX_PIPELINE_GROWTH_FACTOR,
+                "reported factor {factor} should exceed the cap {max}"
+            );
+        }
+        other => panic!("expected PipelineMayAmplify, got {other:?}"),
+    }
+}
+
+/// Three boundary-size affixes already blow past the cap (257^3 ~= 1.7e7); a
+/// param-length-only or per-op-only check would wave this through.
+#[test]
+fn rejects_three_boundary_affixes() {
+    let big = "a".repeat(MAX_CONFIG_TEXT_PARAM_BYTES);
+    let cfg = Config::as_given(vec![
+        Operation::PrefixLines {
+            prefix: big.clone(),
+        },
+        Operation::SuffixLines {
+            suffix: big.clone(),
+        },
+        Operation::PrefixLines { prefix: big },
+    ]);
+    let json = serde_json::to_string(&cfg).expect("serialize");
+    assert!(matches!(
+        parse_config(&json),
+        Err(ConfigError::PipelineMayAmplify { .. })
+    ));
+}
+
+/// The growth product is computed with saturating multiplication, so a pipeline whose
+/// true product overflows `u64` (many large affixes) still compares as "too large"
+/// and is rejected rather than wrapping to a small value and slipping through.
+#[test]
+fn growth_product_saturates_and_rejects() {
+    let big = "a".repeat(MAX_CONFIG_TEXT_PARAM_BYTES);
+    // 257^32 vastly exceeds u64::MAX, so the saturating product hits the ceiling.
+    let cfg = Config::as_given(vec![
+        Operation::PrefixLines { prefix: big };
+        MAX_CONFIG_OPERATIONS
+    ]);
+    let json = serde_json::to_string(&cfg).expect("serialize");
+    assert!(matches!(
+        parse_config(&json),
+        Err(ConfigError::PipelineMayAmplify { factor, .. }) if factor == u64::MAX
+    ));
+}
+
 fn text_param_ops(value: String) -> Vec<Operation> {
     vec![
         Operation::PrefixLines {
@@ -386,11 +495,21 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(512))]
 
     /// Any valid Config survives a `to_string` -> `parse_config` round trip unchanged.
+    /// The generator stays inside the op-count, param-length, and line-break envelopes,
+    /// so the only rule it can trip is the pipeline growth bound — and that is a
+    /// legitimate rejection, not an encoding failure, so the JSON must still decode
+    /// back to `cfg` via serde in that case.
     #[test]
     fn arbitrary_config_round_trips(cfg in config_strategy()) {
         let json = serde_json::to_string(&cfg).expect("serialize");
-        let parsed = parse_config(&json).expect("parse round-tripped config");
-        prop_assert_eq!(parsed, cfg);
+        match parse_config(&json) {
+            Ok(parsed) => prop_assert_eq!(parsed, cfg),
+            Err(ConfigError::PipelineMayAmplify { .. }) => {
+                let decoded: Config = serde_json::from_str(&json).expect("decode");
+                prop_assert_eq!(decoded, cfg);
+            }
+            Err(e) => prop_assert!(false, "unexpected parse error: {:?}", e),
+        }
     }
 
     /// Any version other than CONFIG_VERSION is rejected as UnsupportedVersion, for an

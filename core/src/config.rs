@@ -31,6 +31,29 @@ pub const MAX_CONFIG_OPERATIONS: usize = 32;
 /// them bounded prevents tiny configs from requesting huge per-line output.
 pub const MAX_CONFIG_TEXT_PARAM_BYTES: usize = 256;
 
+/// Maximum worst-case output-growth factor for a whole pipeline.
+///
+/// [`Config::validate`] rejects any config whose operations could, in the worst
+/// case, multiply the input byte length by more than this. Each operation has a
+/// conservative per-op growth bound ([`Operation::max_growth_factor`]); because
+/// `transform` folds the operations in sequence (`out_i <= in_i * factor_i`), the
+/// *product* of those bounds is a sound upper bound on the whole pipeline's growth.
+///
+/// Bounding that product — not just each operation in isolation — is what stops a
+/// tiny config of individually envelope-legal operations from amplifying a sub-KiB
+/// input into gigabytes. The per-op caps ([`MAX_CONFIG_OPERATIONS`],
+/// [`MAX_CONFIG_TEXT_PARAM_BYTES`]) bound a single pass; they do **not** bound
+/// composition, where a `SplitOn` re-maximizes the line count for a following
+/// `PrefixLines`/`JoinWith` to re-amplify — the multiplicative blow-up the fuzzer
+/// found (a ~1.7 KiB input that expanded past 2 GiB before the OS killed the worker).
+///
+/// `2^18` sits ~4x above the largest legitimate pipeline product and ~4x below the
+/// smallest empirically-observed out-of-memory repro from the fuzz corpus. Short,
+/// real-world parameters (`"> "`, `", "`) yield single-digit products, far below the
+/// cap; only large or repeated affix/join parameters accumulate toward it. See
+/// `SECURITY.md` ("Configs are envelope-bounded before transform").
+pub const MAX_PIPELINE_GROWTH_FACTOR: u64 = 1 << 18;
+
 /// A transformation request: a schema version, a pipeline of operations, and how that
 /// pipeline is ordered.
 ///
@@ -94,8 +117,21 @@ impl Config {
                 max: MAX_CONFIG_OPERATIONS,
             });
         }
+        // Bound the pipeline's worst-case output growth. Each op's output is at most
+        // `factor` times its input, so the product over the pipeline bounds total
+        // growth; reject anything that could amplify past the cap. Saturating so a
+        // genuinely unbounded product (many large affixes) cannot wrap to a small
+        // value and slip through.
+        let mut growth: u64 = 1;
         for op in &self.operations {
             op.validate_resource_envelope()?;
+            growth = growth.saturating_mul(op.max_growth_factor());
+        }
+        if growth > MAX_PIPELINE_GROWTH_FACTOR {
+            return Err(ConfigError::PipelineMayAmplify {
+                factor: growth,
+                max: MAX_PIPELINE_GROWTH_FACTOR,
+            });
         }
         Ok(())
     }
@@ -224,6 +260,55 @@ impl Operation {
         }
     }
 
+    /// Conservative upper bound on this operation's output-to-input byte ratio, over
+    /// *all* inputs. [`Config::validate`] multiplies these across the pipeline to
+    /// bound total amplification (see [`MAX_PIPELINE_GROWTH_FACTOR`]). Always rounded
+    /// up, so the product can only over-estimate growth — it never lets an amplifying
+    /// pipeline through.
+    ///
+    /// The amplifiers are the per-line/per-newline rewrites whose growth scales with a
+    /// free-text parameter; their factor is derived from the operation's *actual*
+    /// parameter length rather than the [`MAX_CONFIG_TEXT_PARAM_BYTES`] cap, so the
+    /// short tokens real configs use (`"> "`, `", "`) stay tight against the bound.
+    /// Every other operation either cannot grow its input (factor `1`) or grows it by
+    /// a small, parameter-independent constant verified against its `ops/` source.
+    fn max_growth_factor(&self) -> u64 {
+        match self {
+            // Per-line affixes: worst case is an all-single-byte-lines input, so each
+            // of up to `input.len()` lines grows by the affix length -> 1 + affix_len.
+            Operation::PrefixLines { prefix } => 1 + prefix.len() as u64,
+            Operation::SuffixLines { suffix } => 1 + suffix.len() as u64,
+            // JoinWith replaces every '\n' (at most `input.len()` of them) with the
+            // separator; worst case every byte is a newline -> max(1, separator_len).
+            Operation::JoinWith { separator } => (separator.len() as u64).max(1),
+            // Bounded-constant expanders (max single-token expansion, verified against
+            // the `ops/` sources; rounded up):
+            //   HtmlToMarkdown — code-fence backtick sizing + special-char escaping.
+            //   ChangeCase     — Unicode case mapping (e.g. `İ` -> `i̇`, 2 -> 3 bytes).
+            //   Defang         — `.` -> `[.]`, `@` -> `[@]`, `:` -> `[:]` (1 -> 3 bytes).
+            //   MaskIdentifiers— shortest token -> fixed placeholder (e.g. `[ipv6]`).
+            Operation::HtmlToMarkdown => 3,
+            Operation::ChangeCase { .. } => 3,
+            Operation::Defang { .. } => 3,
+            Operation::MaskIdentifiers { .. } => 2,
+            // Shrink-or-equal: these never increase the byte length. `SplitOn` replaces
+            // a >=1-byte delimiter with a single '\n', so it cannot grow either.
+            Operation::StripHtml
+            | Operation::StripMarkdown
+            | Operation::CollapseWhitespace
+            | Operation::TrimTrailingWhitespace
+            | Operation::RemoveBlankLines
+            | Operation::UnwrapLines
+            | Operation::SortLines { .. }
+            | Operation::DedupeLines
+            | Operation::SplitOn { .. }
+            | Operation::ExtractEmails
+            | Operation::ExtractUrls
+            | Operation::Refang
+            | Operation::CleanUrls => 1,
+        }
+    }
+
     fn validate_resource_envelope(&self) -> Result<(), ConfigError> {
         match self {
             Operation::PrefixLines { prefix } => {
@@ -326,6 +411,12 @@ pub enum ConfigError {
         op: &'static str,
         param: &'static str,
     },
+    /// The pipeline's worst-case output-growth factor (the product of the operations'
+    /// per-op growth bounds) exceeded [`MAX_PIPELINE_GROWTH_FACTOR`]. Such a config
+    /// could turn a small input into an unbounded-size transform — a resource-
+    /// exhaustion (DoS) vector — so it is rejected before the infallible transform.
+    /// `factor` saturates at [`u64::MAX`] for pipelines whose product overflows.
+    PipelineMayAmplify { factor: u64, max: u64 },
 }
 
 impl std::fmt::Display for ConfigError {
@@ -348,6 +439,10 @@ impl std::fmt::Display for ConfigError {
             ConfigError::TextParamContainsLineBreak { op, param } => {
                 write!(f, "{op}.{param} must be a single line")
             }
+            ConfigError::PipelineMayAmplify { factor, max } => write!(
+                f,
+                "config pipeline could amplify output up to {factor}x, maximum is {max}x"
+            ),
         }
     }
 }

@@ -15,8 +15,19 @@ Environment:
   FUZZ_LOAD_PERCENT            Target system load, default 85. Keep this 80-90.
   FUZZ_MIN_FREE_MIB_PER_WORKER Available-memory budget per worker, default 512.
   FUZZ_RESERVE_MIB             Memory to leave untouched, default 2048.
+  FUZZ_RSS_LIMIT_MIB           Per-worker RSS cap passed to libFuzzer (-rss_limit_mb).
+                               Default: sized so workers cannot overcommit RAM (see
+                               below). A worker that exceeds it is a real OOM finding.
   FUZZ_ALLOW_OVERCOMMIT=1      Run one worker even when current load is already high.
   FUZZ_DRY_RUN=1               Print the selected targets/workers and exit.
+
+Triage note: a unit flagged as slow (or an oom) during a saturated multi-worker
+campaign may be a CONTENTION artifact, not an algorithmic bug — many workers sharing
+the box inflate per-unit wall-clock. Always re-confirm a slow-unit/oom single-threaded
+before treating it as a finding:
+  cargo +nightly fuzz run TARGET artifacts/TARGET/slow-unit-... -- -runs=1
+The per-worker RSS cap below stops the worst inflation source (memory overcommit ->
+swap); it does not eliminate CPU oversubscription, so the re-confirm step still stands.
 USAGE
 }
 
@@ -142,6 +153,34 @@ EOF
     fi
 fi
 
+# Per-worker RSS cap. The default libFuzzer limit is 2048 MiB *per worker*; with N
+# workers that silently overcommits a smaller box, and the resulting swap inflates
+# per-unit wall-clock into spurious slow-unit/oom artifacts (the contention false
+# positives the triage note warns about). Size the cap so workers*cap fits the same
+# usable-memory budget the worker count was derived from, so the campaign cannot swap.
+# A worker that genuinely balloons past this cap is still killed and reported — that is
+# a real out-of-memory finding (e.g. a pipeline-amplification regression), not noise.
+rss_limit_mb="${FUZZ_RSS_LIMIT_MIB:-}"
+if [ -z "$rss_limit_mb" ]; then
+    if [ -n "$available_mib" ]; then
+        rss_limit_mb=$(
+            awk -v avail="$available_mib" -v reserve="$reserve_mib" -v workers="$workers" '
+                BEGIN {
+                    usable = avail - reserve
+                    if (usable < 0) usable = 0
+                    per = int(usable / workers)
+                    if (per < 512) per = 512    # a worker needs working room
+                    if (per > 2048) per = 2048  # never exceed libFuzzer'\''s own default
+                    print per
+                }
+            '
+        )
+    else
+        # No memory reading available (e.g. non-macOS): keep libFuzzer's default.
+        rss_limit_mb=2048
+    fi
+fi
+
 seconds=$(
     awk -v hours="$hours" 'BEGIN { seconds = int(hours * 3600); if (seconds < 1) seconds = 1; print seconds }'
 )
@@ -161,6 +200,7 @@ current load: $current_load
 target load:  ${load_percent}%
 workers/jobs: $workers
 available MiB:${available_mib:-unknown}
+rss cap/wkr:  ${rss_limit_mb} MiB (-rss_limit_mb)
 log dir:      $log_dir
 EOF
 
@@ -183,6 +223,7 @@ for target in $targets; do
         -workers="$workers" \
         -jobs="$workers" \
         -max_total_time="$seconds_per_target" \
+        -rss_limit_mb="$rss_limit_mb" \
         -print_final_stats=1 \
         2>&1 | tee "$log_file"; then
         failed=1
