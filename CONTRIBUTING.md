@@ -135,6 +135,16 @@ refuses to add load when the machine is already near the target unless
 `FUZZ_ALLOW_OVERCOMMIT=1` is set. Use `FUZZ_DRY_RUN=1 make fuzz-overnight` to
 check the selected targets and worker count without starting libFuzzer.
 
+Use `make fuzz-overnight-auto` when confirmed findings should be committed as
+they are found:
+
+```sh
+make fuzz-overnight-auto FUZZ_HOURS=12
+```
+
+For one-off tuning, `FUZZ_AUTO_COMMIT=1` enables auto-commit and `FUZZ_NO_TRIAGE=1`
+skips automatic triage.
+
 ### Triaging a finding
 
 `scripts/overnight-fuzz.sh` triages automatically. After each target it re-runs every

@@ -18,7 +18,11 @@ PERF_SAMPLES ?= 3
 PERF_MIN_MIB_PER_SEC ?=
 FUZZ_SMOKE_SECONDS ?= 30
 FUZZ_HOURS ?= 8
+FUZZ_AUTO_COMMIT ?= 0
+FUZZ_NO_TRIAGE ?= 0
 FUZZ_TARGETS ?=
+FUZZ_OVERNIGHT_OPTIONS = $(if $(filter 1 true yes on,$(FUZZ_AUTO_COMMIT)),--auto-commit) $(if $(filter 1 true yes on,$(FUZZ_NO_TRIAGE)),--no-triage)
+FUZZ_OVERNIGHT_ARGS = $(strip $(FUZZ_OVERNIGHT_OPTIONS) $(FUZZ_HOURS) $(FUZZ_TARGETS))
 
 # Release packaging (see shells/macos/release.sh and docs/release-model.md).
 # dist/github-release are gated and need Developer ID credentials + a vX.Y.Z tag.
@@ -29,7 +33,7 @@ CERT_NAME ?=
 NOTARY_PROFILE ?=
 SIGN_ENTITLEMENTS ?=
 
-.PHONY: help build test lint fmt fmt-check ci checks supply-chain lint-actions lint-shell header bench bench-large perf fuzz fuzz-smoke fuzz-overnight zizmor app run preview dist github-release clean clean-release
+.PHONY: help build test lint fmt fmt-check ci checks supply-chain lint-actions lint-shell header bench bench-large perf fuzz fuzz-smoke fuzz-overnight fuzz-overnight-auto overnight-fuzz overnight-fuzz-auto zizmor app run preview dist github-release clean clean-release
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -93,8 +97,15 @@ fuzz: ## Build all fuzz targets (auto-installs nightly/cargo-fuzz if needed)
 fuzz-smoke: ## Build and briefly run all fuzz targets (FUZZ_SMOKE_SECONDS=30)
 	SS_FUZZ_SMOKE_SECONDS=$(FUZZ_SMOKE_SECONDS) $(CARGO) run -p xtask -- check-fuzz
 
-fuzz-overnight: ## Resource-sized local fuzz run across all targets (FUZZ_HOURS=8 [FUZZ_TARGETS=...])
-	scripts/overnight-fuzz.sh $(FUZZ_HOURS) $(FUZZ_TARGETS)
+fuzz-overnight: ## Resource-sized local fuzz run (FUZZ_HOURS=8 FUZZ_AUTO_COMMIT=1 FUZZ_NO_TRIAGE=1 FUZZ_TARGETS=...)
+	scripts/overnight-fuzz.sh $(FUZZ_OVERNIGHT_ARGS)
+
+fuzz-overnight-auto: ## Resource-sized local fuzz run that commits confirmed findings
+	$(MAKE) fuzz-overnight FUZZ_AUTO_COMMIT=1
+
+overnight-fuzz: fuzz-overnight
+
+overnight-fuzz-auto: fuzz-overnight-auto
 
 zizmor: ## Audit the GitHub Actions config (workflows + dependabot) for security (needs zizmor)
 	zizmor .github/
