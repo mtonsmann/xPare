@@ -35,6 +35,12 @@ class:
   section below).
 - `docs/guardrails/review-finding-closure.md` — what to add when a review finds
   a class of bug that should not come back.
+- `docs/agent-workflow.md` — the evidence-first engineering loop (classify → brief →
+  invariants → tests/properties/fuzz → smallest patch → checks → evidence packet).
+- `docs/templates/correctness-brief.md` — the brief to fill in before non-trivial
+  work; the PR template asks for the resulting evidence packet.
+- `docs/agent-tasks/` — copy-paste-ready prompt templates per change class
+  (core transform, FFI/ABI, security/privacy, dependency/CI, review-finding closure).
 
 The invariants named above are enforced by `cargo xtask ci` (see
 `CONTRIBUTING.md`), which CI runs verbatim. Keep checks green by fixing the code,

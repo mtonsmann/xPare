@@ -7,6 +7,15 @@ dependencies in the core, deterministic output, minimal macOS entitlements) is
 enforced **mechanically** by the `xtask` crate so the same checks run locally
 and in CI. See `AGENTS.md` and `docs/guardrails/` for the rationale.
 
+The engineering loop is **evidence-first**: a change is judged by the correctness
+evidence it ships, not the diff. Before non-trivial work, fill in a correctness
+brief ([`docs/templates/correctness-brief.md`](docs/templates/correctness-brief.md))
+and follow [`docs/agent-workflow.md`](docs/agent-workflow.md); the PR template asks
+for the resulting **evidence packet**. Pipeline/op behavior is anchored by a
+Cedar-style **reference interpreter** — the optimized production `transform` is
+differentially tested against a simple one-op-at-a-time reference in
+[`core/tests/reference_transform.rs`](core/tests/reference_transform.rs).
+
 ## The full local gate
 
 ```sh
@@ -24,14 +33,15 @@ it runs:
 6. `cargo xtask check-no-network` — no network/OS-capable crate anywhere in the tree
 7. `cargo xtask check-no-content-logging` — no shipped line logs/persists clipboard content
 8. `cargo xtask check-pipeline-zeroization` — fused core scratch storage is wiped before release
-9. `cargo xtask check-clipboard-safety` — default targets never touch the real clipboard
-10. `cargo xtask check-c-ffi-surface` — no unexpected handwritten C/C++/Objective-C surface
-11. `cargo xtask check-abi` — the checked-in C header matches the FFI source
-12. `cargo xtask check-entitlements` — the macOS entitlements file is exactly minimal
-13. `cargo xtask check-release-posture` — official signing cannot broaden entitlements
-14. `cargo xtask check-shell` — `shellcheck` over the shell scripts
-15. `cargo xtask check-workflows` — `actionlint` + `zizmor` over `.github/workflows/`
-16. `cargo xtask check-supply-chain` — `cargo-deny`: advisories, licenses, bans, sources
+9. `cargo xtask check-agent-workflow` — the AI-native workflow docs exist with required headings
+10. `cargo xtask check-clipboard-safety` — default targets never touch the real clipboard
+11. `cargo xtask check-c-ffi-surface` — no unexpected handwritten C/C++/Objective-C surface
+12. `cargo xtask check-abi` — the checked-in C header matches the FFI source
+13. `cargo xtask check-entitlements` — the macOS entitlements file is exactly minimal
+14. `cargo xtask check-release-posture` — official signing cannot broaden entitlements
+15. `cargo xtask check-shell` — `shellcheck` over the shell scripts
+16. `cargo xtask check-workflows` — `actionlint` + `zizmor` over `.github/workflows/`
+17. `cargo xtask check-supply-chain` — `cargo-deny`: advisories, licenses, bans, sources
 
 If any check fails, it prints a remediation-oriented message. **Fix the code so
 the check passes; do not weaken the check.** Each check can also be run on its
