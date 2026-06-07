@@ -191,6 +191,25 @@ reproducer attached — not a tarball. Closing the finding means more than the o
 keep the committed regression, add a focused test for the behavior, and follow the
 [finding-closure guardrail](docs/guardrails/review-finding-closure.md).
 
+## Miri (FFI undefined-behavior detection)
+
+The core is `#![forbid(unsafe_code)]`, so all `unsafe` lives in `core-ffi` (pointer
+validation, the leaked-`Box<[u8]>` buffer protocol, zeroize-on-free, lossy-UTF-8
+decode). `core-ffi/tests/abi_roundtrip.rs` drives the real `extern "C"` entry points
+through raw pointers; running it under [Miri](https://github.com/rust-lang/miri)'s
+UB detector turns "the boundary is exercised" into "no undefined behavior was
+detected on the tested executions".
+
+```sh
+cargo run -p xtask -- check-miri      # auto-installs nightly + the miri component
+```
+
+Like fuzzing, this is **nightly-only and best-effort**, so it is intentionally
+**outside** the required `cargo xtask ci` gate (CI runs it as a `continue-on-error`
+job). It is dynamic UB detection over the executions the tests drive, not a proof
+and not input coverage — cargo-fuzz owns coverage. The fuzz-lite sweep scales itself
+down under Miri (`cfg!(miri)`) so the pass stays fast.
+
 ## Pull requests
 
 - State the change class and any compatibility/posture impact (ABI, privacy,

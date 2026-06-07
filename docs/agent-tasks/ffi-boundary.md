@@ -45,11 +45,15 @@ serialization, the capabilities/version query, or the generated header.
 
 - `cargo xtask check-abi`, `cargo xtask check-c-ffi-surface`,
   `cargo test -p safetystrip-ffi`, and `cargo xtask ci`.
-- If Miri is available, the FFI-adjacent tests under Miri (pointer/slice/ownership).
+- `cargo run -p xtask -- check-miri` — runs the `core-ffi` boundary tests under
+  Miri's UB detector (pointer/provenance/aliasing/buffer-ownership). Required
+  evidence for any change to the `unsafe` shim.
 - Explicit ABI-version + header-regeneration statement, or "no ABI change".
 
 ## Proof gaps to report
 
-- FFI memory behavior is exercised by tests (and optionally Miri), not formally
-  proven. `catch_unwind` containment is defense-in-depth over the fuzzed never-panics
-  core, not a proof the core cannot panic.
+- FFI memory behavior is exercised by tests and checked by Miri for UB on the tested
+  executions — not formally proven, and not exhaustive over all inputs (Miri checks
+  what the tests drive; cargo-fuzz owns input coverage). `catch_unwind` containment
+  is defense-in-depth over the fuzzed never-panics core, not a proof the core cannot
+  panic.

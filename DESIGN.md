@@ -325,9 +325,12 @@ testing, reference-vs-production equivalence, and repo-native evidence requireme
 
 This is verification-*guided* development, not formal verification. It does not prove
 the whole core correct, does not prove the sanitizers correct against browser/RFC
-semantics, and does not formally prove FFI memory behavior. A bounded proof track
-(e.g. Kani over the saturating growth-envelope arithmetic) is recorded as future work
-in [`docs/deferred-work.md`](docs/deferred-work.md), not forced into this pass.
+semantics, and does not formally prove FFI memory behavior — though `core-ffi`, the
+only crate with `unsafe`, has its boundary tests run under Miri's undefined-behavior
+detector (`cargo xtask check-miri`; nightly, best-effort, outside the required gate),
+so UB on the tested executions is caught. A bounded proof track (e.g. Kani over the
+saturating growth-envelope arithmetic) is recorded as future work in
+[`docs/deferred-work.md`](docs/deferred-work.md), not forced into this pass.
 
 ### Other settled choices
 

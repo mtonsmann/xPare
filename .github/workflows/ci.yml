@@ -183,6 +183,34 @@ jobs:
         run: cargo run -p xtask -- check-fuzz
 
   # ----------------------------------------------------------------------------
+  # Miri: run the core-ffi boundary tests under Miri's undefined-behavior detector.
+  # core-ffi is the only crate with `unsafe` (pointer validation, the leaked-Box
+  # buffer protocol, zeroize-on-free). continue-on-error so a nightly/Miri hiccup
+  # never blocks merges; the required signal is the stable `cargo xtask ci`. Run it
+  # locally with `cargo run -p xtask -- check-miri`.
+  # ----------------------------------------------------------------------------
+  miri:
+    name: miri (nightly, best-effort)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Install Rust nightly with Miri
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # nightly
+        with:
+          toolchain: nightly
+          components: miri
+
+      # `xtask` scopes the run to core-ffi (the unsafe crate) and bootstraps the miri
+      # component if missing, so this cannot drift and needs no Miri command here.
+      - name: Run core-ffi boundary tests under Miri
+        run: cargo run -p xtask -- check-miri
+
+  # ----------------------------------------------------------------------------
   # GitHub Actions security: zizmor statically audits the workflow files
   # themselves (template injection, credential persistence, unpinned actions,
   # over-broad token permissions). A required gate — workflow security is part of

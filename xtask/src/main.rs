@@ -20,6 +20,7 @@
 //!   check-workflows     lint GitHub Actions workflows (actionlint + zizmor)
 //!   check-shell         shellcheck the shell scripts
 //!   check-fuzz          build cargo-fuzz targets; optionally smoke-run all targets
+//!   check-miri          run the core-ffi boundary tests under Miri (UB detection)
 //!   ci                  run fmt --check, clippy -D warnings, test, and all the above
 //!
 //! Every check exits nonzero on violation with a remediation-oriented message so a
@@ -48,6 +49,7 @@ fn main() -> ExitCode {
         Some("check-workflows") => report(check_workflows()),
         Some("check-shell") => report(check_shell()),
         Some("check-fuzz") => report(check_fuzz()),
+        Some("check-miri") => report(check_miri()),
         Some("ci") => run_ci(),
         Some(other) => {
             eprintln!("xtask: unknown subcommand '{other}'");
@@ -81,6 +83,7 @@ fn usage() {
          \x20 check-workflows      lint GitHub Actions workflows (actionlint + zizmor)\n\
          \x20 check-shell          shellcheck the shell scripts\n\
          \x20 check-fuzz           build fuzz targets; set SS_FUZZ_SMOKE_SECONDS=N to run them\n\
+         \x20 check-miri           run core-ffi boundary tests under Miri (UB detection in the unsafe shim)\n\
          \x20 ci                   fmt + clippy + test + every structural & external check"
     );
 }
@@ -1667,6 +1670,92 @@ fn check_fuzz() -> Result<(), String> {
     }
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// check-miri
+// ---------------------------------------------------------------------------
+//
+// The core is `#![forbid(unsafe_code)]`, so memory-unsafety is impossible there by
+// construction — Miri would only confirm what the compiler already guarantees. ALL
+// `unsafe` lives in `core-ffi` (pointer validation, the leaked-Box buffer protocol,
+// zeroize-on-free, lossy-UTF-8 decode). `core-ffi/tests/abi_roundtrip.rs` drives the
+// real `extern "C"` entry points through raw pointers; running just that crate under
+// Miri's UB detector turns "FFI memory behavior is exercised" into "exercised AND no
+// undefined behavior was detected on the tested executions". Like `check-fuzz`, this
+// is nightly-only and intentionally OUTSIDE the required `cargo xtask ci` gate (the
+// stable gate stays the single required signal); CI runs it as a best-effort job.
+//
+// Caveat: Miri checks the executions the tests actually drive, not all inputs — it
+// is dynamic UB detection, not a proof. Coverage of inputs is cargo-fuzz's job.
+
+/// Ensure the `miri` rustup component is installed on nightly, installing it on
+/// demand the same way `check-fuzz` bootstraps the nightly toolchain.
+fn ensure_miri_component() -> Result<(), String> {
+    let available = Command::new("cargo")
+        .args(["+nightly", "miri", "--version"])
+        .output();
+    if let Ok(out) = available {
+        if out.status.success() {
+            return Ok(());
+        }
+    }
+    println!("check-miri: `miri` component not found — installing it on nightly via rustup…");
+    let installed = Command::new("rustup")
+        .args(["component", "add", "miri", "--toolchain", "nightly"])
+        .status()
+        .map_err(|e| {
+            format!(
+                "check-miri: FAIL — could not launch `rustup` to add the miri component: {e}\n\
+                 Install it manually and re-run:\n\
+                 \x20 rustup component add miri --toolchain nightly"
+            )
+        })?
+        .success();
+    if installed {
+        Ok(())
+    } else {
+        Err(
+            "check-miri: FAIL — could not install the `miri` component. Install it manually:\n\
+             \x20 rustup component add miri --toolchain nightly"
+                .to_string(),
+        )
+    }
+}
+
+/// check-miri: run the `core-ffi` boundary tests under Miri to detect undefined
+/// behavior in the only crate that uses `unsafe`. Best-effort and nightly-only, so
+/// it stays out of the required `ci` gate (mirrors `check-fuzz`).
+fn check_miri() -> Result<(), String> {
+    ensure_nightly_toolchain()?;
+    ensure_miri_component()?;
+
+    // `cargo miri test -p safetystrip-ffi` builds the FFI crate (and its deps) under
+    // Miri and runs its tests, including the unsafe boundary round-trips. The core is
+    // pulled in as a dependency and interpreted too, but we scope the *test run* to
+    // the crate that owns the unsafe so the pass stays fast. Default Miri isolation
+    // is fine: nothing in these tests touches the filesystem, clock, or network.
+    println!("check-miri: $ cargo +nightly miri test -p safetystrip-ffi");
+    let status = Command::new("cargo")
+        .args(["+nightly", "miri", "test", "-p", "safetystrip-ffi"])
+        .current_dir(workspace_root())
+        .status()
+        .map_err(|e| {
+            format!("check-miri: FAIL — could not launch `cargo +nightly miri test`: {e}")
+        })?;
+    if status.success() {
+        println!("check-miri: core-ffi boundary tests ran clean under Miri (no UB detected).");
+        Ok(())
+    } else {
+        Err(format!(
+            "check-miri: FAIL — Miri reported a problem in the core-ffi boundary (exited {status}).\n\
+             \n\
+             Miri detects undefined behavior in `unsafe` code. A failure here means a pointer\n\
+             validity, provenance, aliasing, or buffer-ownership bug in `core-ffi` — the only\n\
+             crate allowed `unsafe`. Fix the boundary code; do not silence Miri. If it is a\n\
+             known-benign Miri limitation, narrow the suppression with a documented reason."
+        ))
+    }
 }
 
 // ---------------------------------------------------------------------------
