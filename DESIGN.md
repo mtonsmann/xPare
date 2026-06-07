@@ -74,8 +74,12 @@ explicit:** transform order is semantically significant (`StripHtml` then
 the core is deterministic and never *silently* reorders — the order it uses is fully
 specified by the config. Versioning lets a shell detect a capability mismatch
 deterministically (`parse_config` rejects any version other than `CONFIG_VERSION`);
-**v2** added the `ordering` field. Adding a transform is a new enum variant plus a
-pipeline arm — zero ABI change.
+**v2** added the `ordering` field. `parse_config` also enforces a resource envelope:
+at most 32 operations, free-text parameters (`prefix`, `suffix`, `separator`,
+`delimiter`) capped at 256 UTF-8 bytes, and those parameters must be single-line
+(`\r`/`\n` rejected). That blocks configs that could otherwise turn tiny inputs into
+multi-GB intermediates before a transform runs. Adding a transform is a new enum
+variant plus a pipeline arm — zero ABI change.
 
 ### D4 — Stateless `repr(C)` error model, lossy input decoding
 
@@ -247,6 +251,10 @@ style, `MaskIdentifiers`' selected identifier classes) stay in the menu as
 crisp, keyboard-driven native-menu behavior on the common path; a Settings window
 keeps the fast path fast and is where macOS users already expect typed
 configuration to live.
+
+The Rust core is the authoritative validator for the free-text parameter envelope
+(single-line, 256-byte maximum); shells should mirror that in Settings for immediate
+feedback, but never rely on UI validation as the only guard.
 
 ### D13 — Canonical pipeline ordering
 

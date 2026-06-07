@@ -17,6 +17,20 @@ use serde::{Deserialize, Serialize};
 /// new value — `ordering` itself is optional (defaults to `Canonical`).
 pub const CONFIG_VERSION: u32 = 2;
 
+/// Maximum number of operations accepted in a parsed config.
+///
+/// This is deliberately above the product UI's everyday operation count but low
+/// enough that repeated whole-buffer transforms cannot turn a tiny config into an
+/// unbounded resource request.
+pub const MAX_CONFIG_OPERATIONS: usize = 32;
+
+/// Maximum UTF-8 byte length for each free-text operation parameter.
+///
+/// Prefix/suffix/join/split parameters are configuration, not clipboard content, and
+/// product use cases are short tokens such as `"> "`, `", "`, or `"|"`. Keeping
+/// them bounded prevents tiny configs from requesting huge per-line output.
+pub const MAX_CONFIG_TEXT_PARAM_BYTES: usize = 256;
+
 /// A transformation request: a schema version, a pipeline of operations, and how that
 /// pipeline is ordered.
 ///
@@ -66,6 +80,24 @@ impl Config {
             operations,
             ordering: Ordering::AsGiven,
         }
+    }
+
+    /// Validate the product resource envelope for a config.
+    ///
+    /// `transform` remains infallible once handed a [`Config`], so callers that build
+    /// configs programmatically should use this before running untrusted clipboard
+    /// content. [`parse_config`] calls it automatically for the JSON/FFI/CLI path.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if self.operations.len() > MAX_CONFIG_OPERATIONS {
+            return Err(ConfigError::TooManyOperations {
+                found: self.operations.len(),
+                max: MAX_CONFIG_OPERATIONS,
+            });
+        }
+        for op in &self.operations {
+            op.validate_resource_envelope()?;
+        }
+        Ok(())
     }
 }
 
@@ -191,6 +223,58 @@ impl Operation {
             Operation::JoinWith { .. } => 20,
         }
     }
+
+    fn validate_resource_envelope(&self) -> Result<(), ConfigError> {
+        match self {
+            Operation::PrefixLines { prefix } => {
+                validate_text_param("prefix_lines", "prefix", prefix)
+            }
+            Operation::SuffixLines { suffix } => {
+                validate_text_param("suffix_lines", "suffix", suffix)
+            }
+            Operation::JoinWith { separator } => {
+                validate_text_param("join_with", "separator", separator)
+            }
+            Operation::SplitOn { delimiter } => {
+                validate_text_param("split_on", "delimiter", delimiter)
+            }
+            Operation::StripHtml
+            | Operation::StripMarkdown
+            | Operation::HtmlToMarkdown
+            | Operation::CollapseWhitespace
+            | Operation::TrimTrailingWhitespace
+            | Operation::RemoveBlankLines
+            | Operation::UnwrapLines
+            | Operation::ChangeCase { .. }
+            | Operation::SortLines { .. }
+            | Operation::DedupeLines
+            | Operation::ExtractEmails
+            | Operation::ExtractUrls
+            | Operation::Defang { .. }
+            | Operation::Refang
+            | Operation::CleanUrls
+            | Operation::MaskIdentifiers { .. } => Ok(()),
+        }
+    }
+}
+
+fn validate_text_param(
+    op: &'static str,
+    param: &'static str,
+    value: &str,
+) -> Result<(), ConfigError> {
+    if value.len() > MAX_CONFIG_TEXT_PARAM_BYTES {
+        return Err(ConfigError::TextParamTooLong {
+            op,
+            param,
+            found: value.len(),
+            max: MAX_CONFIG_TEXT_PARAM_BYTES,
+        });
+    }
+    if value.contains('\n') || value.contains('\r') {
+        return Err(ConfigError::TextParamContainsLineBreak { op, param });
+    }
+    Ok(())
 }
 
 /// Bracket convention used by [`Operation::Defang`]. The default (`Square`, `[.]`)
@@ -228,6 +312,20 @@ pub enum ConfigError {
     Json(String),
     /// The `version` field is not [`CONFIG_VERSION`].
     UnsupportedVersion { found: u32, supported: u32 },
+    /// The config listed too many operations.
+    TooManyOperations { found: usize, max: usize },
+    /// A free-text operation parameter exceeded [`MAX_CONFIG_TEXT_PARAM_BYTES`].
+    TextParamTooLong {
+        op: &'static str,
+        param: &'static str,
+        found: usize,
+        max: usize,
+    },
+    /// A free-text operation parameter contained `\r` or `\n`.
+    TextParamContainsLineBreak {
+        op: &'static str,
+        param: &'static str,
+    },
 }
 
 impl std::fmt::Display for ConfigError {
@@ -238,6 +336,18 @@ impl std::fmt::Display for ConfigError {
                 f,
                 "unsupported config version {found} (this core supports {supported})"
             ),
+            ConfigError::TooManyOperations { found, max } => {
+                write!(f, "config has {found} operations, maximum is {max}")
+            }
+            ConfigError::TextParamTooLong {
+                op,
+                param,
+                found,
+                max,
+            } => write!(f, "{op}.{param} is {found} bytes, maximum is {max}"),
+            ConfigError::TextParamContainsLineBreak { op, param } => {
+                write!(f, "{op}.{param} must be a single line")
+            }
         }
     }
 }
@@ -257,5 +367,6 @@ pub fn parse_config(json: &str) -> Result<Config, ConfigError> {
             supported: CONFIG_VERSION,
         });
     }
+    config.validate()?;
     Ok(config)
 }

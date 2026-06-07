@@ -30,15 +30,14 @@
 //!   cargo +nightly fuzz run transform_pipeline
 use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
-use safetystrip_core::{transform, BracketStyle, CaseKind, Config, Operation};
+use safetystrip_core::{
+    transform, BracketStyle, CaseKind, Config, Operation, MAX_CONFIG_OPERATIONS,
+    MAX_CONFIG_TEXT_PARAM_BYTES,
+};
 
-/// Cap on the number of operations applied in a single fuzz case. The pipeline is
-/// linear per op, but each op reallocates the whole string, so an unbounded
-/// pipeline of e.g. `PrefixLines` could make one case super-linear in wall-clock
-/// time and starve the fuzzer. A generous-but-finite bound keeps each case fast
-/// while still letting the fuzzer explore deep orderings. Enforced by truncation
-/// in the target (see below).
-const MAX_OPS: usize = 32;
+/// Cap on the number of operations applied in a single fuzz case. Mirrors the
+/// product config envelope enforced by `parse_config`.
+const MAX_OPS: usize = MAX_CONFIG_OPERATIONS;
 
 /// Mirror of [`safetystrip_core::CaseKind`] that derives `Arbitrary`.
 #[derive(Arbitrary, Debug)]
@@ -140,10 +139,18 @@ impl From<LocalOp> for Operation {
                 case_insensitive,
             },
             LocalOp::DedupeLines => Operation::DedupeLines,
-            LocalOp::PrefixLines { prefix } => Operation::PrefixLines { prefix },
-            LocalOp::SuffixLines { suffix } => Operation::SuffixLines { suffix },
-            LocalOp::JoinWith { separator } => Operation::JoinWith { separator },
-            LocalOp::SplitOn { delimiter } => Operation::SplitOn { delimiter },
+            LocalOp::PrefixLines { prefix } => Operation::PrefixLines {
+                prefix: valid_text_param(prefix),
+            },
+            LocalOp::SuffixLines { suffix } => Operation::SuffixLines {
+                suffix: valid_text_param(suffix),
+            },
+            LocalOp::JoinWith { separator } => Operation::JoinWith {
+                separator: valid_text_param(separator),
+            },
+            LocalOp::SplitOn { delimiter } => Operation::SplitOn {
+                delimiter: valid_text_param(delimiter),
+            },
             LocalOp::ExtractEmails => Operation::ExtractEmails,
             LocalOp::ExtractUrls => Operation::ExtractUrls,
             LocalOp::Defang { style } => Operation::Defang {
@@ -156,6 +163,23 @@ impl From<LocalOp> for Operation {
             }
         }
     }
+}
+
+fn valid_text_param(mut value: String) -> String {
+    value.retain(|ch| ch != '\n' && ch != '\r');
+    truncate_to_byte_limit(&mut value, MAX_CONFIG_TEXT_PARAM_BYTES);
+    value
+}
+
+fn truncate_to_byte_limit(value: &mut String, max_bytes: usize) {
+    if value.len() <= max_bytes {
+        return;
+    }
+    let mut end = max_bytes;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value.truncate(end);
 }
 
 /// One fuzz case: the operation pipeline plus the input text to run it over.

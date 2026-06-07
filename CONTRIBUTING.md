@@ -110,6 +110,13 @@ make fuzz-smoke FUZZ_SMOKE_SECONDS=60
 # Or run one target manually (Ctrl-C to stop):
 cargo +nightly fuzz run <target>
 cargo +nightly fuzz run strip_html -- -max_total_time=60
+
+# Long local campaign sized from current CPU load and available memory.
+# Defaults to every fuzz target and splits FUZZ_HOURS across them:
+make fuzz-overnight FUZZ_HOURS=8
+
+# Focus on one or more targets:
+make fuzz-overnight FUZZ_HOURS=8 FUZZ_TARGETS="transform_pipeline strip_html"
 ```
 
 Available targets are discovered mechanically with `cargo +nightly fuzz list`.
@@ -118,6 +125,13 @@ crashing input found under `fuzz/` so it is replayed as a regression. CI runs a
 short best-effort nightly fuzz smoke (`continue-on-error`) through the same
 `cargo xtask check-fuzz` path; the required signal is the property/corpus tests
 in `cargo xtask ci`.
+
+`scripts/overnight-fuzz.sh HOURS [TARGET ...]` is for unattended local campaigns.
+With no targets, it discovers every target with `cargo +nightly fuzz list` and
+splits the total runtime across them. It targets about 85% system-load saturation
+by default, caps workers by available memory, writes logs under `fuzz-runs/`, and
+refuses to add load when the machine is already near the target unless
+`FUZZ_ALLOW_OVERCOMMIT=1` is set.
 
 ## Pull requests
 
