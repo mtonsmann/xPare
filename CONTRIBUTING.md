@@ -246,7 +246,7 @@ in `config_roundtrip.rs`. The proofs cover the arithmetic only — **not** the
 These two checks measure how much the code is actually *exercised and asserted*, the
 deepest anti-slop signal. `check-coverage` runs [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov)
 and fails if line coverage drops below a ratcheted floor (`COVERAGE_FLOOR_PCT`, currently
-93%; product baseline ~95.6%), measuring the product crates only — the `xtask` enforcement
+95%; product baseline ~95.6%), measuring the product crates only — the `xtask` enforcement
 harness is excluded. `check-mutants` runs [cargo-mutants](https://github.com/sourcefrog/cargo-mutants)
 (config in `mutants.toml`): a *surviving* mutant means either dead code or a test that runs
 but asserts too little. The fix for a survivor is to **strengthen a test** (which becomes a

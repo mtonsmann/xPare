@@ -2021,10 +2021,11 @@ fn check_kani() -> Result<(), String> {
 /// Line-coverage floor for `check-coverage`, as a whole-number percent. A ratchet: raise
 /// it (never lower it) in a deliberate, reviewed edit as coverage improves — exactly like
 /// `MAX_IGNORED_TESTS`. Set from the measured full-tree baseline with a small margin so a
-/// flaky rounding never trips it. Measured product-code baseline at introduction:
-/// ~95.6% lines (the `xtask` tooling is excluded from the measurement — it is the
-/// enforcement harness, not product logic, and is verified by being run in CI).
-const COVERAGE_FLOOR_PCT: u32 = 93;
+/// flaky run never trips it. Measured product-code baseline at introduction was ~95.6%
+/// lines (the `xtask` tooling is excluded — it is the enforcement harness, not product
+/// logic, and is verified by being run in CI). Note coverage jitters slightly run-to-run
+/// because proptest explores fresh inputs each run, so keep a margin above the floor.
+const COVERAGE_FLOOR_PCT: u32 = 95;
 
 /// Ensure the `llvm-tools` rustup component (the instrumentation runtime cargo-llvm-cov
 /// needs) is installed, adding it on demand the same way `check-miri` bootstraps `miri`.
