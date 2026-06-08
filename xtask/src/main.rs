@@ -21,6 +21,7 @@
 //!   check-shell         shellcheck the shell scripts
 //!   check-fuzz          build cargo-fuzz targets; optionally smoke-run all targets
 //!   check-miri          run the core-ffi boundary tests under Miri (UB detection)
+//!   check-kani          run the bounded Kani proofs over the resource-envelope arithmetic
 //!   ci                  run fmt --check, clippy -D warnings, test, and all the above
 //!
 //! Every check exits nonzero on violation with a remediation-oriented message so a
@@ -50,6 +51,7 @@ fn main() -> ExitCode {
         Some("check-shell") => report(check_shell()),
         Some("check-fuzz") => report(check_fuzz()),
         Some("check-miri") => report(check_miri()),
+        Some("check-kani") => report(check_kani()),
         Some("ci") => run_ci(),
         Some(other) => {
             eprintln!("xtask: unknown subcommand '{other}'");
@@ -84,6 +86,7 @@ fn usage() {
          \x20 check-shell          shellcheck the shell scripts\n\
          \x20 check-fuzz           build fuzz targets; set SS_FUZZ_SMOKE_SECONDS=N to run them\n\
          \x20 check-miri           run core-ffi boundary tests under Miri (UB detection in the unsafe shim)\n\
+         \x20 check-kani           run the bounded Kani proofs over the resource-envelope arithmetic\n\
          \x20 ci                   fmt + clippy + test + every structural & external check"
     );
 }
@@ -1332,6 +1335,7 @@ fn check_clipboard_safety() -> Result<(), String> {
 const CARGO_DENY_VERSION: &str = "0.19.8";
 const ZIZMOR_VERSION: &str = "1.25.2";
 const CARGO_FUZZ_VERSION: &str = "0.13.1";
+const KANI_VERSION: &str = "0.67.0";
 
 const SHELLCHECK_INSTALL_HINT: &str = "\x20 macOS:  brew install shellcheck\n\
      \x20 Debian: sudo apt-get install -y shellcheck\n\
@@ -1754,6 +1758,99 @@ fn check_miri() -> Result<(), String> {
              validity, provenance, aliasing, or buffer-ownership bug in `core-ffi` — the only\n\
              crate allowed `unsafe`. Fix the boundary code; do not silence Miri. If it is a\n\
              known-benign Miri limitation, narrow the suppression with a documented reason."
+        ))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// check-kani
+// ---------------------------------------------------------------------------
+//
+// Kani is a bounded model checker: it proves a property for ALL inputs within bounds
+// (via CBMC), not just the inputs a test happens to drive. The proof harnesses live
+// in `core/src/config.rs` behind `#[cfg(kani)]`, so they are invisible to normal
+// builds and to `cargo metadata` — the `kani` crate never enters the dependency tree
+// that `check-core-deps` guards. They prove the crisp resource-envelope arithmetic:
+// the saturating growth product gate accepts a pipeline iff its true worst-case
+// growth is within the cap (no saturation wrap can falsely accept an amplifier).
+//
+// Kani is heavy (it downloads a CBMC toolchain via `cargo kani setup`), so — like
+// check-fuzz and check-miri — it is best-effort and OUTSIDE the required `ci` gate.
+// CI runs it on a cadence / on demand (.github/workflows/proofs.yml), not per-PR.
+
+/// Ensure `cargo kani` is installed and set up, installing the pinned
+/// `kani-verifier` and running `cargo kani setup` on demand (a one-time toolchain
+/// download). In CI the proofs workflow pre-installs it, so this is a no-op there.
+fn ensure_kani() -> Result<(), String> {
+    if let Ok(out) = Command::new("cargo").args(["kani", "--version"]).output() {
+        if out.status.success() {
+            return Ok(());
+        }
+    }
+    println!(
+        "check-kani: `cargo kani` not found — installing kani-verifier@{KANI_VERSION} and \
+         running `cargo kani setup` (one-time; downloads the CBMC toolchain)…"
+    );
+    let installed = Command::new("cargo")
+        .args([
+            "install",
+            "--locked",
+            &format!("kani-verifier@{KANI_VERSION}"),
+        ])
+        .status()
+        .map_err(|e| {
+            format!("check-kani: FAIL — could not launch `cargo install kani-verifier`: {e}")
+        })?
+        .success();
+    if !installed {
+        return Err(format!(
+            "check-kani: FAIL — could not install kani-verifier. Install it manually:\n\
+             \x20 cargo install --locked kani-verifier@{KANI_VERSION} && cargo kani setup"
+        ));
+    }
+    let setup = Command::new("cargo")
+        .args(["kani", "setup"])
+        .status()
+        .map_err(|e| format!("check-kani: FAIL — could not launch `cargo kani setup`: {e}"))?
+        .success();
+    if setup {
+        Ok(())
+    } else {
+        Err(
+            "check-kani: FAIL — `cargo kani setup` did not complete. Re-run it manually:\n\
+             \x20 cargo kani setup"
+                .to_string(),
+        )
+    }
+}
+
+/// check-kani: run the bounded proofs over the resource-envelope arithmetic in
+/// `safetystrip-core`. Best-effort and heavy, so it stays out of the required `ci`
+/// gate (mirrors `check-fuzz` / `check-miri`).
+fn check_kani() -> Result<(), String> {
+    ensure_kani()?;
+
+    // `cargo kani -p safetystrip-core` discovers and verifies every `#[kani::proof]`
+    // harness in the core crate. Harnesses are `#[cfg(kani)]`, so this is the only
+    // command that compiles them at all.
+    println!("check-kani: $ cargo kani -p safetystrip-core");
+    let status = Command::new("cargo")
+        .args(["kani", "-p", "safetystrip-core"])
+        .current_dir(workspace_root())
+        .status()
+        .map_err(|e| format!("check-kani: FAIL — could not launch `cargo kani`: {e}"))?;
+    if status.success() {
+        println!("check-kani: bounded resource-envelope proofs verified.");
+        Ok(())
+    } else {
+        Err(format!(
+            "check-kani: FAIL — a bounded proof did not verify (exited {status}).\n\
+             \n\
+             Kani found an input within bounds that violates a proven property of the\n\
+             resource-envelope arithmetic (see the `kani_proofs` module in\n\
+             core/src/config.rs). This means the saturating growth gate could mis-accept or\n\
+             mis-reject a pipeline. Fix `saturating_growth_product` / `max_growth_factor` or\n\
+             the harness assumptions; do not weaken the proof to make it pass."
         ))
     }
 }

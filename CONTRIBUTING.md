@@ -210,6 +210,34 @@ job). It is dynamic UB detection over the executions the tests drive, not a proo
 and not input coverage — cargo-fuzz owns coverage. The fuzz-lite sweep scales itself
 down under Miri (`cfg!(miri)`) so the pass stays fast.
 
+## Kani (bounded proofs over the resource envelope)
+
+[Kani](https://github.com/model-checking/kani) is a bounded model checker: it proves
+a property for **all** inputs within bounds (via CBMC), not just the ones a test
+drives. The harnesses live in `core/src/config.rs` behind `#[cfg(kani)]` (so they are
+invisible to normal builds and to `cargo metadata` — `kani` never enters the
+dependency tree `check-core-deps` guards) and prove the crisp resource-envelope
+arithmetic: the saturating growth-product gate accepts a pipeline **iff** its true,
+arbitrary-precision worst-case growth is within `MAX_PIPELINE_GROWTH_FACTOR`, so no
+saturation wrap can falsely accept an amplifying config.
+
+```sh
+cargo run -p xtask -- check-kani      # installs kani-verifier + CBMC on first use
+```
+
+Kani is **heavy** (`cargo kani setup` downloads a CBMC toolchain), so — unlike
+fuzz/Miri — it is not a per-PR job. And because a bounded model check is
+deterministic and exhaustive within its bounds, re-running it on unchanged code
+proves nothing new (a *time* cadence would be pointless — that only helps fuzzing,
+where more wall-clock buys more coverage). So [`proofs.yml`](.github/workflows/proofs.yml)
+is **event-driven**: it runs only when something that could change the result changes
+— the proven arithmetic (`core/src/config.rs`), the check or the pinned Kani version
+(`xtask/src/main.rs`), or the workflow itself — plus on demand, and locally with the
+command above. It stays **outside** the required gate; the everyday signal is the
+proptest growth-envelope property in `reference_transform.rs` and the saturation tests
+in `config_roundtrip.rs`. The proofs cover the arithmetic only — **not** the
+`String`-bearing config or the text transformer.
+
 ## Pull requests
 
 - State the change class and any compatibility/posture impact (ABI, privacy,

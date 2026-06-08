@@ -38,7 +38,7 @@ invariants.
 | File | Responsibility |
 |---|---|
 | `core/src/lib.rs` | Crate root. Declares `#![forbid(unsafe_code)]` and the `print*`/`dbg!` denies. Re-exports the public API and holds `CAPABILITIES_JSON` (the static self-description). |
-| `core/src/config.rs` | The `Config` / `Operation` / `CaseKind` schema and `parse_config`. This is the data that crosses the FFI. `CONFIG_VERSION = 2`. |
+| `core/src/config.rs` | The `Config` / `Operation` / `CaseKind` schema and `parse_config`. This is the data that crosses the FFI. `CONFIG_VERSION = 2`. The saturating growth-envelope arithmetic is factored into `saturating_growth_product` and carries `#[cfg(kani)]` bounded proofs (`cargo xtask check-kani`). |
 | `core/src/pipeline.rs` | `transform(input, config)` — folds the ordered operations over the text. Infallible and deterministic; holds intermediates in `Zeroizing` storage and wipes fused scratch storage before release or reallocation. |
 | `core/src/ops/mod.rs` | Operations module root; each op is a pure free function. |
 | `core/src/ops/html.rs` | Hand-rolled, pure-safe-Rust HTML→text state machine + curated entity decoder. The rich→plain / script-neutralizing workhorse. |
@@ -78,9 +78,10 @@ The portable enforcer of the invariants (no external cargo plugins), so the same
 checks run locally and in CI. Subcommands: `gen-header`, `check-abi`,
 `check-unsafe-forbid`, `check-core-deps`, `check-no-network`, `check-entitlements`,
 `check-no-content-logging`, `check-clipboard-safety`, `check-agent-workflow`,
-`check-miri` (run the `core-ffi` boundary tests under Miri; nightly, best-effort,
-outside the required gate), and `ci` (fmt + clippy + test + every structural check).
-See [the dependency guardrail](docs/guardrails/dependency-posture.md).
+`check-miri` (run the `core-ffi` boundary tests under Miri), `check-kani` (run the
+bounded resource-envelope proofs) — both nightly/heavy, best-effort, and outside the
+required gate — and `ci` (fmt + clippy + test + every structural check). See [the
+dependency guardrail](docs/guardrails/dependency-posture.md).
 
 ### `fuzz/` — `safetystrip-fuzz`
 
