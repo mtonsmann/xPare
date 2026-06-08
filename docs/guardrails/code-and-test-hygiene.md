@@ -75,3 +75,18 @@ style note. Fix the code to satisfy the check; never weaken the check.
   smallest item — never a crate-level blanket allow.
 - For new behavior: the reference/property/corpus coverage added (not just an example),
   and any mutation survivors knowingly left, with reasons.
+
+## Tier-2 review (the residue)
+
+Everything mechanizable is a gate above. What is left — naming, the wrong abstraction,
+architectural drift from [`ARCHITECTURE.md`](../../ARCHITECTURE.md) — gets a tier-2 **agent
+review** of the PR diff (and on demand), never a cron: same convergence logic as the heavy
+gates, a quiet repo pays nothing.
+
+- It emits **evidence**, not vibes — like a PR packet: `file:line` + the guardrail or
+  invariant violated + a concrete fix. A finding the reviewer cannot ground that way is not
+  a finding.
+- A **recurring** finding graduates into a new deterministic `xtask` check: the agent
+  discovers the *next* gate, then retires from that duty. Close it through
+  [`review-finding-closure.md`](review-finding-closure.md) and, if it creates or changes an
+  enforced invariant, update the `ARCHITECTURE.md` table.

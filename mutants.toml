@@ -1,0 +1,22 @@
+# Configuration for `cargo xtask check-mutants` (cargo-mutants).
+#
+# This is a BEST-EFFORT, event-driven gate (see .github/workflows/hygiene.yml), NOT part
+# of the required `cargo xtask ci` — like Miri and Kani, it is heavy and deterministic, so
+# re-running it on unchanged code proves nothing new and it is never scheduled.
+#
+# A *surviving* mutant means a line was changed and NO test failed — i.e. dead code or an
+# under-asserted test. SafetyStrip's oracles (the reference interpreter in
+# tests/reference_transform.rs, proptest, the corpus, golden tests) make the score
+# high-signal: most product logic should be load-bearing.
+
+# Mutate the product logic only. The xtask tooling is not the product; benches are not
+# correctness-bearing. (The `fuzz/` crate is a separate workspace, so it is never seen.)
+exclude_globs = [
+    "xtask/**",
+    "**/benches/**",
+]
+
+# Property and corpus tests run longer than a trivial unit test. Give a generous timeout
+# so a slow-but-passing test is never misread as a mutant-induced hang (a false survivor).
+timeout_multiplier = 5.0
+minimum_test_timeout = 60

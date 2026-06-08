@@ -29,7 +29,7 @@ CERT_NAME ?=
 NOTARY_PROFILE ?=
 SIGN_ENTITLEMENTS ?=
 
-.PHONY: help build test lint fmt fmt-check ci checks supply-chain unused-deps docs lint-actions lint-shell header bench bench-large perf fuzz fuzz-smoke fuzz-overnight zizmor app run preview dist github-release clean clean-release
+.PHONY: help build test lint fmt fmt-check ci checks supply-chain unused-deps docs coverage mutants lint-actions lint-shell header bench bench-large perf fuzz fuzz-smoke fuzz-overnight zizmor app run preview dist github-release clean clean-release
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -74,6 +74,12 @@ unused-deps: ## cargo-machete: fail on a declared-but-unused dependency
 
 docs: ## Build docs with -D warnings (broken intra-doc links, invalid doc HTML)
 	$(CARGO) run -p xtask -- check-docs
+
+coverage: ## Line-coverage floor (cargo-llvm-cov; best-effort, outside `ci`)
+	$(CARGO) run -p xtask -- check-coverage
+
+mutants: ## Mutation testing (cargo-mutants; SS_DIFF_BASE=<ref> scopes to a diff; best-effort)
+	$(CARGO) run -p xtask -- check-mutants
 
 lint-actions: ## Lint workflows: actionlint (correctness) + zizmor (security)
 	$(CARGO) run -p xtask -- check-workflows

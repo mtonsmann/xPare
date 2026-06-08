@@ -241,6 +241,32 @@ proptest growth-envelope property in `reference_transform.rs` and the saturation
 in `config_roundtrip.rs`. The proofs cover the arithmetic only — **not** the
 `String`-bearing config or the text transformer.
 
+## Coverage & mutation testing (best-effort)
+
+These two checks measure how much the code is actually *exercised and asserted*, the
+deepest anti-slop signal. `check-coverage` runs [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov)
+and fails if line coverage drops below a ratcheted floor (`COVERAGE_FLOOR_PCT`, currently
+93%; product baseline ~95.6%), measuring the product crates only — the `xtask` enforcement
+harness is excluded. `check-mutants` runs [cargo-mutants](https://github.com/sourcefrog/cargo-mutants)
+(config in `mutants.toml`): a *surviving* mutant means either dead code or a test that runs
+but asserts too little. The fix for a survivor is to **strengthen a test** (which becomes a
+permanent regression), never to delete the check.
+
+```sh
+cargo run -p xtask -- check-coverage   # auto-bootstraps the llvm-tools component
+cargo run -p xtask -- check-mutants    # full tree
+
+# Scope the mutation run to the lines you changed (fast PR feedback):
+SS_DIFF_BASE=origin/main cargo run -p xtask -- check-mutants
+```
+
+Both are **heavy and deterministic**, so — like Miri and Kani — they sit **outside** the
+required `cargo xtask ci` gate. Re-running them on unchanged code proves nothing new, so
+they are event-driven, not scheduled: on demand locally, and path-filtered in
+[`hygiene.yml`](.github/workflows/hygiene.yml) (a `continue-on-error` job that scopes the
+mutation run to the PR diff via `SS_DIFF_BASE`). There is **no cron** — a stable repo
+pays nothing. See [code & test hygiene](docs/guardrails/code-and-test-hygiene.md).
+
 ## Pull requests
 
 - State the change class and any compatibility/posture impact (ABI, privacy,

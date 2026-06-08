@@ -82,8 +82,10 @@ checks run locally and in CI. Subcommands: `gen-header`, `check-abi`,
 `check-test-hygiene` (every ignored test has a reason; the count is ratcheted),
 `check-docs` (docs build with `-D warnings`: no broken intra-doc links or invalid doc
 HTML), `check-miri` (run the `core-ffi` boundary tests under Miri), `check-kani` (run
-the bounded resource-envelope proofs) — the last two nightly/heavy, best-effort, and
-outside the required gate — and `ci` (fmt + clippy + test + every structural check).
+the bounded resource-envelope proofs), `check-coverage` (line-coverage floor ratchet via
+cargo-llvm-cov, excluding the `xtask` harness) and `check-mutants` (mutation testing via
+cargo-mutants) — those last four nightly/heavy, best-effort, and outside the required gate
+— and `ci` (fmt + clippy + test + every structural check).
 See [the dependency guardrail](docs/guardrails/dependency-posture.md) and [the code &
 test hygiene guardrail](docs/guardrails/code-and-test-hygiene.md).
 
@@ -191,6 +193,8 @@ therefore CI). Fix the code to satisfy the check; never weaken the check.
 | No declared-but-unused dependency | `check-unused-deps` (cargo-machete over the whole workspace) | `xtask`, `CARGO_MACHETE_VERSION` |
 | Every ignored test justified, count ratcheted | `check-test-hygiene` (bare `#[ignore]` fails; total `#[ignore]`s ≤ ceiling) | `xtask` `MAX_IGNORED_TESTS` |
 | No broken doc links or invalid doc HTML | `check-docs` (`cargo doc --no-deps` with `RUSTDOCFLAGS=-D warnings`) | `xtask` |
+| Line coverage stays above a ratcheted floor | `check-coverage` (cargo-llvm-cov; `COVERAGE_FLOOR_PCT`, excludes the `xtask` harness) | `xtask`; best-effort, **outside** the `ci` gate (`hygiene.yml`) |
+| No dead code or under-asserting "slop" tests | `check-mutants` (cargo-mutants; a surviving mutant means a test to strengthen) | `xtask`, `mutants.toml`; best-effort, **outside** the `ci` gate (`hygiene.yml`) |
 
 The single gate that runs all of the above is `cargo xtask ci`; CI runs the exact
 same command (`.github/workflows/ci.yml`). See [`CONTRIBUTING.md`](CONTRIBUTING.md).

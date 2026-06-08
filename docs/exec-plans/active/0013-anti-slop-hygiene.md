@@ -67,7 +67,6 @@ scheduled: they run on demand, locally, and event-driven (path-filtered) in
 `hygiene.yml`, mirroring `proofs.yml`. A surviving mutant is either dead code or an
 under-asserted test; the fix is to strengthen a test, and that assertion becomes a
 permanent regression. `SS_DIFF_BASE=<ref>` scopes a run to a diff for fast PR feedback.
-*(Status: pending — see below.)*
 
 ### D-6 - Tier-2 agent review is event-driven, not scheduled
 
@@ -83,12 +82,30 @@ Landed and green (required tier): D-1 (`[workspace.lints]` + `clippy.toml`), D-2
 wired into `run_ci()` / `usage()` / module doc / `Makefile` / `ci.yml` lockstep, and
 recorded in the `ARCHITECTURE.md` invariants table and `docs/guardrails/code-and-test-hygiene.md`.
 
-Pending: D-5 (`check-mutants`, `check-coverage`, `hygiene.yml`, one-time full-tree sweep +
-baselines) and D-6 (agent review). Deferred (tracked in `deferred-work.md`):
-`cargo-public-api` snapshot, `missing_docs`, `lychee`.
+Landed (best-effort tier, Phase 4): D-5 — `check-coverage` (cargo-llvm-cov, floor
+`COVERAGE_FLOOR_PCT = 93`, product baseline ~95.6%, `xtask` excluded), `check-mutants`
+(cargo-mutants, `mutants.toml`), and the event-driven `hygiene.yml`. Outside the required
+gate, mirroring `proofs.yml` (own subcommands + advisory workflow + `Makefile` targets),
+and recorded in the `ARCHITECTURE.md` invariants table and the hygiene guardrail.
+
+Landed (Phase 5): D-6 — the tier-2 agent-review doctrine is documented in
+`docs/guardrails/code-and-test-hygiene.md` (`## Tier-2 review (the residue)`), cross-linked
+to `review-finding-closure.md`.
+
+Remaining follow-up: under D-5, the one-time **full-tree** mutation baseline sweep
+(`SS_DIFF_BASE` unset) and survivor triage — the per-diff path is live and smoke-tested;
+the full sweep is a focused pass that strengthens tests for any genuine survivors. Deferred
+(tracked in `deferred-work.md`): `cargo-public-api` snapshot, `missing_docs`, `lychee`.
 
 ## Decision log
 
 - 2026-06-08: D-1 through D-4 implemented and verified (`cargo xtask ci`-relevant checks
   green; `check-test-hygiene` negative-tested). Deferred public-api/missing_docs/lychee
   with rationale above.
+- 2026-06-08: Phase 4 landed — `check-coverage` (cargo-llvm-cov 0.8.7, floor 93%, product
+  baseline ~95.6%, `xtask` excluded), `check-mutants` (cargo-mutants 27.1.0, `mutants.toml`),
+  and the event-driven `hygiene.yml`, all best-effort and outside the required gate.
+  Verified by reading: `check-coverage` passes; `hygiene.yml` passes `actionlint` + `zizmor`;
+  the `check-mutants` plumbing (incl. `SS_DIFF_BASE` diff scoping) was smoke-tested. Phase 5
+  (D-6) tier-2 agent-review doctrine documented in the hygiene guardrail. Remaining: the
+  one-time full-tree mutation baseline sweep + survivor triage.

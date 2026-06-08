@@ -25,6 +25,8 @@
 //!   check-fuzz          build cargo-fuzz targets; optionally smoke-run all targets
 //!   check-miri          run the core-ffi boundary tests under Miri (UB detection)
 //!   check-kani          run the bounded Kani proofs over the resource-envelope arithmetic
+//!   check-coverage      line-coverage floor (best-effort; heavy; outside `ci`)
+//!   check-mutants       cargo-mutants; `SS_DIFF_BASE` scopes to a diff (best-effort; outside `ci`)
 //!   ci                  run fmt --check, clippy -D warnings, test, and all the above
 //!
 //! Every check exits nonzero on violation with a remediation-oriented message so a
@@ -58,6 +60,8 @@ fn main() -> ExitCode {
         Some("check-fuzz") => report(check_fuzz()),
         Some("check-miri") => report(check_miri()),
         Some("check-kani") => report(check_kani()),
+        Some("check-coverage") => report(check_coverage()),
+        Some("check-mutants") => report(check_mutants()),
         Some("ci") => run_ci(),
         Some(other) => {
             eprintln!("xtask: unknown subcommand '{other}'");
@@ -96,6 +100,8 @@ fn usage() {
          \x20 check-fuzz           build fuzz targets; set SS_FUZZ_SMOKE_SECONDS=N to run them\n\
          \x20 check-miri           run core-ffi boundary tests under Miri (UB detection in the unsafe shim)\n\
          \x20 check-kani           run the bounded Kani proofs over the resource-envelope arithmetic\n\
+         \x20 check-coverage       line-coverage floor (best-effort; heavy; outside `ci`)\n\
+         \x20 check-mutants        cargo-mutants; SS_DIFF_BASE=<ref> scopes to a diff (best-effort; outside `ci`)\n\
          \x20 ci                   fmt + clippy + test + every structural & external check"
     );
 }
@@ -1421,6 +1427,8 @@ const ZIZMOR_VERSION: &str = "1.25.2";
 const CARGO_FUZZ_VERSION: &str = "0.13.1";
 const KANI_VERSION: &str = "0.67.0";
 const CARGO_MACHETE_VERSION: &str = "0.9.2";
+const CARGO_MUTANTS_VERSION: &str = "27.1.0";
+const CARGO_LLVM_COV_VERSION: &str = "0.8.7";
 
 const SHELLCHECK_INSTALL_HINT: &str = "\x20 macOS:  brew install shellcheck\n\
      \x20 Debian: sudo apt-get install -y shellcheck\n\
@@ -1990,6 +1998,178 @@ fn check_kani() -> Result<(), String> {
              mis-reject a pipeline. Fix `saturating_growth_product` / `max_growth_factor` or\n\
              the harness assumptions; do not weaken the proof to make it pass."
         ))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// check-coverage / check-mutants (best-effort, event-driven — NOT in the `ci` gate)
+// ---------------------------------------------------------------------------
+//
+// These are the deepest anti-slop signal but, like check-fuzz/miri/kani, they are HEAVY
+// and DETERMINISTIC: re-running them on unchanged code proves nothing new, so they are
+// outside the required gate and are NEVER scheduled — they run on demand, locally, and
+// event-driven (path-filtered) in .github/workflows/hygiene.yml. See
+// docs/guardrails/code-and-test-hygiene.md.
+//
+//   * check-coverage: a line-coverage FLOOR (ratchet). Catches whole swaths of new code
+//     that no test exercises. Coverage is necessary but not sufficient — a test can run
+//     a line without asserting on it — which is why check-mutants exists.
+//   * check-mutants: mutates each line; a SURVIVING mutant means a test ran the line but
+//     nothing constrained its behavior (dead code or an under-asserted "slop" test). The
+//     fix is to strengthen a test — and that new assertion becomes a permanent regression.
+
+/// Line-coverage floor for `check-coverage`, as a whole-number percent. A ratchet: raise
+/// it (never lower it) in a deliberate, reviewed edit as coverage improves — exactly like
+/// `MAX_IGNORED_TESTS`. Set from the measured full-tree baseline with a small margin so a
+/// flaky rounding never trips it. Measured product-code baseline at introduction:
+/// ~95.6% lines (the `xtask` tooling is excluded from the measurement — it is the
+/// enforcement harness, not product logic, and is verified by being run in CI).
+const COVERAGE_FLOOR_PCT: u32 = 93;
+
+/// Ensure the `llvm-tools` rustup component (the instrumentation runtime cargo-llvm-cov
+/// needs) is installed, adding it on demand the same way `check-miri` bootstraps `miri`.
+fn ensure_llvm_tools() -> Result<(), String> {
+    if let Ok(out) = Command::new("rustup")
+        .args(["component", "list", "--installed"])
+        .output()
+    {
+        if out.status.success()
+            && String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .any(|l| l.starts_with("llvm-tools"))
+        {
+            return Ok(());
+        }
+    }
+    println!("check-coverage: installing the `llvm-tools-preview` component via rustup…");
+    let ok = Command::new("rustup")
+        .args(["component", "add", "llvm-tools-preview"])
+        .status()
+        .map_err(|e| format!("check-coverage: FAIL — could not launch `rustup`: {e}"))?
+        .success();
+    if ok {
+        Ok(())
+    } else {
+        Err(
+            "check-coverage: FAIL — could not install `llvm-tools-preview`. Install it manually:\n\
+             \x20 rustup component add llvm-tools-preview"
+                .to_string(),
+        )
+    }
+}
+
+/// check-coverage: fail if workspace line coverage falls below [`COVERAGE_FLOOR_PCT`].
+/// Best-effort and heavy (an instrumented build + full test run), so — like check-mutants
+/// — it is outside the required `ci` gate.
+fn check_coverage() -> Result<(), String> {
+    let tool = ensure_cargo_tool("cargo-llvm-cov", "cargo-llvm-cov", CARGO_LLVM_COV_VERSION)?;
+    ensure_llvm_tools()?;
+    let path_env = path_with_tool_dir(&tool);
+    let floor = COVERAGE_FLOOR_PCT.to_string();
+
+    // Exclude the xtask tooling from the measurement: it is the enforcement harness, not
+    // product logic, and dragging it in would make the floor meaningless (and match the
+    // `mutants.toml` exclusion). `--summary-only` keeps the output to the table + verdict.
+    let ignore_xtask = "(^|/)xtask/";
+    println!(
+        "check-coverage: $ cargo llvm-cov --workspace --summary-only \
+         --ignore-filename-regex '{ignore_xtask}' --fail-under-lines {floor}"
+    );
+    let mut cmd = Command::new("cargo");
+    cmd.args([
+        "llvm-cov",
+        "--workspace",
+        "--summary-only",
+        "--ignore-filename-regex",
+        ignore_xtask,
+        "--fail-under-lines",
+        &floor,
+    ])
+    .current_dir(workspace_root());
+    if let Some(p) = &path_env {
+        cmd.env("PATH", p);
+    }
+    let status = cmd
+        .status()
+        .map_err(|e| format!("check-coverage: FAIL — could not launch `cargo llvm-cov`: {e}"))?;
+    if status.success() {
+        println!("check-coverage: workspace line coverage is at or above the {floor}% floor.");
+        Ok(())
+    } else {
+        Err(format!(
+            "check-coverage: FAIL — workspace line coverage dropped below the {floor}% floor.\n\
+             \n\
+             New code landed without tests exercising it. Add tests for the uncovered lines\n\
+             (a reference-interpreter clause + property beats a lone example). Only raise\n\
+             COVERAGE_FLOOR_PCT in xtask/src/main.rs when coverage genuinely improves — the\n\
+             floor is a ratchet that moves up, never down."
+        ))
+    }
+}
+
+/// check-mutants: run cargo-mutants over the product logic (see `mutants.toml`). A
+/// surviving mutant is dead code or an under-asserted test. `SS_DIFF_BASE=<ref>` scopes
+/// the run to lines changed vs `<ref>` (fast PR feedback via `--in-diff`); unset = full
+/// tree. Best-effort and heavy, so it stays out of the required `ci` gate.
+fn check_mutants() -> Result<(), String> {
+    let tool = ensure_cargo_tool("cargo-mutants", "cargo-mutants", CARGO_MUTANTS_VERSION)?;
+    let path_env = path_with_tool_dir(&tool);
+    let root = workspace_root();
+
+    // An empty SS_DIFF_BASE (CI passes "" on non-PR events) means full-tree, same as unset.
+    let diff_base = std::env::var("SS_DIFF_BASE")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    let mut args: Vec<String> = vec!["mutants".to_string()];
+    if let Some(base) = diff_base {
+        println!("check-mutants: scoping to the diff vs `{base}` (SS_DIFF_BASE)");
+        let diff = Command::new("git")
+            .args(["diff", &base])
+            .current_dir(&root)
+            .output()
+            .map_err(|e| format!("check-mutants: FAIL — could not run `git diff {base}`: {e}"))?;
+        if !diff.status.success() {
+            return Err(format!(
+                "check-mutants: FAIL — `git diff {base}` failed; is SS_DIFF_BASE a valid ref?"
+            ));
+        }
+        let diff_path = root.join("target").join("ss-mutants-in.diff");
+        if let Some(parent) = diff_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("check-mutants: FAIL — could not create target dir: {e}"))?;
+        }
+        std::fs::write(&diff_path, &diff.stdout)
+            .map_err(|e| format!("check-mutants: FAIL — could not write the diff file: {e}"))?;
+        args.push("--in-diff".to_string());
+        args.push(diff_path.to_string_lossy().into_owned());
+    } else {
+        println!("check-mutants: full-tree run (set SS_DIFF_BASE=<ref> to scope to a diff)");
+    }
+
+    println!("check-mutants: $ cargo {}", args.join(" "));
+    let mut cmd = Command::new("cargo");
+    cmd.args(args.iter().map(String::as_str)).current_dir(&root);
+    if let Some(p) = &path_env {
+        cmd.env("PATH", p);
+    }
+    let status = cmd
+        .status()
+        .map_err(|e| format!("check-mutants: FAIL — could not launch `cargo mutants`: {e}"))?;
+    if status.success() {
+        println!("check-mutants: no surviving mutants — every mutated line is caught by a test.");
+        Ok(())
+    } else {
+        Err(
+            "check-mutants: FAIL — surviving (or timed-out/unviable) mutant(s); see mutants.out/.\n\
+             \n\
+             A SURVIVING mutant means a line was changed and the whole test suite still passed:\n\
+             either the line is dead (delete it) or a test runs it without asserting on its\n\
+             behavior (strengthen the assertion — that becomes a permanent regression). Only\n\
+             skip a genuinely equivalent mutant via `mutants.toml` with a documented reason."
+                .to_string(),
+        )
     }
 }
 
