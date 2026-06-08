@@ -1,0 +1,63 @@
+# Bounded proofs (Kani).
+#
+# Kani model-checks the crisp resource-envelope arithmetic in the core (the
+# `#[cfg(kani)]` harnesses in core/src/config.rs): the saturating growth-product
+# gate accepts a pipeline iff its true worst-case growth is within the cap, so no
+# saturation wrap can ever falsely accept an amplifying config.
+#
+# This is its own workflow — NOT part of the required `cargo xtask ci` gate — because
+# Kani is heavy: `cargo kani setup` downloads a CBMC toolchain.
+#
+# A bounded model check is DETERMINISTIC and exhaustive within its bounds: re-running
+# the same harness with the same pinned kani-verifier on unchanged code proves nothing
+# new (unlike fuzzing, where more wall-clock buys more coverage — hence release-fuzz is
+# time-based and this is not). So the trigger is EVENT-driven, not time-driven: it runs
+# only when something that could change the result changes — the proven arithmetic
+# (`core/src/config.rs`), the check or the pinned Kani version (`xtask/src/main.rs`), or
+# this workflow — plus on demand. On a stable repo it simply never fires.
+#
+# Run it locally any time with `cargo run -p xtask -- check-kani`. It is best-effort
+# (continue-on-error): the required signal stays the stable `cargo xtask ci`, backed by
+# the proptest growth-envelope property and the config_roundtrip saturation tests.
+name: Proofs
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "core/src/config.rs"
+      - "xtask/src/main.rs"
+      - ".github/workflows/proofs.yml"
+  pull_request:
+    paths:
+      - "core/src/config.rs"
+      - "xtask/src/main.rs"
+      - ".github/workflows/proofs.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  kani:
+    name: kani (bounded proofs, best-effort)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      # `xtask` installs the pinned kani-verifier and runs `cargo kani setup` on
+      # demand, then verifies the core's `#[cfg(kani)]` harnesses, so this cannot
+      # drift from the local command.
+      - name: Run bounded proofs
+        run: cargo run -p xtask -- check-kani

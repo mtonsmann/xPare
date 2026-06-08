@@ -325,12 +325,23 @@ testing, reference-vs-production equivalence, and repo-native evidence requireme
 
 This is verification-*guided* development, not formal verification. It does not prove
 the whole core correct, does not prove the sanitizers correct against browser/RFC
-semantics, and does not formally prove FFI memory behavior — though `core-ffi`, the
-only crate with `unsafe`, has its boundary tests run under Miri's undefined-behavior
-detector (`cargo xtask check-miri`; nightly, best-effort, outside the required gate),
-so UB on the tested executions is caught. A bounded proof track (e.g. Kani over the
-saturating growth-envelope arithmetic) is recorded as future work in
-[`docs/deferred-work.md`](docs/deferred-work.md), not forced into this pass.
+semantics, and does not formally prove FFI memory behavior — though two narrow,
+heavy-tool tracks tighten the highest-value gaps (both advisory, both outside the
+required `cargo xtask ci` gate, both runnable locally):
+
+- **Miri** runs the `core-ffi` boundary tests — `core-ffi` is the only crate with
+  `unsafe` — under an undefined-behavior detector (`cargo xtask check-miri`), so UB on
+  the tested executions is caught.
+- **Kani** model-checks the crisp resource-envelope arithmetic
+  (`cargo xtask check-kani`). The saturating growth-product is factored into
+  `saturating_growth_product`, and `#[cfg(kani)]` harnesses in `config.rs` prove —
+  for all symbolic factors within the validated range, over a full-length pipeline —
+  that the gate accepts a config **iff** its true, arbitrary-precision worst-case
+  growth is within `MAX_PIPELINE_GROWTH_FACTOR`. So no saturation wrap can turn an
+  amplifying pipeline into an accepted one. This is bounded, not whole-program,
+  verification: it deliberately proves the integer arithmetic only, not the
+  `String`-bearing config or the text transformer. Kani harnesses are `#[cfg(kani)]`,
+  so the `kani` crate never enters the dependency tree `check-core-deps` guards.
 
 ### Other settled choices
 

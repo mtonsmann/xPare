@@ -117,16 +117,18 @@ impl Config {
                 max: MAX_CONFIG_OPERATIONS,
             });
         }
-        // Bound the pipeline's worst-case output growth. Each op's output is at most
-        // `factor` times its input, so the product over the pipeline bounds total
-        // growth; reject anything that could amplify past the cap. Saturating so a
-        // genuinely unbounded product (many large affixes) cannot wrap to a small
-        // value and slip through.
-        let mut growth: u64 = 1;
         for op in &self.operations {
             op.validate_resource_envelope()?;
-            growth = growth.saturating_mul(op.max_growth_factor());
         }
+        // Bound the pipeline's worst-case output growth. Each op's output is at most
+        // `factor` times its input, so the product over the pipeline bounds total
+        // growth; reject anything that could amplify past the cap. The product is
+        // computed by [`saturating_growth_product`] — factored out so the saturating
+        // arithmetic (the part that must never wrap a genuinely unbounded product down
+        // to a small, falsely-accepted value) can be model-checked with Kani; see the
+        // `kani_proofs` module.
+        let growth =
+            saturating_growth_product(self.operations.iter().map(Operation::max_growth_factor));
         if growth > MAX_PIPELINE_GROWTH_FACTOR {
             return Err(ConfigError::PipelineMayAmplify {
                 factor: growth,
@@ -464,4 +466,228 @@ pub fn parse_config(json: &str) -> Result<Config, ConfigError> {
     }
     config.validate()?;
     Ok(config)
+}
+
+/// Saturating product of a pipeline's per-op growth factors, starting from `1` (the
+/// identity, so an empty pipeline yields factor `1`).
+///
+/// Factored out of [`Config::validate`] so the saturating arithmetic can be reasoned
+/// about — and model-checked with Kani — independently of the `String`-bearing
+/// `Config`. The load-bearing safety property is that this can only ever
+/// *over*-estimate growth: a genuinely unbounded product saturates at [`u64::MAX`]
+/// rather than wrapping to a small value that would slip past
+/// [`MAX_PIPELINE_GROWTH_FACTOR`]. The `kani_proofs` module proves that the gate
+/// `saturating_growth_product(..) <= MAX_PIPELINE_GROWTH_FACTOR` accepts a pipeline
+/// *iff* its true (arbitrary-precision) worst-case growth is within the cap.
+pub(crate) fn saturating_growth_product(factors: impl IntoIterator<Item = u64>) -> u64 {
+    factors
+        .into_iter()
+        .fold(1u64, |acc, factor| acc.saturating_mul(factor))
+}
+
+// ---------------------------------------------------------------------------
+// Bounded proofs (Kani) over the resource-envelope arithmetic.
+// ---------------------------------------------------------------------------
+//
+// These compile ONLY under `cargo kani` (the `kani` cfg), so they are invisible to
+// normal `cargo build` / `cargo test` and to `cargo metadata` — the `kani` crate
+// never enters the dependency tree that `check-core-deps` guards. Run them with
+// `cargo xtask check-kani`. They prove the crisp arithmetic only and deliberately do
+// not attempt to model-check the `String`-bearing config or the text transformer.
+//
+// Design note — prove the STEP, not the unrolled fold. `saturating_growth_product`
+// folds up to `MAX_CONFIG_OPERATIONS` saturating multiplies. Model-checking that fold
+// directly (unrolling 32 symbolic 64-bit multiplies) is exactly what a SAT backend is
+// worst at — multiplication bit-blasts heavily — and it conflates loop unwinding with
+// the property. Instead we prove three per-step lemmas, each over a SINGLE symbolic
+// multiply (tiny, fast, and immune to unwinding), and compose them by the documented
+// induction below. The result is also *stronger*: it holds for pipelines of ANY
+// length, not just up to `MAX_CONFIG_OPERATIONS`.
+//
+// Let `cap = MAX_PIPELINE_GROWTH_FACTOR` and fold the per-op factors (each `>= 1`,
+// since `max_growth_factor` is — see the `max_growth_factor_is_always_at_least_one`
+// unit test) with `saturating_mul`, starting at `1`. Write `sat_k` for the running
+// saturating product after `k` factors and `true_k` for the exact (unbounded) one.
+// Claim: `saturating_growth_product(..) <= cap` iff `true_n <= cap` (the gate accepts
+// iff the real worst-case growth is within the cap). Proof by induction on the fold,
+// using just two lemmas (each one symbolic multiply):
+//
+//   * Base: `sat_0 = true_0 = 1 <= cap`.
+//   * `step_exact_below_cap`: while `sat_{k-1} <= cap`, the next saturating step equals
+//     the exact step (`sat_{k-1} * f`, which cannot overflow because `cap * MAX_FACTOR
+//     < u64::MAX`). So as long as the running product stays within the cap, `sat`
+//     tracks `true` exactly — an accepted pipeline's gate value IS its true growth.
+//   * `absorbing_above_cap`: once `sat_{k-1} > cap`, every further factor `>= 1` keeps
+//     it `> cap` — a rejecting pipeline can never be "rescued" back into acceptance.
+//
+// Together: if `true_n <= cap`, every prefix is `<= cap` (the product is monotone, as
+// every factor is `>= 1`), so by step_exact_below_cap, applied at each step, `sat_n =
+// true_n <= cap` → accept. If `true_n > cap`, let `k` be the first prefix to exceed
+// the cap; for `j < k` we have `true_j <= cap` so `sat_j = true_j`, and at step `k`,
+// `sat_{k-1} = true_{k-1} <= cap`, so step_exact_below_cap gives `sat_k = sat_{k-1} *
+// f_k = true_k > cap` (no over_estimate lemma needed — the crossing step is itself
+// overflow-free and exact). Then absorbing_above_cap keeps `sat_n > cap` → reject.
+// Hence the gate is exact: no saturation wrap can accept an amplifier.
+
+/// Bounded proofs over the saturating growth-envelope arithmetic. See
+/// [`saturating_growth_product`] and the induction in the section comment above.
+#[cfg(kani)]
+mod kani_proofs {
+    use super::{MAX_CONFIG_TEXT_PARAM_BYTES, MAX_PIPELINE_GROWTH_FACTOR};
+
+    /// The widest value a single per-op growth factor can take: `1 +
+    /// MAX_CONFIG_TEXT_PARAM_BYTES` (a maximum-length affix), per
+    /// `Operation::max_growth_factor`. The `max_growth_factor_never_exceeds_the_kani_proof_bound`
+    /// unit test keeps this in sync with production.
+    const MAX_FACTOR: u64 = 1 + MAX_CONFIG_TEXT_PARAM_BYTES as u64; // 257
+
+    /// step_exact_below_cap: while the running product is within the cap, one more
+    /// saturating multiply by a valid factor equals the exact product — and that exact
+    /// product cannot overflow `u64` (`cap * MAX_FACTOR < u64::MAX`). So an
+    /// in-envelope pipeline's gate value tracks its true growth exactly.
+    #[kani::proof]
+    fn step_exact_below_cap_matches_true_product() {
+        let acc: u64 = kani::any();
+        let f: u64 = kani::any();
+        kani::assume(acc <= MAX_PIPELINE_GROWTH_FACTOR);
+        kani::assume(f >= 1 && f <= MAX_FACTOR);
+        // No overflow: acc * f <= cap * MAX_FACTOR, which is far below u64::MAX. Kani
+        // checks the multiply for overflow here (nothing assumes it away).
+        let exact = acc * f;
+        assert!(acc.saturating_mul(f) == exact);
+    }
+
+    /// absorbing_above_cap: once the running product has exceeded the cap, any further
+    /// factor `>= 1` keeps it above the cap. So a rejecting pipeline can never be
+    /// "rescued" into acceptance by later operations.
+    #[kani::proof]
+    fn absorbing_above_cap_stays_above() {
+        let acc: u64 = kani::any();
+        let f: u64 = kani::any();
+        kani::assume(acc > MAX_PIPELINE_GROWTH_FACTOR);
+        kani::assume(f >= 1);
+        assert!(acc.saturating_mul(f) > MAX_PIPELINE_GROWTH_FACTOR);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One value of every [`Operation`] variant, for exhaustive per-variant checks.
+    fn one_of_every_variant() -> Vec<Operation> {
+        vec![
+            Operation::StripHtml,
+            Operation::StripMarkdown,
+            Operation::HtmlToMarkdown,
+            Operation::CollapseWhitespace,
+            Operation::TrimTrailingWhitespace,
+            Operation::RemoveBlankLines,
+            Operation::UnwrapLines,
+            Operation::ChangeCase {
+                case: CaseKind::Upper,
+            },
+            Operation::SortLines {
+                descending: false,
+                case_insensitive: false,
+            },
+            Operation::DedupeLines,
+            Operation::PrefixLines {
+                prefix: "> ".into(),
+            },
+            Operation::SuffixLines {
+                suffix: " <".into(),
+            },
+            Operation::JoinWith {
+                separator: ", ".into(),
+            },
+            Operation::SplitOn {
+                delimiter: "|".into(),
+            },
+            Operation::ExtractEmails,
+            Operation::ExtractUrls,
+            Operation::Defang {
+                style: BracketStyle::Square,
+            },
+            Operation::Refang,
+            Operation::CleanUrls,
+            Operation::MaskIdentifiers {
+                emails: true,
+                ipv4: true,
+                ipv6: true,
+            },
+        ]
+    }
+
+    #[test]
+    fn saturating_growth_product_folds_and_saturates() {
+        assert_eq!(
+            saturating_growth_product([]),
+            1,
+            "empty pipeline is identity"
+        );
+        assert_eq!(saturating_growth_product([3, 2, 1]), 6);
+        // A genuinely unbounded product saturates at u64::MAX instead of wrapping.
+        assert_eq!(saturating_growth_product([u64::MAX, 2, 2]), u64::MAX);
+    }
+
+    #[test]
+    fn canonical_rank_is_a_total_order_over_all_variants() {
+        // Distinct rank per variant is what makes canonical output independent of the
+        // order a UI listed the operations in (DESIGN.md D13).
+        let ops = one_of_every_variant();
+        let total = ops.len();
+        let mut ranks: Vec<u16> = ops.iter().map(Operation::canonical_rank).collect();
+        ranks.sort_unstable();
+        ranks.dedup();
+        assert_eq!(
+            ranks.len(),
+            total,
+            "canonical_rank must assign a distinct rank to every Operation variant"
+        );
+    }
+
+    #[test]
+    fn max_growth_factor_is_always_at_least_one() {
+        // The growth product's monotonicity — and the Kani proof's `f >= 1` assumption
+        // on each symbolic factor — depend on no operation ever reporting a factor
+        // below 1. A factor of 0 would also let the saturating product collapse to 0
+        // and falsely accept an amplifying pipeline.
+        for op in one_of_every_variant() {
+            assert!(
+                op.max_growth_factor() >= 1,
+                "{op:?} reports a growth factor below 1"
+            );
+        }
+    }
+
+    #[test]
+    fn max_growth_factor_never_exceeds_the_kani_proof_bound() {
+        // The Kani harness constrains symbolic factors to `1..=1+MAX_CONFIG_TEXT_PARAM_BYTES`.
+        // Keep that bound honest: no real operation may report a wider factor, or the
+        // proof would cover a narrower range than production actually produces. A
+        // max-length affix is the widest case.
+        let widest = MAX_CONFIG_TEXT_PARAM_BYTES as u64 + 1;
+        let max_len = "a".repeat(MAX_CONFIG_TEXT_PARAM_BYTES);
+        for op in [
+            Operation::PrefixLines {
+                prefix: max_len.clone(),
+            },
+            Operation::SuffixLines {
+                suffix: max_len.clone(),
+            },
+            Operation::JoinWith { separator: max_len },
+        ] {
+            assert!(
+                op.max_growth_factor() <= widest,
+                "{op:?} exceeds the proof bound"
+            );
+        }
+        for op in one_of_every_variant() {
+            assert!(
+                op.max_growth_factor() <= widest,
+                "{op:?} exceeds the Kani proof's factor bound {widest}"
+            );
+        }
+    }
 }

@@ -31,13 +31,15 @@ Nothing here is committed scope; it's a memory aid for the next maintainer.
 
 ## From exec-plan 0012 — AI-native, evidence-first workflow + reference semantics
 
-- **Bounded proof harness (Kani) over the resource envelope.** A small `kani` proof
-  track for the crisp arithmetic/resource parts only: the saturating growth
-  multiplication cannot wrap to acceptance, the operation-count bound is enforced, and
-  the canonical-rank ordering is a total order. Deferred so it does not destabilize
-  normal stable development; the same properties are currently covered by the
-  `reference_transform` growth-envelope property and `config_roundtrip` saturation
-  tests. Do **not** attempt to Kani-prove the full text transformer. (0012 → Phase 3)
+- ~~**Bounded proof harness (Kani) over the resource envelope.**~~ Delivered: the
+  saturating growth product is factored into `config::saturating_growth_product`, with
+  `#[cfg(kani)]` harnesses that prove the gate accepts a pipeline iff its true
+  worst-case growth is within `MAX_PIPELINE_GROWTH_FACTOR` (no saturation wrap can
+  falsely accept). Run via `cargo xtask check-kani`; advisory CI cadence in
+  `.github/workflows/proofs.yml`. The operation-count bound and canonical-rank
+  total-order are covered by plain unit tests in `config.rs` (Kani adds nothing for
+  constant data). The full text transformer is intentionally **not** Kani-proved.
+  (0012 → Phase 3)
 
 ## From exec-plan 0004 — extraction, defang/refang, URL cleaning
 
