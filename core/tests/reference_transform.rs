@@ -26,7 +26,7 @@
 use proptest::prelude::*;
 use safetystrip_core::{
     ops, transform, BracketStyle, CaseKind, Config, Operation, Ordering, CONFIG_VERSION,
-    MAX_CONFIG_OPERATIONS, MAX_PIPELINE_GROWTH_FACTOR,
+    MAX_CONFIG_OPERATIONS, MAX_CONFIG_TEXT_PARAM_BYTES, MAX_PIPELINE_GROWTH_FACTOR,
 };
 
 // ---------------------------------------------------------------------------
@@ -427,8 +427,9 @@ fn reference_growth_product_never_underestimates_a_full_pipeline() {
     ]);
     assert_eq!(reference_growth_product(&cfg), 3 * 2 * 3);
     assert!(cfg.validate().is_ok());
-    // And a degenerate all-max pipeline saturates rather than wrapping.
-    let big = "a".repeat(255);
+    // And a degenerate all-max pipeline saturates rather than wrapping (a full
+    // pipeline of max-length affixes: 17^32 overflows u64, so the product caps).
+    let big = "a".repeat(MAX_CONFIG_TEXT_PARAM_BYTES);
     let huge = Config::as_given(vec![
         Operation::PrefixLines { prefix: big };
         MAX_CONFIG_OPERATIONS

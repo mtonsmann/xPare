@@ -76,10 +76,14 @@ specified by the config. Versioning lets a shell detect a capability mismatch
 deterministically (`parse_config` rejects any version other than `CONFIG_VERSION`);
 **v2** added the `ordering` field. `parse_config` also enforces a resource envelope:
 at most 32 operations, free-text parameters (`prefix`, `suffix`, `separator`,
-`delimiter`) capped at 256 UTF-8 bytes, and those parameters must be single-line
-(`\r`/`\n` rejected). That blocks configs that could otherwise turn tiny inputs into
-multi-GB intermediates before a transform runs. Adding a transform is a new enum
-variant plus a pipeline arm — zero ABI change.
+`delimiter`) capped at 16 UTF-8 bytes (real tokens are 1–2 bytes — `"> "`, `", "` —
+so 16 is generous while keeping the per-op growth factor and the FFI free-text surface
+small), those parameters single-line (`\r`/`\n` rejected), and a whole-pipeline
+worst-case growth product capped at `MAX_PIPELINE_GROWTH_FACTOR` (4096×). That blocks
+configs that could otherwise turn tiny inputs into runaway intermediates before a
+transform runs; the growth gate carries a Kani proof that it cannot wrap an amplifying
+pipeline into acceptance (see D14). Adding a transform is a new enum variant plus a
+pipeline arm — zero ABI change.
 
 ### D4 — Stateless `repr(C)` error model, lossy input decoding
 
@@ -253,7 +257,7 @@ keeps the fast path fast and is where macOS users already expect typed
 configuration to live.
 
 The Rust core is the authoritative validator for the free-text parameter envelope
-(single-line, 256-byte maximum); shells should mirror that in Settings for immediate
+(single-line, 16-byte maximum); shells should mirror that in Settings for immediate
 feedback, but never rely on UI validation as the only guard.
 
 ### D13 — Canonical pipeline ordering

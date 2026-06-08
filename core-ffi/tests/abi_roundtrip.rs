@@ -380,11 +380,12 @@ fn transform_unsupported_version_is_invalid_config() {
 #[test]
 fn transform_amplifying_config_is_invalid_config() {
     // A pipeline whose worst-case output growth exceeds the envelope (three
-    // 256-byte affixes -> ~257^3) is rejected at the boundary as ErrInvalidConfig,
-    // so the infallible (and here, would-be resource-exhausting) transform is never
-    // entered. No parameter contains a line break, so this exercises the growth
-    // bound specifically — the class the overnight fuzz run surfaced.
-    let big = "a".repeat(256);
+    // max-length 16-byte affixes -> 17^3 = 4913 > the 4096 cap) is rejected at the
+    // boundary as ErrInvalidConfig, so the infallible (and would-be
+    // resource-exhausting) transform is never entered. Params are within the length
+    // and line-break limits, so this exercises the *growth* bound specifically — the
+    // class the overnight fuzz run surfaced — not the param-length rule.
+    let big = "a".repeat(16);
     let cfg = config(&format!(
         r#"{{"version":2,"operations":[{{"op":"prefix_lines","prefix":"{big}"}},{{"op":"suffix_lines","suffix":"{big}"}},{{"op":"prefix_lines","prefix":"{big}"}}]}}"#
     ));

@@ -109,17 +109,21 @@ Clipboard markup is attacker-influenced, so the core treats all input as hostile
   pre-core-transform guard, not a streaming rich-format parser for every native
   format.
 - **Configs are envelope-bounded before transform** — `parse_config` rejects configs
-  with too many operations, overlong free-text parameters, `\r`/`\n` inside
-  prefix/suffix/join/split parameters, or a pipeline whose worst-case output growth
-  could amplify a small input without bound. That last bound is the product of each
-  operation's conservative growth factor (`Operation::max_growth_factor`) against
-  `MAX_PIPELINE_GROWTH_FACTOR`: it catches *composition* — e.g. a `SplitOn` that
+  with too many operations (≤ 32), free-text parameters over 16 UTF-8 bytes, `\r`/`\n`
+  inside prefix/suffix/join/split parameters, or a pipeline whose worst-case output
+  growth exceeds `MAX_PIPELINE_GROWTH_FACTOR` (4096×). That growth bound is the
+  product of each operation's conservative growth factor
+  (`Operation::max_growth_factor`): it catches *composition* — e.g. a `SplitOn` that
   re-maximizes the line count so a following `PrefixLines`/`JoinWith` re-amplifies —
-  which the per-operation caps alone do not, and which a fuzz run showed could expand
-  a sub-KiB input past 2 GiB (a resource-exhaustion / DoS vector). This is a config
-  compatibility tightening, not an ABI or privacy-posture change: invalid configs
-  fail as `ErrInvalidConfig` at the FFI boundary instead of entering the infallible
-  transform path.
+  which the per-operation caps alone do not, and which a fuzz run originally showed
+  could expand a sub-KiB input past 2 GiB (a resource-exhaustion / DoS vector). The
+  16-byte param ceiling caps any single affix's factor at 17, and the 4096× pipeline
+  cap sits hundreds of times above a realistic config's product (~6) while bounding
+  the worst accepted amplification far below any out-of-memory threshold; a Kani
+  proof (`cargo xtask check-kani`) shows the saturating product can never wrap an
+  amplifying pipeline into acceptance. This is a config compatibility tightening, not
+  an ABI or privacy-posture change: invalid configs fail as `ErrInvalidConfig` at the
+  FFI boundary instead of entering the infallible transform path.
 - **Optional masking is an output rewrite, not a new data path** — `MaskIdentifiers`
   replaces selected email/IPv4/IPv6 tokens with fixed placeholders inside the same
   pure core pipeline. It adds no network, persistence, logging, entitlement, or
