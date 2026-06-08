@@ -15,6 +15,11 @@ description = "Headless harness over safetystrip-core: read stdin, apply a JSON 
 name = "safetystrip"
 path = "src/main.rs"
 
+# Inherit the workspace lint policy. As a CLI, this binary legitimately writes to
+# stdout/stderr, so the `print_*` denies are intentionally NOT workspace-wide.
+[lints]
+workspace = true
+
 [dependencies]
 # Intentionally dependency-light: arguments are parsed by hand to keep the
 # harness boring and the dependency surface minimal. Config parsing lives in core.

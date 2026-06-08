@@ -21,7 +21,8 @@
 // We cannot `forbid(unsafe_code)` here — this is the boundary. Instead we force
 // every unsafe operation to be spelled out explicitly with a SAFETY justification.
 #![deny(unsafe_op_in_unsafe_fn)]
-#![deny(clippy::print_stdout, clippy::print_stderr, clippy::dbg_macro)]
+// (`clippy::dbg_macro` is denied workspace-wide; `print_*` stay FFI-specific here.)
+#![deny(clippy::print_stdout, clippy::print_stderr)]
 
 use std::borrow::Cow;
 use std::ffi::{CStr, CString};

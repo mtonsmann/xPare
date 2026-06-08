@@ -79,6 +79,7 @@ Consult:
 
 - `docs/guardrails/transform-correctness-and-adversarial-input.md`
 - `docs/guardrails/memory-safety.md`
+- `docs/guardrails/code-and-test-hygiene.md` (dead code, test/doc hygiene, mutation testing)
 
 The core stays `#![forbid(unsafe_code)]`, never panics on input, and has no OS,
 I/O, network, or global mutable state. Every behavior change gets regression and
@@ -142,6 +143,7 @@ Use for crate/dependency ranges, lints, CI, structural tests, and automation.
 Consult:
 
 - `docs/guardrails/dependency-posture.md`
+- `docs/guardrails/code-and-test-hygiene.md` (unused-dependency, lint, and doc gates)
 
 Favor boring, API-stable, well-audited crates; justify any new dependency,
 especially anything pulling in `unsafe` or network capability. Keep mechanical

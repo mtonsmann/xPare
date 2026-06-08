@@ -35,7 +35,7 @@ pub const MAX_CONFIG_TEXT_PARAM_BYTES: usize = 256;
 ///
 /// [`Config::validate`] rejects any config whose operations could, in the worst
 /// case, multiply the input byte length by more than this. Each operation has a
-/// conservative per-op growth bound ([`Operation::max_growth_factor`]); because
+/// conservative per-op growth bound (`Operation::max_growth_factor`); because
 /// `transform` folds the operations in sequence (`out_i <= in_i * factor_i`), the
 /// *product* of those bounds is a sound upper bound on the whole pipeline's growth.
 ///

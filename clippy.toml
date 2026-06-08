@@ -1,0 +1,16 @@
+# Clippy thresholds for the anti-slop complexity gates (see [workspace.lints.clippy]
+# in Cargo.toml). These are mechanical ceilings against AI-generated bloat: they fail
+# `cargo clippy -D warnings` (and therefore `cargo xtask ci` / CI), they are not advisory.
+#
+# The whole workspace passes these today. Raise a threshold only with a deliberate,
+# documented decision — and prefer splitting the function instead. Never silence a hit
+# with a blanket `#![allow(...)]`; if a single function is a justified exception, scope
+# the allow to that function with a `// reason:` comment.
+
+# `cognitive_complexity`: a measure of how hard a function is to follow (nested branches,
+# short-circuits, loops). 25 is clippy's default; the tree clears it with room to spare.
+cognitive-complexity-threshold = 25
+
+# `too_many_arguments` (on by default in the `complexity` group): a long parameter list
+# is usually a missing struct. 7 is the default ceiling; stated here to make it explicit.
+too-many-arguments-threshold = 7

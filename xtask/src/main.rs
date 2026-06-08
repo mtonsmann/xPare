@@ -15,8 +15,11 @@
 //!   check-pipeline-zeroization assert fused core scratch storage is wiped before release
 //!   check-agent-workflow      assert the AI-native workflow docs exist with required headings
 //!   check-c-ffi-surface       assert C/SwiftPM interop stays header-only and tiny
+//!   check-test-hygiene        assert every ignored test has a reason and the count is ratcheted
 //!   check-release-posture     assert official signing cannot broaden entitlements
 //!   check-supply-chain  cargo-deny: advisories + licenses + bans + sources
+//!   check-unused-deps   cargo-machete: fail on a declared-but-unused dependency
+//!   check-docs          build docs with -D warnings (broken intra-doc links, bad HTML)
 //!   check-workflows     lint GitHub Actions workflows (actionlint + zizmor)
 //!   check-shell         shellcheck the shell scripts
 //!   check-fuzz          build cargo-fuzz targets; optionally smoke-run all targets
@@ -45,8 +48,11 @@ fn main() -> ExitCode {
         Some("check-pipeline-zeroization") => report(check_pipeline_zeroization()),
         Some("check-agent-workflow") => report(check_agent_workflow()),
         Some("check-c-ffi-surface") => report(check_c_ffi_surface()),
+        Some("check-test-hygiene") => report(check_test_hygiene()),
         Some("check-release-posture") => report(check_release_posture()),
         Some("check-supply-chain") => report(check_supply_chain()),
+        Some("check-unused-deps") => report(check_unused_deps()),
+        Some("check-docs") => report(check_docs()),
         Some("check-workflows") => report(check_workflows()),
         Some("check-shell") => report(check_shell()),
         Some("check-fuzz") => report(check_fuzz()),
@@ -80,8 +86,11 @@ fn usage() {
          \x20 check-pipeline-zeroization assert fused core scratch storage is wiped before release\n\
          \x20 check-agent-workflow       assert the AI-native workflow docs exist with required headings\n\
          \x20 check-c-ffi-surface        assert C/SwiftPM interop stays header-only and tiny\n\
+         \x20 check-test-hygiene         assert every #[ignore] has a reason and the count is ratcheted\n\
          \x20 check-release-posture      assert official signing cannot broaden entitlements\n\
          \x20 check-supply-chain   cargo-deny: advisories + licenses + bans + sources\n\
+         \x20 check-unused-deps    cargo-machete: fail on a declared-but-unused dependency\n\
+         \x20 check-docs           build docs with -D warnings (broken intra-doc links, bad HTML)\n\
          \x20 check-workflows      lint GitHub Actions workflows (actionlint + zizmor)\n\
          \x20 check-shell          shellcheck the shell scripts\n\
          \x20 check-fuzz           build fuzz targets; set SS_FUZZ_SMOKE_SECONDS=N to run them\n\
@@ -1108,6 +1117,81 @@ fn flags_content_logging(line: &str) -> bool {
     line_logs_or_persists(line) && line_names_content(&line.to_ascii_lowercase())
 }
 
+// ---------------------------------------------------------------------------
+// check-test-hygiene
+// ---------------------------------------------------------------------------
+
+/// Ceiling on `#[ignore]`d tests across the workspace. An ignored test is a
+/// *disabled* test — a quiet way for the suite to look green while coverage rots —
+/// so the count is ratcheted. Raising it is a deliberate, reviewed edit to this
+/// constant (with the reason in the PR), exactly like the `core` dependency
+/// allowlist: the ratchet lives in code, not in a blessable side file.
+const MAX_IGNORED_TESTS: usize = 2;
+
+/// check-test-hygiene: a deterministic guard on *test slop*. Every `#[ignore]`
+/// attribute must carry a reason (`#[ignore = "why"]`), and the total number of
+/// ignored tests must not exceed [`MAX_IGNORED_TESTS`]. A bare `#[ignore]` hides
+/// *why* a test is off; unbounded growth lets disabled tests accumulate behind a
+/// green suite. (Assertion *quality* — tests that execute code but assert nothing —
+/// is the other half of test slop, caught separately by `cargo xtask check-mutants`.)
+fn check_test_hygiene() -> Result<(), String> {
+    let root = workspace_root();
+    let mut files: Vec<PathBuf> = Vec::new();
+    collect_source_files(&root, &["rs"], &mut files);
+    files.sort();
+
+    let mut bare: Vec<String> = Vec::new();
+    let mut ignored = 0usize;
+    for path in &files {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        for (i, line) in text.lines().enumerate() {
+            let trimmed = line.trim_start();
+            // Only real attributes: a trimmed line that *starts* with `#[ignore`. This
+            // skips doc-comment / prose mentions of `#[ignore]` (e.g. in module docs).
+            if !trimmed.starts_with("#[ignore") {
+                continue;
+            }
+            ignored += 1;
+            // A reason takes the form `#[ignore = "..."]` (spacing-insensitive). Anything
+            // else — bare `#[ignore]` — is a silent skip.
+            let rest = trimmed["#[ignore".len()..].trim_start();
+            if !rest.starts_with('=') {
+                let shown = path.strip_prefix(&root).unwrap_or(path.as_path());
+                bare.push(format!("{}:{}: {}", shown.display(), i + 1, trimmed));
+            }
+        }
+    }
+
+    if !bare.is_empty() {
+        return Err(format!(
+            "check-test-hygiene: FAIL — {} `#[ignore]` attribute(s) without a reason:\n  {}\n\
+             \n\
+             A disabled test must say WHY. Use `#[ignore = \"...\"]` so the next reader\n\
+             knows whether it is a slow opt-in, an environment gap, or a known failure —\n\
+             never a silent skip. Add a reason; do not delete the test.",
+            bare.len(),
+            bare.join("\n  ")
+        ));
+    }
+    if ignored > MAX_IGNORED_TESTS {
+        return Err(format!(
+            "check-test-hygiene: FAIL — {ignored} ignored test(s), but the ceiling is \
+             MAX_IGNORED_TESTS = {MAX_IGNORED_TESTS}.\n\
+             \n\
+             Ignored tests are disabled tests; letting them accumulate rots coverage behind\n\
+             a green suite. Re-enable a test (preferred), or — if a new opt-in is genuinely\n\
+             warranted — raise MAX_IGNORED_TESTS in xtask/src/main.rs in THIS PR with the\n\
+             reason. The ratchet only moves with a deliberate, reviewed edit."
+        ));
+    }
+    println!(
+        "check-test-hygiene: {ignored} ignored test(s) (≤ {MAX_IGNORED_TESTS}), each with a reason."
+    );
+    Ok(())
+}
+
 /// Recursively collect files under `root` with one of `exts`, skipping build/VCS dirs.
 fn collect_source_files(root: &std::path::Path, exts: &[&str], out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(root) else {
@@ -1336,6 +1420,7 @@ const CARGO_DENY_VERSION: &str = "0.19.8";
 const ZIZMOR_VERSION: &str = "1.25.2";
 const CARGO_FUZZ_VERSION: &str = "0.13.1";
 const KANI_VERSION: &str = "0.67.0";
+const CARGO_MACHETE_VERSION: &str = "0.9.2";
 
 const SHELLCHECK_INSTALL_HINT: &str = "\x20 macOS:  brew install shellcheck\n\
      \x20 Debian: sudo apt-get install -y shellcheck\n\
@@ -1516,6 +1601,59 @@ fn check_supply_chain() -> Result<(), String> {
              reason) in deny.toml — do not broaden the policy to make the check pass."
         )
     })
+}
+
+/// check-unused-deps: cargo-machete over the whole workspace. Orthogonal to
+/// `check-core-deps` (which constrains *what* the core may pull in) and
+/// `check-supply-chain` (advisories/licenses) — this asks the anti-slop question:
+/// is every *declared* dependency actually *used*? AI-authored edits routinely
+/// leave a dependency behind after the code that needed it is deleted. machete
+/// inspects each crate's source (`--with-metadata` resolves renamed crates so it
+/// does not false-positive on them) and fails if a manifest declares a crate
+/// nothing references.
+fn check_unused_deps() -> Result<(), String> {
+    let machete = ensure_cargo_tool("cargo-machete", "cargo-machete", CARGO_MACHETE_VERSION)?;
+    run_tool("cargo-machete", &machete, &["--with-metadata"]).map_err(|e| {
+        format!(
+            "{e}\n\
+             \n\
+             cargo-machete found a dependency that is declared but never used. Remove the\n\
+             unused entry from the offending Cargo.toml. If it is a genuine false positive\n\
+             (used only behind a cfg or via a macro machete cannot see), add it to that\n\
+             crate's `[package.metadata.cargo-machete] ignored = [...]` with a reason —\n\
+             do not delete a dependency the build actually needs."
+        )
+    })
+}
+
+/// check-docs: build the workspace docs with `RUSTDOCFLAGS=-D warnings` so a broken
+/// intra-doc link, an unresolved `[item]` reference, or invalid inline HTML in a doc
+/// comment fails the gate. AI-authored docs routinely leave dangling `[Foo]` links and
+/// stale references behind; this makes "the docs still build" a mechanical fact rather
+/// than a hope. Deterministic and offline (rustdoc on the pinned stable toolchain) —
+/// no nightly — so it stays in the required `ci` gate, unlike the heavy best-effort tools.
+fn check_docs() -> Result<(), String> {
+    println!(r#"check-docs: $ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps"#);
+    let status = Command::new("cargo")
+        .args(["doc", "--workspace", "--no-deps"])
+        .env("RUSTDOCFLAGS", "-D warnings")
+        .current_dir(workspace_root())
+        .status()
+        .map_err(|e| format!("check-docs: FAIL — could not launch `cargo doc`: {e}"))?;
+    if status.success() {
+        println!("check-docs: workspace docs build clean (no broken links, no invalid doc HTML).");
+        Ok(())
+    } else {
+        Err(format!(
+            "check-docs: FAIL — `cargo doc` reported problems (exited {status}).\n\
+             \n\
+             A doc comment has a broken intra-doc link (a `[Item]` that does not resolve, or a\n\
+             public doc linking to a private item), or invalid inline HTML (e.g. an unescaped\n\
+             angle-bracket placeholder read as a tag). Fix the reference: make the link resolve,\n\
+             drop the brackets so it is plain inline code, or wrap a usage snippet in a fenced\n\
+             code block. Do not silence it with a blanket #[allow(...)]."
+        ))
+    }
 }
 
 fn fuzz_dir() -> PathBuf {
@@ -2035,6 +2173,14 @@ fn run_ci() -> ExitCode {
         eprintln!("{msg}");
         return ExitCode::FAILURE;
     }
+    if let Err(msg) = check_test_hygiene() {
+        eprintln!("{msg}");
+        return ExitCode::FAILURE;
+    }
+    if let Err(msg) = check_docs() {
+        eprintln!("{msg}");
+        return ExitCode::FAILURE;
+    }
 
     // check-abi reuses the existing gen-header(check_only=true) path.
     if gen_header(true) != ExitCode::SUCCESS {
@@ -2071,6 +2217,10 @@ fn run_ci() -> ExitCode {
         return ExitCode::FAILURE;
     }
     if let Err(msg) = check_workflows() {
+        eprintln!("{msg}");
+        return ExitCode::FAILURE;
+    }
+    if let Err(msg) = check_unused_deps() {
         eprintln!("{msg}");
         return ExitCode::FAILURE;
     }

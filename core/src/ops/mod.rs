@@ -1,7 +1,7 @@
 //! Individual transformation operations.
 //!
 //! Each operation is a pure function over text (`&str -> String`, plus parameters
-//! where needed). The [`crate::pipeline`] dispatches [`crate::Operation`] values to
+//! where needed). The `crate::pipeline` dispatches [`crate::Operation`] values to
 //! these. Keeping them as free functions (rather than a trait object soup) keeps
 //! the core simple, allocation-obvious, and trivially fuzzable in isolation.
 //!

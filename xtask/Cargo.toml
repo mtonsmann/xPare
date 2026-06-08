@@ -13,3 +13,8 @@ description = "Mechanical invariant enforcement for SafetyStrip (run via `cargo 
 serde = { workspace = true }
 serde_json = { workspace = true }
 cbindgen = { workspace = true }
+
+# Inherit the workspace lint policy. xtask prints progress, so the `print_*` denies
+# are intentionally NOT workspace-wide.
+[lints]
+workspace = true

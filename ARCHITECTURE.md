@@ -37,7 +37,7 @@ invariants.
 
 | File | Responsibility |
 |---|---|
-| `core/src/lib.rs` | Crate root. Declares `#![forbid(unsafe_code)]` and the `print*`/`dbg!` denies. Re-exports the public API and holds `CAPABILITIES_JSON` (the static self-description). |
+| `core/src/lib.rs` | Crate root. Declares `#![forbid(unsafe_code)]` and the `print*` denies (the `dbg!` deny is workspace-wide), and inherits `[workspace.lints]`. Re-exports the public API and holds `CAPABILITIES_JSON` (the static self-description). |
 | `core/src/config.rs` | The `Config` / `Operation` / `CaseKind` schema and `parse_config`. This is the data that crosses the FFI. `CONFIG_VERSION = 2`. The saturating growth-envelope arithmetic is factored into `saturating_growth_product` and carries `#[cfg(kani)]` bounded proofs (`cargo xtask check-kani`). |
 | `core/src/pipeline.rs` | `transform(input, config)` — folds the ordered operations over the text. Infallible and deterministic; holds intermediates in `Zeroizing` storage and wipes fused scratch storage before release or reallocation. |
 | `core/src/ops/mod.rs` | Operations module root; each op is a pure free function. |
@@ -78,10 +78,14 @@ The portable enforcer of the invariants (no external cargo plugins), so the same
 checks run locally and in CI. Subcommands: `gen-header`, `check-abi`,
 `check-unsafe-forbid`, `check-core-deps`, `check-no-network`, `check-entitlements`,
 `check-no-content-logging`, `check-clipboard-safety`, `check-agent-workflow`,
-`check-miri` (run the `core-ffi` boundary tests under Miri), `check-kani` (run the
-bounded resource-envelope proofs) — both nightly/heavy, best-effort, and outside the
-required gate — and `ci` (fmt + clippy + test + every structural check). See [the
-dependency guardrail](docs/guardrails/dependency-posture.md).
+`check-unused-deps` (cargo-machete: no declared-but-unused dependency),
+`check-test-hygiene` (every ignored test has a reason; the count is ratcheted),
+`check-docs` (docs build with `-D warnings`: no broken intra-doc links or invalid doc
+HTML), `check-miri` (run the `core-ffi` boundary tests under Miri), `check-kani` (run
+the bounded resource-envelope proofs) — the last two nightly/heavy, best-effort, and
+outside the required gate — and `ci` (fmt + clippy + test + every structural check).
+See [the dependency guardrail](docs/guardrails/dependency-posture.md) and [the code &
+test hygiene guardrail](docs/guardrails/code-and-test-hygiene.md).
 
 ### `fuzz/` — `safetystrip-fuzz`
 
@@ -174,7 +178,7 @@ therefore CI). Fix the code to satisfy the check; never weaken the check.
 | Frozen C ABI | checked-in `core-ffi/include/safetystrip.h` + `check-abi` (drift fails) | `xtask` (cbindgen) |
 | Config is data (adding a transform ≠ ABI change) | serde round-trip + version tests | `core` tests |
 | Never panics on input | cargo-fuzz targets + property tests + adversarial corpus | `fuzz/`, `core` tests |
-| No log sink in the core | `#![deny(clippy::print_stdout, print_stderr, dbg_macro)]` + no logging deps | `core/src/lib.rs` |
+| No log sink in the core | `#![deny(clippy::print_stdout, print_stderr)]` in core/core-ffi + workspace-wide `dbg_macro` deny + no logging deps | `core/src/lib.rs`, `[workspace.lints]` |
 | No clipboard content logged or persisted | `check-no-content-logging` (scans shipped Rust + Swift source for sink calls on clipboard-derived content) | `xtask` |
 | Default checks avoid the real clipboard | `check-clipboard-safety` (no default Make target depends on a real-clipboard smoke) | `xtask`, `Makefile` |
 | Pipeline intermediates and fused scratch storage wiped before release | `Zeroizing` buffers in the pipeline + `check-pipeline-zeroization` + `ss_buffer_free` zeroizes output | `core/src/pipeline.rs`, `xtask`, `core-ffi` |
@@ -182,6 +186,11 @@ therefore CI). Fix the code to satisfy the check; never weaken the check.
 | Optimized pipeline == reference semantics | differential property test: production `transform` equals a one-op-at-a-time reference interpreter (so every fused fast path stays byte-for-byte equal to sequential application, and canonical ordering equals an explicitly sorted `as_given` run) | `core/tests/reference_transform.rs` |
 | AI-native workflow docs present & structured | `check-agent-workflow` (the workflow doc, brief/PR templates, and per-class task prompts exist with required headings) | `xtask`, `docs/agent-workflow.md` |
 | Minimal macOS entitlements | checked-in entitlements file + `check-entitlements`; `release.sh dist` requires it for Developer ID signing and verifies the signed payload is still minimal | `xtask`, `shells/macos/` |
+| No dead/dangling code | `unreachable_pub = "deny"` forces unexported `pub` to `pub(crate)`, after which `dead_code` (via `-D warnings`) flags the truly unused | `[workspace.lints]`, all crates |
+| No tangled functions or scaffolding macros | `cognitive_complexity` + `too_many_arguments` thresholds; `clippy::todo`/`unimplemented`/`dbg_macro` denied | `[workspace.lints]`, `clippy.toml` |
+| No declared-but-unused dependency | `check-unused-deps` (cargo-machete over the whole workspace) | `xtask`, `CARGO_MACHETE_VERSION` |
+| Every ignored test justified, count ratcheted | `check-test-hygiene` (bare `#[ignore]` fails; total `#[ignore]`s ≤ ceiling) | `xtask` `MAX_IGNORED_TESTS` |
+| No broken doc links or invalid doc HTML | `check-docs` (`cargo doc --no-deps` with `RUSTDOCFLAGS=-D warnings`) | `xtask` |
 
 The single gate that runs all of the above is `cargo xtask ci`; CI runs the exact
 same command (`.github/workflows/ci.yml`). See [`CONTRIBUTING.md`](CONTRIBUTING.md).

@@ -16,10 +16,10 @@
 //!
 //! Two split helpers encode the same line model with different end-of-text handling:
 //!
-//! * [`split_lines`] is the faithful split on `'\n'`: a trailing `'\n'` yields a final
+//! * `split_lines` is the faithful split on `'\n'`: a trailing `'\n'` yields a final
 //!   *empty* fragment, so `"a\n"` is `["a", ""]`. [`join_with`] uses this (it is a
 //!   literal "replace each `'\n'`").
-//! * [`content_lines`] is the "line list" view: a trailing `'\n'` is recorded as a
+//! * `content_lines` is the "line list" view: a trailing `'\n'` is recorded as a
 //!   boolean and the empty trailing fragment is dropped, so `"a\n"` is
 //!   `(["a"], true)`. The line-structure-preserving ops ([`remove_blank_lines`],
 //!   [`sort_lines`], [`dedupe_lines`], [`prefix_lines`], [`suffix_lines`]) use this
@@ -66,7 +66,7 @@ fn split_lines(input: &str) -> Vec<&str> {
 }
 
 /// "Line list" view of `input`: the content lines plus whether the input ended with a
-/// trailing `'\n'`. Identical to [`split_lines`] except the trailing empty fragment
+/// trailing `'\n'`. Identical to `split_lines` except the trailing empty fragment
 /// produced by a final `'\n'` is dropped and reported as the boolean instead, so the
 /// caller can round-trip the trailing newline without a spurious empty last line.
 fn content_lines(input: &str) -> (Vec<&str>, bool) {
