@@ -2070,7 +2070,7 @@ fn check_coverage() -> Result<(), String> {
 
     // Exclude the xtask tooling from the measurement: it is the enforcement harness, not
     // product logic, and dragging it in would make the floor meaningless (and match the
-    // `mutants.toml` exclusion). `--summary-only` keeps the output to the table + verdict.
+    // `.cargo/mutants.toml` exclusion). `--summary-only` keeps the output to the table + verdict.
     let ignore_xtask = "(^|/)xtask/";
     println!(
         "check-coverage: $ cargo llvm-cov --workspace --summary-only \
@@ -2108,7 +2108,7 @@ fn check_coverage() -> Result<(), String> {
     }
 }
 
-/// check-mutants: run cargo-mutants over the product logic (see `mutants.toml`). A
+/// check-mutants: run cargo-mutants over the product logic (see `.cargo/mutants.toml`). A
 /// surviving mutant is dead code or an under-asserted test. `SS_DIFF_BASE=<ref>` scopes
 /// the run to lines changed vs `<ref>` (fast PR feedback via `--in-diff`); unset = full
 /// tree. Best-effort and heavy, so it stays out of the required `ci` gate.
@@ -2182,7 +2182,7 @@ fn check_mutants() -> Result<(), String> {
              A SURVIVING mutant means a line was changed and the whole test suite still passed:\n\
              either the line is dead (delete it) or a test runs it without asserting on its\n\
              behavior (strengthen the assertion — that becomes a permanent regression). Only\n\
-             skip a genuinely equivalent mutant via `mutants.toml` with a documented reason."
+             skip a genuinely equivalent mutant via `.cargo/mutants.toml` with a documented reason."
                 .to_string(),
         )
     }

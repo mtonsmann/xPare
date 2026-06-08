@@ -194,7 +194,7 @@ therefore CI). Fix the code to satisfy the check; never weaken the check.
 | Every ignored test justified, count ratcheted | `check-test-hygiene` (bare `#[ignore]` fails; total `#[ignore]`s ≤ ceiling) | `xtask` `MAX_IGNORED_TESTS` |
 | No broken doc links or invalid doc HTML | `check-docs` (`cargo doc --no-deps` with `RUSTDOCFLAGS=-D warnings`) | `xtask` |
 | Line coverage stays above a ratcheted floor | `check-coverage` (cargo-llvm-cov; `COVERAGE_FLOOR_PCT`, excludes the `xtask` harness) | `xtask`; best-effort, **outside** the `ci` gate (`hygiene.yml`) |
-| No dead code or under-asserting "slop" tests | `check-mutants` (cargo-mutants; a surviving mutant means a test to strengthen) | `xtask`, `mutants.toml`; best-effort, **outside** the `ci` gate (`hygiene.yml`) |
+| No dead code or under-asserting "slop" tests | `check-mutants` (cargo-mutants; a surviving mutant means a test to strengthen) | `xtask`, `.cargo/mutants.toml`; best-effort, **outside** the `ci` gate (`hygiene.yml`) |
 
 The single gate that runs all of the above is `cargo xtask ci`; CI runs the exact
 same command (`.github/workflows/ci.yml`). See [`CONTRIBUTING.md`](CONTRIBUTING.md).

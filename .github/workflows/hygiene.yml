@@ -27,7 +27,7 @@ on:
       - "cli/**"
       - "Cargo.lock"
       - "rust-toolchain.toml"
-      - "mutants.toml"
+      - ".cargo/mutants.toml"
       - ".github/workflows/hygiene.yml"
   pull_request:
     paths:
@@ -36,7 +36,7 @@ on:
       - "cli/**"
       - "Cargo.lock"
       - "rust-toolchain.toml"
-      - "mutants.toml"
+      - ".cargo/mutants.toml"
       - ".github/workflows/hygiene.yml"
 
 concurrency:

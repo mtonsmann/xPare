@@ -84,7 +84,7 @@ recorded in the `ARCHITECTURE.md` invariants table and `docs/guardrails/code-and
 
 Landed (best-effort tier, Phase 4): D-5 — `check-coverage` (cargo-llvm-cov, floor
 `COVERAGE_FLOOR_PCT = 95`, product baseline ~95.6%, `xtask` excluded), `check-mutants`
-(cargo-mutants, `mutants.toml`), and the event-driven `hygiene.yml`. Outside the required
+(cargo-mutants, `.cargo/mutants.toml`), and the event-driven `hygiene.yml`. Outside the required
 gate, mirroring `proofs.yml` (own subcommands + advisory workflow + `Makefile` targets),
 and recorded in the `ARCHITECTURE.md` invariants table and the hygiene guardrail.
 
@@ -103,7 +103,7 @@ the full sweep is a focused pass that strengthens tests for any genuine survivor
   green; `check-test-hygiene` negative-tested). Deferred public-api/missing_docs/lychee
   with rationale above.
 - 2026-06-08: Phase 4 landed — `check-coverage` (cargo-llvm-cov 0.8.7, floor 95%, product
-  baseline ~95.6%, `xtask` excluded), `check-mutants` (cargo-mutants 27.1.0, `mutants.toml`),
+  baseline ~95.6%, `xtask` excluded), `check-mutants` (cargo-mutants 27.1.0, `.cargo/mutants.toml`),
   and the event-driven `hygiene.yml`, all best-effort and outside the required gate.
   Verified by reading: `check-coverage` passes; `hygiene.yml` passes `actionlint` + `zizmor`;
   the `check-mutants` plumbing (incl. `SS_DIFF_BASE` diff scoping) was smoke-tested. Phase 5

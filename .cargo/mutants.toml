@@ -1,5 +1,8 @@
 # Configuration for `cargo xtask check-mutants` (cargo-mutants).
 #
+# IMPORTANT: cargo-mutants reads its config from `.cargo/mutants.toml` (NOT a root-level
+# `mutants.toml`). Keep this file here or the exclusions/timeouts below are silently ignored.
+#
 # This is a BEST-EFFORT, event-driven gate (see .github/workflows/hygiene.yml), NOT part
 # of the required `cargo xtask ci` — like Miri and Kani, it is heavy and deterministic, so
 # re-running it on unchanged code proves nothing new and it is never scheduled.
@@ -14,6 +17,13 @@
 exclude_globs = [
     "xtask/**",
     "**/benches/**",
+]
+
+# Exclude the `#[cfg(kani)]` proof harnesses (the `kani_proofs` module in core/src/config.rs):
+# they are compiled/run only under `cargo kani`, so `cargo test` can never cover them and
+# every mutation to them "survives" spuriously. The real proof is `cargo xtask check-kani`.
+exclude_re = [
+    "kani_proofs",
 ]
 
 # Property and corpus tests run longer than a trivial unit test. Give a generous timeout
