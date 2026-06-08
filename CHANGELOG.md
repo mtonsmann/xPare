@@ -6,6 +6,14 @@ follow semver over the public surface — the C ABI, the config schema, and the
 CLI flags (see [`docs/release-model.md`](docs/release-model.md), "Versioning
 and stability").
 
+## 2.0.0 — Unreleased
+
+### Changed
+
+- Config schema `v3` tightens the accepted free-text parameter and whole-pipeline
+  growth envelope. This is a semver-major config-schema break; the macOS shell
+  normalizes persisted free-text settings before emitting v3 configs.
+
 ## 1.0.0 — 2026-06-10
 
 First stable release. Content-identical to 1.0.0-rc.3, which passed the full

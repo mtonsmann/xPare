@@ -127,7 +127,10 @@ public struct Settings: Codable, Equatable, Sendable {
 
     /// Build the ``TransformConfig`` to hand the core from the current settings.
     public func transformConfig() -> TransformConfig {
-        TransformConfig(operations: operations, ordering: ordering)
+        TransformConfig(
+            operations: TransformConfig.normalizedOperationsForCurrentSchema(operations),
+            ordering: ordering
+        )
     }
 }
 

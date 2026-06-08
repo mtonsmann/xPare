@@ -1002,14 +1002,14 @@ dependencies = [
 
 [[package]]
 name = "xpare-cli"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "xpare-core",
 ]
 
 [[package]]
 name = "xpare-core"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "criterion",
  "proptest",
@@ -1021,7 +1021,7 @@ dependencies = [
 
 [[package]]
 name = "xpare-ffi"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "xpare-core",
  "zeroize",
@@ -1029,7 +1029,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "cbindgen",
  "serde",

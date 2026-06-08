@@ -41,12 +41,13 @@ re-recordable in Settings) strips the clipboard on demand.
 
 ## Install
 
-xPare is at **1.0.0-rc.1**, heading to 1.0.
+xPare's latest tagged stable release is **1.0.0**. Current source is tracking
+unreleased **2.0.0** config-schema changes.
 
 - **Today:** build from source (see *Quickstart* below) or grab an unsigned
   preview archive from a CI run's artifacts. Previews are test builds — macOS
   will warn on first launch.
-- **At 1.0:** signed, notarized **arm64 (Apple Silicon)** binaries via
+- **Stable releases:** signed, notarized **arm64 (Apple Silicon)** binaries via
   [GitHub Releases](https://github.com/mtonsmann/xPare/releases)
   (x86_64/universal builds are deferred). The release flow is documented in
   [`docs/release-model.md`](docs/release-model.md).
@@ -96,19 +97,19 @@ pipe with no clipboard or OS integration — handy for trying transforms:
 # Strip HTML (note <script> bodies are dropped, tags removed):
 echo '<b>hi</b><script>steal()</script>' | \
   cargo run -p xpare-cli -- transform \
-    --config-json '{"version":2,"operations":[{"op":"strip_html"}]}'
+    --config-json '{"version":3,"operations":[{"op":"strip_html"}]}'
 # -> hi
 
 # The canonical sanitization order, StripHtml then StripMarkdown:
 echo '**bold** <i>x</i>' | \
   cargo run -p xpare-cli -- transform \
-    --config-json '{"version":2,"operations":[{"op":"strip_html"},{"op":"strip_markdown"}]}'
+    --config-json '{"version":3,"operations":[{"op":"strip_html"},{"op":"strip_markdown"}]}'
 
 # Ask the core what it can do:
 cargo run -p xpare-cli -- capabilities
 ```
 
-A config is `{"version":2,"operations":[ ... ],"ordering":"canonical"}` — a list of
+A config is `{"version":3,"operations":[ ... ],"ordering":"canonical"}` — a list of
 operations plus how to order them. The CLI runs them in the **exact given order** by
 default (the explicit-tool contract); pass `--canonical` to apply the core's
 documented canonical ordering (see [DESIGN.md D13](DESIGN.md#d13--canonical-pipeline-ordering)).

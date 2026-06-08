@@ -38,7 +38,7 @@ it carries the load-bearing safety invariants.
 | File | Responsibility |
 |---|---|
 | `core/src/lib.rs` | Crate root. Declares `#![forbid(unsafe_code)]` and the `print*` denies (the `dbg!` deny is workspace-wide), and inherits `[workspace.lints]`. Re-exports the public API and holds `CAPABILITIES_JSON` (the static self-description). |
-| `core/src/config.rs` | The `Config` / `Operation` / `CaseKind` schema and `parse_config`. This is the data that crosses the FFI. `CONFIG_VERSION = 2`. The saturating growth-envelope arithmetic is factored into `saturating_growth_product` and carries `#[cfg(kani)]` bounded proofs (`cargo xtask check-kani`). |
+| `core/src/config.rs` | The `Config` / `Operation` / `CaseKind` schema and `parse_config`. This is the data that crosses the FFI. `CONFIG_VERSION = 3`. The saturating growth-envelope arithmetic is factored into `saturating_growth_product` and carries `#[cfg(kani)]` bounded proofs (`cargo xtask check-kani`). |
 | `core/src/pipeline.rs` | `transform(input, config)` — folds the ordered operations over the text. Infallible and deterministic; holds intermediates in `Zeroizing` storage and wipes fused scratch storage before release or reallocation. |
 | `core/src/ops/mod.rs` | Operations module root; each op is a pure free function. |
 | `core/src/ops/html.rs` | Hand-rolled, pure-safe-Rust HTML→text state machine + curated entity decoder. The rich→plain / script-neutralizing workhorse. |
@@ -212,6 +212,7 @@ the check.
 | No command execution in shipped app/core/CLI surfaces | `check-shipped-command-exec` | `xtask` |
 | Frozen C ABI | checked-in `core-ffi/include/xpare.h` + `check-abi` (drift fails) | `xtask` (cbindgen) |
 | Config is data (adding a transform ≠ ABI change) | serde round-trip + version tests | `core` tests |
+| Config schema breaks require semver-major package signaling after 1.0 | package-major/config-schema consistency unit test | `core` tests |
 | Never panics on input | cargo-fuzz targets + property tests + adversarial corpus | `fuzz/`, `core` tests |
 | No log sink in the core | `#![deny(clippy::print_stdout, print_stderr)]` in core/core-ffi + workspace-wide `dbg_macro` deny + no logging deps | `core/src/lib.rs`, `[workspace.lints]` |
 | No clipboard content logged or persisted | `check-no-content-logging` (scans shipped Rust + Swift source for sink calls on clipboard-derived content) | `xtask` |

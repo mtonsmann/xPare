@@ -624,6 +624,7 @@ final class AppModel: ObservableObject {
     }
 
     private func makeParamOp(_ kind: ParamOp, _ value: String) -> XPareCore.Operation {
+        let value = TransformConfig.normalizedTextParameter(value)
         switch kind {
         case .prefix: return .prefixLines(prefix: value)
         case .suffix: return .suffixLines(suffix: value)

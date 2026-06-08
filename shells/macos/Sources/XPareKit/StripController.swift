@@ -211,7 +211,8 @@ public final class StripController {
                 ops.removeAll { $0 == .stripHtml }
                 ops.insert(.stripHtml, at: 0)
             }
-            return TransformConfig(operations: ops)
+            return TransformConfig(
+                operations: TransformConfig.normalizedOperationsForCurrentSchema(ops))
         }
     }
 
@@ -396,7 +397,10 @@ public final class StripController {
             ops.removeAll { $0 == .stripHtml }
             ops.insert(.stripHtml, at: 0)
         }
-        return TransformConfig(operations: ops)
+        return TransformConfig(
+            operations: TransformConfig.normalizedOperationsForCurrentSchema(ops),
+            ordering: settings.ordering
+        )
     }
 
     // MARK: - Side effects

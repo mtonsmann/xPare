@@ -89,8 +89,14 @@ fn full_config_round_trips() {
         ordering: Ordering::AsGiven,
     };
     let json = serde_json::to_string(&cfg).expect("serialize");
-    let parsed = parse_config(&json).expect("parse");
-    assert_eq!(parsed, cfg);
+    // This exercises the whole schema surface in one config, which deliberately piles
+    // up every constant-amplifier (4x ChangeCase, 2x Defang, HtmlToMarkdown, affixes,
+    // …) — a growth product far past `MAX_PIPELINE_GROWTH_FACTOR`. That is a legitimate
+    // envelope rejection, but round-tripping the *wire format* is a serde property, so
+    // we check the serde decode directly here; `parse_config`'s envelope is covered by
+    // the dedicated growth/param tests below and `each_operation_round_trips_individually`.
+    let decoded: Config = serde_json::from_str(&json).expect("decode");
+    assert_eq!(decoded, cfg);
 }
 
 #[test]
@@ -117,7 +123,7 @@ fn known_operation_encoding_is_internally_tagged() {
     let json = serde_json::to_string(&cfg).expect("serialize");
     assert_eq!(
         json,
-        r#"{"version":2,"operations":[{"op":"change_case","case":"title"}],"ordering":"canonical"}"#
+        r#"{"version":3,"operations":[{"op":"change_case","case":"title"}],"ordering":"canonical"}"#
     );
 }
 
@@ -130,6 +136,23 @@ fn unsupported_version_is_rejected() {
             assert_eq!(supported, CONFIG_VERSION);
         }
         other => panic!("expected UnsupportedVersion, got {other:?}"),
+    }
+}
+
+#[test]
+fn old_v2_config_with_formerly_valid_long_param_is_version_skew() {
+    let formerly_valid_v2_param = "a".repeat(17);
+    let json = format!(
+        r#"{{"version":2,"operations":[{{"op":"prefix_lines","prefix":"{formerly_valid_v2_param}"}}]}}"#
+    );
+    match parse_config(&json) {
+        Err(ConfigError::UnsupportedVersion {
+            found: 2,
+            supported,
+        }) => {
+            assert_eq!(supported, CONFIG_VERSION);
+        }
+        other => panic!("expected v2 to be rejected as UnsupportedVersion, got {other:?}"),
     }
 }
 
@@ -165,34 +188,34 @@ fn malformed_json_is_json_error() {
 fn unknown_field_is_rejected() {
     // `#[serde(deny_unknown_fields)]` on Config means a stray field is a Json error,
     // not a silently-ignored one — important for catching shell/core drift.
-    let json = r#"{"version":2,"operations":[],"extra":true}"#;
+    let json = r#"{"version":3,"operations":[],"extra":true}"#;
     assert!(matches!(parse_config(json), Err(ConfigError::Json(_))));
 }
 
 #[test]
 fn unknown_operation_tag_is_rejected() {
-    let json = r#"{"version":2,"operations":[{"op":"does_not_exist"}]}"#;
+    let json = r#"{"version":3,"operations":[{"op":"does_not_exist"}]}"#;
     assert!(matches!(parse_config(json), Err(ConfigError::Json(_))));
 }
 
 #[test]
 fn missing_required_param_is_rejected() {
     // prefix_lines requires `prefix`; omitting it is a schema violation.
-    let json = r#"{"version":2,"operations":[{"op":"prefix_lines"}]}"#;
+    let json = r#"{"version":3,"operations":[{"op":"prefix_lines"}]}"#;
     assert!(matches!(parse_config(json), Err(ConfigError::Json(_))));
 }
 
 #[test]
 fn ordering_defaults_to_canonical_when_absent() {
-    // `ordering` is `#[serde(default)]`, so a v2 config omitting it is canonical.
-    let cfg = parse_config(r#"{"version":2,"operations":[]}"#).expect("parse");
+    // `ordering` is `#[serde(default)]`, so a current config omitting it is canonical.
+    let cfg = parse_config(r#"{"version":3,"operations":[]}"#).expect("parse");
     assert_eq!(cfg.ordering, Ordering::Canonical);
 }
 
 #[test]
 fn explicit_as_given_parses() {
     let cfg =
-        parse_config(r#"{"version":2,"operations":[],"ordering":"as_given"}"#).expect("parse");
+        parse_config(r#"{"version":3,"operations":[],"ordering":"as_given"}"#).expect("parse");
     assert_eq!(cfg.ordering, Ordering::AsGiven);
 }
 
@@ -310,8 +333,8 @@ fn accepts_realistic_pipeline_growth() {
     assert_eq!(parse_config(&json).expect("parse"), cfg);
 }
 
-/// A single boundary-size affix is a linear-time pass (factor 257), so it stays
-/// under the cap and is accepted — the bound targets *composition*, not one big op.
+/// A single boundary-size affix is a linear-time pass (factor 1 + 16 = 17), so it
+/// stays under the cap and is accepted — the bound targets *composition*, not one op.
 #[test]
 fn accepts_single_boundary_affix() {
     let cfg = Config::as_given(vec![Operation::PrefixLines {
@@ -358,7 +381,7 @@ fn rejects_amplifying_pipeline_growth() {
     }
 }
 
-/// Three boundary-size affixes already blow past the cap (257^3 ~= 1.7e7); a
+/// Three boundary-size affixes already blow past the cap (17^3 = 4913 > 4096); a
 /// param-length-only or per-op-only check would wave this through.
 #[test]
 fn rejects_three_boundary_affixes() {
@@ -385,7 +408,7 @@ fn rejects_three_boundary_affixes() {
 #[test]
 fn growth_product_saturates_and_rejects() {
     let big = "a".repeat(MAX_CONFIG_TEXT_PARAM_BYTES);
-    // 257^32 vastly exceeds u64::MAX, so the saturating product hits the ceiling.
+    // 17^32 vastly exceeds u64::MAX, so the saturating product hits the ceiling.
     let cfg = Config::as_given(vec![
         Operation::PrefixLines { prefix: big };
         MAX_CONFIG_OPERATIONS
@@ -495,16 +518,16 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(512))]
 
     /// Any valid Config survives a `to_string` -> `parse_config` round trip unchanged.
-    /// The generator stays inside the op-count, param-length, and line-break envelopes,
-    /// so the only rule it can trip is the pipeline growth bound — and that is a
-    /// legitimate rejection, not an encoding failure, so the JSON must still decode
-    /// back to `cfg` via serde in that case.
+    /// The generator stays within the op-count and line-break rules, but can exceed the
+    /// (tightened, 16-byte) param-length limit or the pipeline growth bound. Either is a
+    /// legitimate *validation* rejection, not an encoding failure — so in those cases the
+    /// JSON must still decode back to `cfg` via serde.
     #[test]
     fn arbitrary_config_round_trips(cfg in config_strategy()) {
         let json = serde_json::to_string(&cfg).expect("serialize");
         match parse_config(&json) {
             Ok(parsed) => prop_assert_eq!(parsed, cfg),
-            Err(ConfigError::PipelineMayAmplify { .. }) => {
+            Err(ConfigError::PipelineMayAmplify { .. } | ConfigError::TextParamTooLong { .. }) => {
                 let decoded: Config = serde_json::from_str(&json).expect("decode");
                 prop_assert_eq!(decoded, cfg);
             }
