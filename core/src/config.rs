@@ -27,9 +27,12 @@ pub const MAX_CONFIG_OPERATIONS: usize = 32;
 /// Maximum UTF-8 byte length for each free-text operation parameter.
 ///
 /// Prefix/suffix/join/split parameters are configuration, not clipboard content, and
-/// product use cases are short tokens such as `"> "`, `", "`, or `"|"`. Keeping
-/// them bounded prevents tiny configs from requesting huge per-line output.
-pub const MAX_CONFIG_TEXT_PARAM_BYTES: usize = 256;
+/// real product use cases are tiny tokens — `"> "`, `", "`, `"|"` (1–2 bytes). `16`
+/// is generous for those while keeping the only attacker-influenceable free-text data
+/// that crosses the FFI small, and capping a single affix's per-line growth factor at
+/// `1 + 16 = 17`. (Was `256`; tightened to shrink both the per-op growth factor and
+/// the FFI free-text surface — see DESIGN.md D3 and `SECURITY.md`.)
+pub const MAX_CONFIG_TEXT_PARAM_BYTES: usize = 16;
 
 /// Maximum worst-case output-growth factor for a whole pipeline.
 ///
@@ -40,19 +43,23 @@ pub const MAX_CONFIG_TEXT_PARAM_BYTES: usize = 256;
 /// *product* of those bounds is a sound upper bound on the whole pipeline's growth.
 ///
 /// Bounding that product — not just each operation in isolation — is what stops a
-/// tiny config of individually envelope-legal operations from amplifying a sub-KiB
-/// input into gigabytes. The per-op caps ([`MAX_CONFIG_OPERATIONS`],
+/// tiny config of individually envelope-legal operations from amplifying a small
+/// input without bound. The per-op caps ([`MAX_CONFIG_OPERATIONS`],
 /// [`MAX_CONFIG_TEXT_PARAM_BYTES`]) bound a single pass; they do **not** bound
 /// composition, where a `SplitOn` re-maximizes the line count for a following
 /// `PrefixLines`/`JoinWith` to re-amplify — the multiplicative blow-up the fuzzer
-/// found (a ~1.7 KiB input that expanded past 2 GiB before the OS killed the worker).
+/// originally found (a ~1.7 KiB input that expanded past 2 GiB before the OS killed
+/// the worker, back when this cap was `2^18`).
 ///
-/// `2^18` sits ~4x above the largest legitimate pipeline product and ~4x below the
-/// smallest empirically-observed out-of-memory repro from the fuzz corpus. Short,
-/// real-world parameters (`"> "`, `", "`) yield single-digit products, far below the
-/// cap; only large or repeated affix/join parameters accumulate toward it. See
-/// `SECURITY.md` ("Configs are envelope-bounded before transform").
-pub const MAX_PIPELINE_GROWTH_FACTOR: u64 = 1 << 18;
+/// `2^12` (4096x) is deliberately conservative: a realistic sanitization pipeline
+/// (e.g. `StripHtml → StripMarkdown → CollapseWhitespace → PrefixLines "> " →
+/// JoinWith ", "`) has a growth product of ~6, so the cap sits hundreds of times
+/// above anything real while bounding the worst accepted amplification far below any
+/// out-of-memory threshold. Combined with the 16-byte param ceiling (per-op affix
+/// factor ≤ 17), even three stacked max-length affixes (17^3 = 4913) exceed it. See
+/// `SECURITY.md` ("Configs are envelope-bounded before transform"). The `kani_proofs`
+/// module proves this gate cannot wrap a genuinely-amplifying product into acceptance.
+pub const MAX_PIPELINE_GROWTH_FACTOR: u64 = 1 << 12;
 
 /// A transformation request: a schema version, a pipeline of operations, and how that
 /// pipeline is ordered.
@@ -539,7 +546,7 @@ mod kani_proofs {
     /// MAX_CONFIG_TEXT_PARAM_BYTES` (a maximum-length affix), per
     /// `Operation::max_growth_factor`. The `max_growth_factor_never_exceeds_the_kani_proof_bound`
     /// unit test keeps this in sync with production.
-    const MAX_FACTOR: u64 = 1 + MAX_CONFIG_TEXT_PARAM_BYTES as u64; // 257
+    const MAX_FACTOR: u64 = 1 + MAX_CONFIG_TEXT_PARAM_BYTES as u64; // 17
 
     /// step_exact_below_cap: while the running product is within the cap, one more
     /// saturating multiply by a valid factor equals the exact product — and that exact
