@@ -2149,6 +2149,20 @@ fn check_mutants() -> Result<(), String> {
         println!("check-mutants: full-tree run (set SS_DIFF_BASE=<ref> to scope to a diff)");
     }
 
+    // Parallelism: CI stays SERIAL for predictable memory on shared runners; a LOCAL run
+    // hammers the box across all cores (cargo-mutants gives each job its own build dir).
+    // GitHub Actions sets `CI`, so key off that.
+    if std::env::var_os("CI").is_none() {
+        let jobs = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
+        if jobs > 1 {
+            println!("check-mutants: local run — parallelizing across {jobs} jobs (CI stays serial)");
+            args.push("--jobs".to_string());
+            args.push(jobs.to_string());
+        }
+    }
+
     println!("check-mutants: $ cargo {}", args.join(" "));
     let mut cmd = Command::new("cargo");
     cmd.args(args.iter().map(String::as_str)).current_dir(&root);
