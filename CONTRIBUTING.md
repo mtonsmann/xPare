@@ -88,6 +88,18 @@ the PR.
 | **Dependencies & CI** | crate versions, `Cargo.toml`/`Cargo.lock`, lints, `xtask`, `.github/workflows/`, shell scripts | `cargo xtask check-core-deps`, `cargo xtask check-no-network`, `cargo xtask check-supply-chain` + `cargo xtask check-unused-deps` (any dependency/lockfile change), `cargo xtask check-workflows` (any workflow change), plus `cargo test -p xtask` / `cargo clippy -p xtask --all-targets -- -D warnings` when editing `xtask`. New crates: prefer boring, audited, API-stable ones; a new core dependency must be a pure-data crate (no OS/IO/net) and added to the `xtask` allowlist with justification — and it must actually be used (`check-unused-deps`). |
 | **Docs only** | `README`, `ARCHITECTURE.md`, `DESIGN.md`, `docs/`, runbooks | `cargo fmt --all --check` (still run the formatter); if you edited Rust doc comments, `cargo xtask check-docs`. Other checks may be skipped if the PR explains why. |
 
+## Automated PR review (advisory)
+
+[`.github/workflows/review.yml`](.github/workflows/review.yml) runs Claude agent reviews on
+PRs — **anti-slop / repo-standards on every code PR**, and a **security review only when the
+PR touches security-relevant surface** (the FFI boundary, untrusted-input parsers, IOC/PII
+transforms, config/pipeline validation, dependencies, entitlements/signing, or CI). Both are
+**advisory** (`continue-on-error`) — they post inline findings but never block; the required
+signal stays `cargo xtask ci`. A recurring finding should graduate into a deterministic
+`xtask` check (see [the hygiene guardrail](docs/guardrails/code-and-test-hygiene.md) §
+"Tier-2 review"). Setup is one-time: install the Claude GitHub App and add an
+`ANTHROPIC_API_KEY` repo secret; fork PRs run without secrets and the jobs no-op there.
+
 ## Closing review findings
 
 Security scans, ordinary code reviews, fuzzing, CI failures, and performance

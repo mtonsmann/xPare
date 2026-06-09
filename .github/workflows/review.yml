@@ -1,0 +1,152 @@
+# Automated agent PR review (ADVISORY). Complements the deterministic gate
+# (`cargo xtask ci`): the gates verify *self-consistency* (fmt/clippy/test/mutation/docs);
+# these Claude reviews check the *residue* a rule cannot express — anti-slop taste /
+# correctness-of-intent, and security reasoning. See the tier-2 doctrine in
+# docs/guardrails/code-and-test-hygiene.md.
+#
+#   * anti-slop / repo-standards review  — runs on EVERY code PR.
+#   * security review                    — runs only when the PR touches security-relevant
+#                                           surface (the `detect` job decides from the diff).
+#
+# Both are `continue-on-error` (advisory): the required signal stays `cargo xtask ci`. A
+# recurring finding should GRADUATE into a deterministic xtask check (see the guardrail).
+#
+# Setup: install the Claude GitHub App (https://github.com/apps/claude) and add an
+# `ANTHROPIC_API_KEY` repo secret. This uses the `pull_request` trigger (NOT
+# `pull_request_target`), so fork PRs run without secrets and the review jobs simply
+# no-op there — intentional, since the security-review action is not hardened against
+# prompt injection. Keep "Require approval for all external contributors" enabled.
+name: Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    # Code PRs only — docs-only PRs do not need a code review (anti-slop reviews code).
+    paths:
+      - "core/**"
+      - "core-ffi/**"
+      - "cli/**"
+      - "xtask/**"
+      - "shells/**"
+      - "fuzz/**"
+      - "**/Cargo.toml"
+      - "Cargo.lock"
+      - "deny.toml"
+      - ".github/workflows/**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # --------------------------------------------------------------------------
+  # Decide whether the PR touches security-relevant surface. The security review
+  # is gated on this; the anti-slop review always runs.
+  # --------------------------------------------------------------------------
+  detect:
+    name: detect security-relevant changes
+    runs-on: ubuntu-latest
+    outputs:
+      security: ${{ steps.scan.outputs.security }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      # Make the PR base available for the diff. Passed via env (not inlined) so there
+      # is no template-injection surface.
+      - name: Fetch PR base
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: git fetch --no-tags --depth=1 origin "$BASE_REF"
+
+      - name: Scan changed files
+        id: scan
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only "origin/${BASE_REF}...HEAD")"
+          echo "Changed files:"
+          echo "$changed"
+          # Security-relevant surface, per the threat model (DESIGN.md / SECURITY.md):
+          #   the unsafe FFI boundary; the untrusted-input parsers + IOC/PII transforms;
+          #   config/pipeline resource-envelope validation; dependency / supply-chain +
+          #   advisory policy; macOS entitlements & signing; CI workflow security; fuzz.
+          pattern='^(core-ffi/|core/src/lib\.rs|core/src/(config|pipeline)\.rs|core/src/ops/(defang|mask|indicators|urls|html|markdown|html_to_markdown)\.rs|([^/]+/)?Cargo\.toml|Cargo\.lock|deny\.toml|shells/|fuzz/|\.github/workflows/)'
+          if echo "$changed" | grep -qE "$pattern"; then
+            echo "security=true" >> "$GITHUB_OUTPUT"
+            echo "-> security-relevant changes detected; security review WILL run."
+          else
+            echo "security=false" >> "$GITHUB_OUTPUT"
+            echo "-> no security-relevant changes; security review skipped."
+          fi
+
+  # --------------------------------------------------------------------------
+  # Anti-slop / repo-standards review — every code PR. Advisory.
+  # --------------------------------------------------------------------------
+  anti-slop:
+    name: anti-slop / repo-standards review (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Claude anti-slop review
+        uses: anthropics/claude-code-action@11ba60486e4aec9ddfeafcf4bb3f00b028ac2c16 # v1.0.142
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Review this pull request as a TIER-2 anti-slop / repo-standards review, per
+            docs/guardrails/code-and-test-hygiene.md ("Tier-2 review (the residue)"). The
+            deterministic gate `cargo xtask ci` (fmt, clippy -D warnings, tests, mutation,
+            docs, the structural invariants) has ALREADY passed — do NOT re-report anything
+            it catches. Review only the RESIDUE the mechanical gates miss:
+              - dead or over-engineered code; the wrong abstraction; two functions that
+                should be one; poor naming.
+              - golden/regression tests that FREEZE surprising or incorrect output as
+                "correct" (the highest-value catch — look for test comments that rationalize
+                odd output); assertion-light, tautological, or duplicate tests.
+              - drift from ARCHITECTURE.md and the docs/guardrails/* rules.
+            Post findings as inline PR comments. Ground every finding as `file:line` + the
+            specific guardrail/invariant + a concrete fix; if you cannot ground it that way,
+            it is not a finding — stay silent. This is a read-only review; do not modify code.
+          # Bound cost; the action posts review comments itself.
+          claude_args: "--max-turns 15"
+
+  # --------------------------------------------------------------------------
+  # Security review — only when the PR touches security-relevant surface. Advisory.
+  # --------------------------------------------------------------------------
+  security:
+    name: security review (advisory; security-relevant changes only)
+    needs: detect
+    if: needs.detect.outputs.security == 'true'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 2
+
+      - name: Claude security review
+        uses: anthropics/claude-code-security-review@0c6a49f1fa56a1d472575da86a94dbc1edb78eda # main @ 2026-06-09
+        with:
+          claude-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          comment-pr: "true"

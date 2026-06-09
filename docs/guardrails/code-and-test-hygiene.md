@@ -81,9 +81,24 @@ style note. Fix the code to satisfy the check; never weaken the check.
 ## Tier-2 review (the residue)
 
 Everything mechanizable is a gate above. What is left — naming, the wrong abstraction,
-architectural drift from [`ARCHITECTURE.md`](../../ARCHITECTURE.md) — gets a tier-2 **agent
-review** of the PR diff (and on demand), never a cron: same convergence logic as the heavy
-gates, a quiet repo pays nothing.
+architectural drift from [`ARCHITECTURE.md`](../../ARCHITECTURE.md), golden tests that freeze
+a bug as "correct", and security reasoning a rule cannot express — gets a tier-2 **agent
+review** of the PR diff, never a cron: same convergence logic as the heavy gates, a quiet
+repo pays nothing.
+
+This is automated, not best-effort-by-memory, in [`.github/workflows/review.yml`](../../.github/workflows/review.yml):
+
+- **Anti-slop / repo-standards** review runs on **every code PR** (Claude reviews against
+  this guardrail).
+- **Security** review runs **only when the PR touches security-relevant surface** — the
+  unsafe FFI boundary, the untrusted-input parsers / IOC-PII transforms, config/pipeline
+  validation, dependencies/`deny.toml`, macOS entitlements & signing, or CI workflows (a
+  `detect` job decides from the changed files).
+- Both are **advisory** (`continue-on-error`): the required signal stays `cargo xtask ci`.
+  The agent is a *discovery* mechanism, not a merge gate — never block on a nondeterministic
+  reviewer, and never let "the bot approved it" substitute for the deterministic invariants.
+
+Rules of the review:
 
 - It emits **evidence**, not vibes — like a PR packet: `file:line` + the guardrail or
   invariant violated + a concrete fix. A finding the reviewer cannot ground that way is not
@@ -91,4 +106,6 @@ gates, a quiet repo pays nothing.
 - A **recurring** finding graduates into a new deterministic `xtask` check: the agent
   discovers the *next* gate, then retires from that duty. Close it through
   [`review-finding-closure.md`](review-finding-closure.md) and, if it creates or changes an
-  enforced invariant, update the `ARCHITECTURE.md` table.
+  enforced invariant, update the `ARCHITECTURE.md` table. (Worked example: the review found
+  an `html_to_markdown` bug a golden test had frozen as correct — the fix landed and the
+  test now pins the correct output.)
