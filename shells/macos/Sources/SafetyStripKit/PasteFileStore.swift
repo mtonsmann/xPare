@@ -84,12 +84,16 @@ public final class PasteFileStore: PasteFileWriting {
     }
 
     /// `Clipboard <local timestamp> (<n>).txt` — operational metadata only,
-    /// **never** derived from the content.
+    /// **never** derived from the content. Built from `DateComponents` rather
+    /// than a `DateFormatter` (expensive to construct, and not concurrency-safe
+    /// to cache as `static let` under Swift 6).
     private static func fileName(sequence: Int) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
-        let stamp = formatter.string(from: Date())
+        let c = Calendar.current.dateComponents(
+            [.year, .month, .day, .hour, .minute, .second], from: Date())
+        let stamp = String(
+            format: "%04d-%02d-%02d at %02d.%02d.%02d",
+            c.year ?? 0, c.month ?? 0, c.day ?? 0,
+            c.hour ?? 0, c.minute ?? 0, c.second ?? 0)
         return "Clipboard \(stamp) (\(sequence)).txt"
     }
 }

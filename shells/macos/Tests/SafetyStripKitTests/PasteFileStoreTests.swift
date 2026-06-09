@@ -73,6 +73,20 @@ import Foundation
         store.removeAll()  // must not crash or throw
     }
 
+    @Test func writeFailureReturnsNilAndLeavesNothingBehind() throws {
+        // A store rooted under a regular *file* cannot create its directory, so
+        // the write must take the failure path: return nil, leave nothing on disk.
+        let blocker = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PasteFileStoreTests.blocker.\(UUID().uuidString)")
+        try Data("not a directory".utf8).write(to: blocker)
+        defer { try? FileManager.default.removeItem(at: blocker) }
+
+        let dir = blocker.appendingPathComponent("sub", isDirectory: true)
+        let store = PasteFileStore(directory: dir)
+        #expect(store.write("doomed") == nil)
+        #expect(!FileManager.default.fileExists(atPath: dir.path))
+    }
+
     @Test func fileNameCarriesNoContent() throws {
         let (store, _) = isolatedStore()
         defer { store.removeAll() }

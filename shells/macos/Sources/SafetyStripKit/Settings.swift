@@ -82,10 +82,12 @@ public struct Settings: Codable, Equatable, Sendable {
         self.pasteAsFileThresholdKB = pasteAsFileThresholdKB
     }
 
-    /// The byte form of ``pasteAsFileThresholdKB``, clamped so a zero/negative
-    /// stored value can never turn *every* strip into a file write.
+    /// The byte form of ``pasteAsFileThresholdKB``, clamped at both ends: a
+    /// zero/negative stored value can never turn *every* strip into a file
+    /// write, and an absurd typed/corrupted value can never overflow-trap the
+    /// `* 1024` (it saturates to the largest representable threshold instead).
     public var pasteAsFileThresholdBytes: Int {
-        max(1, pasteAsFileThresholdKB) * 1024
+        min(max(1, pasteAsFileThresholdKB), Int.max / 1024) * 1024
     }
 
     private enum CodingKeys: String, CodingKey {

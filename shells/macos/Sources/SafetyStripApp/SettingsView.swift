@@ -71,7 +71,8 @@ struct SettingsView: View {
                         + "stripped result exceeds the threshold, so pasting attaches a file. "
                         + "The file is the one exception to “content is never persisted”: "
                         + "it is owner-only, kept out of Spotlight and backups, and deleted "
-                        + "as soon as the clipboard moves on or SafetyStrip quits."
+                        + "on the next strip once the clipboard moves on, at every launch, "
+                        + "and on quit from the menu."
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)

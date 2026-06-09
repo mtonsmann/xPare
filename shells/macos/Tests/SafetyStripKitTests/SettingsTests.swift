@@ -92,6 +92,11 @@ import Foundation
             "a zero threshold must not turn every strip into a file write")
         clamped.pasteAsFileThresholdKB = -5
         #expect(clamped.pasteAsFileThresholdBytes == 1024)
+
+        // The upper clamp: an absurd typed/corrupted KB value must saturate, not
+        // overflow-trap the `* 1024` (a crash on every strip while enabled).
+        clamped.pasteAsFileThresholdKB = Int.max
+        #expect(clamped.pasteAsFileThresholdBytes == (Int.max / 1024) * 1024)
     }
 
     @Test func transformConfigBuiltFromSettings() {

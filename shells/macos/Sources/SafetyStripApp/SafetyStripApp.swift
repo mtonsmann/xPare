@@ -384,12 +384,14 @@ final class AppModel: ObservableObject {
         settings.pasteLargeAsFile ? .over(kb: settings.pasteAsFileThresholdKB) : .off
     }
 
-    /// The menu's choices: Off, the presets, and — when the user typed a
-    /// non-preset threshold in Settings — that custom value, inserted in size
-    /// order so the list stays sorted.
+    /// The menu's choices: Off, the presets, and — when the stored threshold is
+    /// a non-preset value typed in Settings — that custom value, inserted in
+    /// size order so the list stays sorted. Offered even while the feature is
+    /// off, so toggling Off never strands a custom threshold (re-enabling it
+    /// would otherwise require a preset, which overwrites the stored value).
     var pasteAsFileModes: [PasteAsFileMode] {
         var kbs = Self.pasteAsFilePresetsKB
-        if settings.pasteLargeAsFile, !kbs.contains(settings.pasteAsFileThresholdKB) {
+        if !kbs.contains(settings.pasteAsFileThresholdKB) {
             kbs.append(settings.pasteAsFileThresholdKB)
             kbs.sort()
         }
