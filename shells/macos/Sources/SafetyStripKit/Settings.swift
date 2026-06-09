@@ -50,23 +50,49 @@ public struct Settings: Codable, Equatable, Sendable {
     /// core arrange the pipeline correctly/efficiently; `asGiven` is the "Manual
     /// order" mode where the user's drag-arranged order is honored exactly.
     public var ordering: Ordering
+    /// Opt-in **posture exception** (off by default): when on, a transformed
+    /// result larger than ``pasteAsFileThresholdKB`` is written to a single
+    /// transient file owned by `PasteFileStore`, and the pasteboard gets a file
+    /// reference instead of the raw string — so pasting attaches a file. See
+    /// SECURITY.md ("Opt-in paste-as-file exception").
+    public var pasteLargeAsFile: Bool
+    /// Paste-as-file threshold in KB: a transformed output strictly larger than
+    /// `pasteAsFileThresholdKB * 1024` UTF-8 bytes takes the file path. Clamped
+    /// to ≥ 1 by ``pasteAsFileThresholdBytes``.
+    public var pasteAsFileThresholdKB: Int
+
+    /// Default paste-as-file threshold: 512 KB.
+    public static let defaultPasteAsFileThresholdKB = 512
 
     public init(
         mode: StripMode = .onDemand,
         operations: [SafetyStripCore.Operation] = Settings.defaultOperations,
         hotkey: HotkeyCombo = .defaultCombo,
         pollIntervalMs: Int = 500,
-        ordering: Ordering = .canonical
+        ordering: Ordering = .canonical,
+        pasteLargeAsFile: Bool = false,
+        pasteAsFileThresholdKB: Int = Settings.defaultPasteAsFileThresholdKB
     ) {
         self.mode = mode
         self.operations = operations
         self.hotkey = hotkey
         self.pollIntervalMs = pollIntervalMs
         self.ordering = ordering
+        self.pasteLargeAsFile = pasteLargeAsFile
+        self.pasteAsFileThresholdKB = pasteAsFileThresholdKB
+    }
+
+    /// The byte form of ``pasteAsFileThresholdKB``, clamped at both ends: a
+    /// zero/negative stored value can never turn *every* strip into a file
+    /// write, and an absurd typed/corrupted value can never overflow-trap the
+    /// `* 1024` (it saturates to the largest representable threshold instead).
+    public var pasteAsFileThresholdBytes: Int {
+        min(max(1, pasteAsFileThresholdKB), Int.max / 1024) * 1024
     }
 
     private enum CodingKeys: String, CodingKey {
         case mode, operations, hotkey, pollIntervalMs, ordering
+        case pasteLargeAsFile, pasteAsFileThresholdKB
     }
 
     /// Decode tolerantly so a settings blob saved by an older build (missing newer
@@ -80,6 +106,11 @@ public struct Settings: Codable, Equatable, Sendable {
         hotkey = try c.decodeIfPresent(HotkeyCombo.self, forKey: .hotkey) ?? .defaultCombo
         pollIntervalMs = try c.decodeIfPresent(Int.self, forKey: .pollIntervalMs) ?? 500
         ordering = try c.decodeIfPresent(Ordering.self, forKey: .ordering) ?? .canonical
+        pasteLargeAsFile =
+            try c.decodeIfPresent(Bool.self, forKey: .pasteLargeAsFile) ?? false
+        pasteAsFileThresholdKB =
+            try c.decodeIfPresent(Int.self, forKey: .pasteAsFileThresholdKB)
+            ?? Settings.defaultPasteAsFileThresholdKB
     }
 
     /// A sensible starting pipeline: coerce rich text to plain (HTML strip is

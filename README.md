@@ -5,13 +5,18 @@ your clipboard — coerce rich text to plain, strip HTML and Markdown, normalize
 whitespace, change case, run line operations, extract emails/URLs, defang and
 refang network indicators (IOCs), strip URL tracking parameters, and mask selected
 email/IP identifiers — and writes the result back **in place**, without your
-clipboard content ever leaving the process.
+clipboard content ever leaving the process. Optionally (off by default), a result
+larger than a size you choose is placed on the clipboard as a **temporary text
+file** instead of a raw string, so pasting attaches a file rather than dumping a
+huge blob.
 
 Its whole reason to exist is trust: the clipboard holds passwords, tokens, PII, and
 source, and the markup it carries is untrusted. So SafetyStrip is built so that
 
 - **no clipboard content can leave the process** (no network anywhere, no
-  persistence, no logging of content), and
+  persistence, no logging of content — persistence has exactly one *opt-in*
+  exception, the paste-as-file option above, bounded as described in
+  [`SECURITY.md`](SECURITY.md#opt-in-paste-as-file-exception)), and
 - **the code that parses untrusted markup cannot be memory-unsafe** (the core is
   pure Rust with `#![forbid(unsafe_code)]`).
 

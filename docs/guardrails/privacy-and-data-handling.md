@@ -8,7 +8,8 @@ mechanical content-logging / clipboard-safety checks have their own guardrail:
 
 The one promise: **clipboard content never leaves the process, is never persisted,
 and is never logged.** Content lives in memory only for the duration of a transform
-and is wiped from the buffer that crosses the boundary.
+and is wiped from the buffer that crosses the boundary. Persistence has exactly one
+sanctioned, opt-in exception — the paste-as-file feature — bounded by rule 2 below.
 
 ## The rules
 
@@ -16,10 +17,21 @@ and is wiped from the buffer that crosses the boundary.
    into a shipped artifact or run at build time. There must be no code path that can
    open a socket. (Enforced by `check-no-network` over the whole workspace tree, and
    by the macOS sandbox granting no network entitlement.)
-2. **No persistence of content.** Clipboard text is never written to a file,
-   database, cache, temp file, defaults/registry, or any durable store. The only disk
-   I/O the project does is the CLI reading a **config** file (`--config <path>`) and
-   the shell persisting **settings** — never content.
+2. **No persistence of content — with one sanctioned, opt-in exception.** Clipboard
+   text is never written to a file, database, cache, temp file, defaults/registry,
+   or any durable store. The only disk I/O the project does is the CLI reading a
+   **config** file (`--config <path>`), the shell persisting **settings**, and the
+   **paste-as-file exception**: when the user has enabled *Paste large clipboards
+   as a file* (off by default) and a transformed result exceeds their threshold,
+   `PasteFileStore` — the single audited writer — persists that result so the
+   pasteboard can hold a file reference. Its constraints (one file at a time,
+   owner-only, sandbox-container temp dir, Spotlight/backup-excluded, deleted when
+   the pasteboard moves on / on launch / on quit) are documented in `SECURITY.md`
+   ("Opt-in paste-as-file exception") and enforced by `check-no-content-logging`,
+   which honors the `safetystrip:allow-content-persistence` marker **only** in
+   `PasteFileStore.swift`. No other content persistence is permitted, and the
+   exception must never grow a second writer without repeating this whole
+   posture-change exercise.
 3. **No logging of content.** Clipboard text must never reach a log/console/telemetry
    sink. The core makes this a *compile error* (`#![deny(clippy::print_stdout,
    clippy::print_stderr, clippy::dbg_macro)]` and no logging dependency). In the CLI,
@@ -70,7 +82,7 @@ guardrails.
 | No network anywhere | `cargo xtask check-no-network` (banlist across the whole tree) + sandbox has no network entitlement |
 | Core has no OS/filesystem/network deps | `cargo xtask check-core-deps` (strict transitive allowlist) |
 | No log sink in the core | `#![deny(clippy::print_stdout, print_stderr, dbg_macro)]` + `clippy -D warnings` + no logging crate |
-| No content logged/persisted (incl. shells) | `cargo xtask check-no-content-logging` (scans shipped Rust + Swift source) |
+| No content logged/persisted (incl. shells) | `cargo xtask check-no-content-logging` (scans shipped Rust + Swift source; the paste-as-file allow-marker is honored only in `PasteFileStore.swift`) |
 | Default checks avoid the real clipboard | `cargo xtask check-clipboard-safety` |
 | In-memory only / wipe | pipeline intermediates in `Zeroizing`; fused pipeline scratch storage zeroized before release/reallocation and drop; output buffer zeroized in `ss_buffer_free`; covered by `cargo test` and `cargo xtask check-pipeline-zeroization` |
 | Minimal entitlements | `cargo xtask check-entitlements`; `cargo xtask check-release-posture`; `release.sh dist` signs executable and bundle with the checked-in entitlements and verifies both signed payloads |

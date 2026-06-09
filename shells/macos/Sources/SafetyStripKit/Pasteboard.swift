@@ -63,6 +63,14 @@ public protocol PasteboardProtocol: AnyObject {
     /// Returns the pasteboard generation after the write.
     @discardableResult
     func writePlain(_ text: String) -> Int
+
+    /// Replace the pasteboard contents **in place** with a single file reference
+    /// (`clearContents()` then the URL object), used by the opt-in paste-as-file
+    /// feature so pasting attaches the file instead of dumping the raw string.
+    /// No string type is written alongside — that would defeat the feature.
+    /// Returns the pasteboard generation after the write.
+    @discardableResult
+    func writeFileURL(_ url: URL) -> Int
 }
 
 /// `NSPasteboard.general`-backed pasteboard.
@@ -139,6 +147,13 @@ public final class SystemPasteboard: PasteboardProtocol {
     public func writePlain(_ text: String) -> Int {
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
+        return pasteboard.changeCount
+    }
+
+    @discardableResult
+    public func writeFileURL(_ url: URL) -> Int {
+        pasteboard.clearContents()
+        pasteboard.writeObjects([url as NSURL])
         return pasteboard.changeCount
     }
 

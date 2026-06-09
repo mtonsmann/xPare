@@ -41,6 +41,43 @@ struct SettingsView: View {
             // Sort's flags now live in the menu's "Sort options" submenu (one home per
             // control), so they're intentionally not duplicated here.
 
+            // Paste-as-file's on/off and preset thresholds live in the menu (one home
+            // per control); this section is only the typed *custom* threshold the
+            // menu's "Custom…" item routes to.
+            Section("Paste as file") {
+                HStack {
+                    Text("Custom threshold")
+                    Spacer(minLength: 8)
+                    TextField(
+                        "KB",
+                        value: Binding(
+                            get: { model.settings.pasteAsFileThresholdKB },
+                            set: { model.setPasteAsFileThresholdKB($0) }
+                        ),
+                        format: .number
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 80)
+                    Text("KB")
+                }
+                .disabled(!model.settings.pasteLargeAsFile)
+                if !model.settings.pasteLargeAsFile {
+                    Text("Turn on “Paste as file” in the menu to set a custom threshold.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Text(
+                    "Replaces the clipboard with a temporary text file when the "
+                        + "stripped result exceeds the threshold, so pasting attaches a file. "
+                        + "The file is the one exception to “content is never persisted”: "
+                        + "it is owner-only, kept out of Spotlight and backups, and deleted "
+                        + "on the next strip once the clipboard moves on, at every launch, "
+                        + "and on quit from the menu."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
             Section("Pipeline order") {
                 Toggle(
                     "Manual order (drag to arrange)",
@@ -73,7 +110,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 440, height: 380)
+        .frame(width: 440, height: 520)
         .navigationTitle("SafetyStrip Settings")
     }
 }

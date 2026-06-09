@@ -67,6 +67,38 @@ import Foundation
             "a corrupt stored blob must degrade to defaults, not crash")
     }
 
+    @Test func pasteAsFileIsOffByDefaultAndOldBlobsDecodeTolerantly() throws {
+        let s = Settings()
+        #expect(!s.pasteLargeAsFile, "content persistence must be opt-in / off by default")
+        #expect(s.pasteAsFileThresholdKB == Settings.defaultPasteAsFileThresholdKB)
+
+        // A blob saved by an older build (no paste-as-file keys) upgrades to defaults.
+        let old = #"{"mode":"continuous","pollIntervalMs":250}"#
+        let decoded = try JSONDecoder().decode(Settings.self, from: Data(old.utf8))
+        #expect(decoded.pasteLargeAsFile == false)
+        #expect(decoded.pasteAsFileThresholdKB == Settings.defaultPasteAsFileThresholdKB)
+    }
+
+    @Test func pasteAsFileRoundTripsAndThresholdClampsToAtLeastOneKB() throws {
+        let original = Settings(pasteLargeAsFile: true, pasteAsFileThresholdKB: 64)
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(Settings.self, from: data)
+        #expect(decoded == original)
+        #expect(decoded.pasteAsFileThresholdBytes == 64 * 1024)
+
+        var clamped = Settings(pasteAsFileThresholdKB: 0)
+        #expect(
+            clamped.pasteAsFileThresholdBytes == 1024,
+            "a zero threshold must not turn every strip into a file write")
+        clamped.pasteAsFileThresholdKB = -5
+        #expect(clamped.pasteAsFileThresholdBytes == 1024)
+
+        // The upper clamp: an absurd typed/corrupted KB value must saturate, not
+        // overflow-trap the `* 1024` (a crash on every strip while enabled).
+        clamped.pasteAsFileThresholdKB = Int.max
+        #expect(clamped.pasteAsFileThresholdBytes == (Int.max / 1024) * 1024)
+    }
+
     @Test func transformConfigBuiltFromSettings() {
         let s = Settings(operations: [
             .stripHtml,

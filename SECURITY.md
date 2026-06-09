@@ -4,7 +4,9 @@ SafetyStrip handles the **clipboard** — passwords, API tokens, private keys, P
 and proprietary source pass through it routinely, alongside untrusted HTML/Markdown
 markup. The entire design exists to make one promise credible: **your clipboard
 content never leaves the process, never gets persisted, and cannot corrupt the tool
-that touches it.**
+that touches it.** Persistence has exactly one **opt-in** exception — the
+paste-as-file feature — bounded and enforced as described
+[below](#opt-in-paste-as-file-exception).
 
 This document states the posture and — crucially — how each part is **enforced**,
 not merely intended. For the rationale and threat model see [`DESIGN.md`](DESIGN.md);
@@ -15,7 +17,7 @@ for the boundary and module map see [`ARCHITECTURE.md`](ARCHITECTURE.md).
 | Property | Statement | Enforced by |
 |---|---|---|
 | **No network** | No code path can open a socket — not in the core, not in any crate that could be linked or run at build time | `cargo xtask check-no-network` (banlist over the whole workspace tree); macOS App Sandbox grants **no** network entitlement |
-| **No persistence of content** | Clipboard text is never written to a file, database, or any durable store | No filesystem dependency in the core (`check-core-deps`); the only disk I/O anywhere is the CLI reading a *config* file (never content); `check-no-content-logging` scans for content persistence, and `check-clipboard-safety` keeps real-clipboard exercise out of default targets |
+| **No persistence of content** | Clipboard text is never written to a file, database, or any durable store — with **one explicit, opt-in exception**: the paste-as-file feature (see [below](#opt-in-paste-as-file-exception)) | No filesystem dependency in the core (`check-core-deps`); the only disk I/O anywhere is the CLI reading a *config* file (never content) and the sanctioned `PasteFileStore`; `check-no-content-logging` scans for content persistence and honors its allow-marker **only** inside `PasteFileStore.swift`, and `check-clipboard-safety` keeps real-clipboard exercise out of default targets |
 | **No logging of content** | Clipboard text can never reach a log/console sink | Core denies `print!`/`println!`/`eprint*`/`dbg!` at compile time (`#![deny(...)]`); no logging crate is a dependency; the CLI sends *diagnostics* to stderr and *only transformed text* to stdout; `cargo xtask check-no-content-logging` scans the shipped Rust + Swift source for logging calls on clipboard-derived content |
 | **In-memory only + wipe** | Content lives in memory only for the transform; pipeline intermediates, transform-local scratch storage, and the buffer that crosses the boundary are wiped before release | The core holds each pipeline intermediate in a `Zeroizing` buffer (wiped on drop); fused pipeline scratch storage is wiped before capacity growth can release old storage and on drop; `ss_buffer_free` zeroizes the returned buffer before freeing it (`zeroize` crate); `cargo xtask check-pipeline-zeroization` blocks the current fused-scratch regression class |
 | **Memory safety** | The untrusted-input parser cannot be memory-unsafe | `#![forbid(unsafe_code)]` in the core + `cargo xtask check-unsafe-forbid`; all `unsafe` is isolated to the tiny `core-ffi` shim, which uses `catch_unwind` so a panic is never UB across FFI |
@@ -25,6 +27,40 @@ for the boundary and module map see [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 Every check above is part of `cargo xtask ci`, which CI runs verbatim
 (`.github/workflows/ci.yml`). A regression in any property fails the build.
+
+## Opt-in paste-as-file exception
+
+**Paste as file** (menu bar → "Paste as file", with a custom threshold in
+Settings; **off by default**) is the one deliberate exception to "no persistence of content". When
+the user enables it and a transformed result exceeds their size threshold, the
+shell writes the result to a file and puts a *file reference* on the pasteboard
+instead of the raw string — so pasting attaches a file rather than dumping a
+huge text blob. A pasteboard file reference cannot exist without a real file
+behind it, so the persistence is inherent to the feature, not incidental.
+
+The exception is kept as small as it can be:
+
+- **Strictly opt-in.** With the toggle off (the default), the code path never
+  runs and nothing is ever written.
+- **One audited writer.** All file I/O lives in `PasteFileStore`
+  (`shells/macos/Sources/SafetyStripKit/PasteFileStore.swift`). It is the only
+  file in which `check-no-content-logging` honors the
+  `safetystrip:allow-content-persistence` marker; the marker anywhere else is
+  itself a CI failure, so the exception cannot quietly spread.
+- **Contained location, minimal privilege.** The file lives in a dedicated
+  `PasteAsFile.noindex` directory inside the App Sandbox container's own
+  temporary directory — no new entitlement. `.noindex` keeps Spotlight from
+  indexing it and it is excluded from backups. Directory `0700`, file `0600`.
+- **At most one file, shortest practical lifetime.** Each write replaces the
+  previous file. The file is deleted as soon as the pasteboard stops
+  referencing it (checked on every strip), on every launch, and on quit. The
+  file name is a timestamp, never derived from the content.
+- **Residual risk, stated plainly.** While the file exists it is ordinary
+  user-readable-by-owner disk content, and deletion does not scrub the
+  underlying disk blocks (no userland tool can promise that on APFS). Apps you
+  paste the file into may copy it. If your clipboard holds secrets, leave this
+  feature off or set the threshold high; everything else in this document is
+  unchanged and continues to apply when the feature is off or below threshold.
 
 ## The trust boundary
 

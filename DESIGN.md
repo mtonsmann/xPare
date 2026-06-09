@@ -235,17 +235,32 @@ must refuse to run a reduction.
 **The top-level menu stays one row per feature family.** A standalone,
 zero-parameter rewrite can be a simple top-level toggle, but a feature with
 bounded options must expose a single status-bearing row plus a submenu of native
-radio/checkmark items. Examples: `Sort lines: Off` owns the sort mode choices, and
-`Mask identifiers: Emails, IPv4` owns the selected masking targets. Do not add one
+radio/checkmark items. Examples: `Sort lines: Off` owns the sort mode choices,
+`Mask identifiers: Emails, IPv4` owns the selected masking targets, and
+`Paste as file: > 512 KB` owns the threshold presets. Do not add one
 top-level sibling row per flag unless each row is a truly independent workflow;
 menu scanability is part of the product contract, not garnish.
 
+**Core functionality is never Settings-only.** Every feature the user can turn on
+or off must be visible — and switchable — at a glance in the menu. The Settings
+window holds only what a native menu *cannot* host (typed/free-text input); when a
+menu-surfaced feature also has a typed parameter, its submenu ends with a
+**"Custom…"** item that opens Settings, so the menu remains the single point of
+discovery and Settings is the continuation, never the hiding place.
+
+**Menu rows follow the canonical pipeline order ([D13](#d13--canonical-pipeline-ordering)).**
+The *Clean* section (and likewise the one-shot command section) lists entries by
+`Operation::canonical_rank`, so the menu reads top-to-bottom in the order the
+default pipeline actually runs — the menu *is* the pipeline, visually.
+
 **Parameters follow Route A — a Settings window, not an expanded menu.**
 `MenuBarExtra(.menu)` is a native AppKit menu and cannot host a text field, so the
-free-text-parameterized ops (`PrefixLines`, `SuffixLines`, `JoinWith`, `SplitOn`)
-and pipeline *ordering* live in a conventional SwiftUI `Settings` scene. Bounded,
+free-text-parameterized ops (`PrefixLines`, `SuffixLines`, `JoinWith`, `SplitOn`),
+pipeline *ordering*, and the paste-as-file *custom threshold* live in a
+conventional SwiftUI `Settings` scene. Bounded,
 enumerable params (`ChangeCase`'s case, `SortLines`'s two flags, `Defang`'s bracket
-style, `MaskIdentifiers`' selected identifier classes) stay in the menu as
+style, `MaskIdentifiers`' selected identifier classes, paste-as-file's preset
+thresholds) stay in the menu as
 **submenus with radio/checkmark items**. **Why not** make the whole menu a
 `MenuBarExtra(.window)` panel: that buys inline text fields at the cost of the
 crisp, keyboard-driven native-menu behavior on the common path; a Settings window
@@ -342,6 +357,40 @@ required `cargo xtask ci` gate, both runnable locally):
   verification: it deliberately proves the integer arithmetic only, not the
   `String`-bearing config or the text transformer. Kani harnesses are `#[cfg(kani)]`,
   so the `kani` crate never enters the dependency tree `check-core-deps` guards.
+
+### D15 — Paste-as-file: a single sanctioned, opt-in persistence exception
+
+**Paste large clipboards as a file** (off by default, threshold user-configurable
+in KB) replaces the pasteboard's contents with a *file reference* when the
+transformed result exceeds the threshold, so pasting attaches a `.txt` file
+instead of dumping a huge string. Per [D12](#d12--operation-taxonomy-rewrites-vs-reductions-toggles-vs-commands)'s
+menu-first rule it is surfaced as a status-bearing menu row (`Paste as file: …`)
+with preset thresholds and a "Custom…" item routing to Settings for a typed value. **Why this doesn't betray the "no persistence"
+promise:** a pasteboard file reference is impossible without a real file behind
+it, so the persistence is inherent to the user-requested behavior, not a side
+channel — and the project's own posture rules allow a posture change that is
+explicit, justified, documented, and enforced. The exception is engineered to
+stay singular:
+
+- one audited writer (`PasteFileStore`), the only file where
+  `check-no-content-logging` honors the `safetystrip:allow-content-persistence`
+  marker — the marker anywhere else fails CI, and an xtask unit test pins the
+  allowlist to exactly that file;
+- the file lives in the sandbox container's temp directory
+  (`PasteAsFile.noindex/`, no new entitlement, Spotlight- and backup-excluded),
+  directory `0700` / file `0600`, name is a timestamp (never content-derived);
+- at most one file at a time; deleted when the pasteboard stops referencing it,
+  on launch, and on quit; a failed write degrades to the normal in-place plain
+  write so the strip result is never lost;
+- still **in-place only** — the feature changes *what* the pasteboard holds,
+  never simulates a paste (the D-"Other settled choices" macOS posture stands).
+
+Rejected alternatives: promoting the file write into the core (the core stays
+free of OS/IO — this is pure shell/OS integration, per the shell contract); a
+content-named or user-chosen file location (worse privacy, needs entitlements);
+writing the string *and* the file URL together (receiving text editors would
+paste the raw blob, defeating the feature). See SECURITY.md ("Opt-in
+paste-as-file exception") and exec plan 0012.
 
 ### Other settled choices
 
@@ -600,6 +649,16 @@ plans are collected in [`docs/deferred-work.md`](docs/deferred-work.md).)
 - **Quality-grade cadences** — scheduled audits, dependency-review rotations,
   fuzzing campaigns beyond the CI smoke. Today the CI gate + on-demand fuzzing
   suffice.
+- **Swift (shell) fuzzing.** Swift supports libFuzzer (`-sanitize=fuzzer`), but the
+  shell has nothing fuzz-worthy *by construction*: the hard rule above ("no transform
+  logic in a shell") keeps every untrusted-markup parser in the already-fuzzed core,
+  and the shell's only byte-level work is bounded encoding sniffing
+  (`SystemPasteboard.decodeHtml`, size-ceilinged before decode) plus Apple's own RTF
+  decoder. The shell's realistic crash class is arithmetic traps on settings values,
+  which the shell-contract clamp rule + extreme-value unit tests cover deterministically
+  (cheaper and more targeted than a fuzz harness for fixed scalar math). Revisit only
+  if a shell ever grows real parsing — which the contract forbids — or the
+  platform-decode wrapper surface grows.
 - **Per-worktree app booting / preview harnesses** — spinning up the full app per
   branch. Not warranted at this size.
 - **Additional platform shells** (Windows/Linux), paste simulation, WASM/iOS, and

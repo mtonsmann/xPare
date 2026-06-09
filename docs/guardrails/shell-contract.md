@@ -34,6 +34,12 @@ new platform.
    intrusive input permissions and can fire into the wrong app. Replace the
    clipboard's own contents only. This is not a lock against same-user local
    pasteboard writers; another process may race the read/transform/rewrite window.
+   When the user has opted into **paste-as-file** and the result exceeds their
+   threshold, the in-place write may instead place a *file reference* backed by the
+   platform's sanctioned paste-file store (on macOS, `PasteFileStore` — the one
+   permitted content-persistence point; see
+   [privacy-and-data-handling](privacy-and-data-handling.md) rule 2). Still never
+   simulate a paste, and never write the raw string alongside the file reference.
 3. **Change detection.** Support a **continuous mode** that watches the platform
    clipboard change signal and auto-cleans. It must be an **owned watcher that is
    fully torn down (stopped and released) when the mode is off** — no loop/timer runs
@@ -55,6 +61,15 @@ new platform.
    operation pipeline / chosen config). Settings are *configuration*, never clipboard
    *content* — persisting content is forbidden (see
    [privacy-and-data-handling](privacy-and-data-handling.md)).
+   **Numeric settings are typo/corruption-shaped input**: any arithmetic on a
+   user-controlled value (size thresholds, intervals) must be clamped or saturating
+   *at the point of use* — mirroring the core's saturating growth-product discipline
+   (DESIGN.md D14 / `saturating_growth_product`) — and unit-tested at the extremes
+   (zero, negative, the type's max). The lesson is from a real finding: the macOS
+   paste-as-file threshold was floored but not capped, so a 16-digit typed KB value
+   overflow-trapped `* 1024` on every strip (caught in PR #33's review; the
+   `Int.max` regression test in `SettingsTests` now blocks the class for that
+   field — give new fields the same treatment).
 7. **Calling the core.** Link the FFI staticlib and call the four C symbols:
    `ss_abi_version` (negotiate), `ss_capabilities_json` (discover supported ops —
    don't hardcode them), `ss_transform` (read → transform), and `ss_buffer_free`

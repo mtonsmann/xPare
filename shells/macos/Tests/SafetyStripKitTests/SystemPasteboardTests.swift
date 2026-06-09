@@ -138,6 +138,27 @@ import Testing
         #expect(raw.string(forType: .string) == "now plain only")
     }
 
+    @Test func writeFileURLReplacesContentsWithOnlyAFileReference() throws {
+        let (pb, raw) = makePasteboard()
+        raw.setString("raw text to be replaced", forType: .string)
+        let before = pb.changeCount
+
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SystemPasteboardTests \(UUID().uuidString).txt")
+        try Data("file body".utf8).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let after = pb.writeFileURL(url)
+        #expect(after > before, "writeFileURL must bump the change count")
+        #expect(after == pb.changeCount)
+        // Only the file reference remains — no string type alongside (writing the
+        // raw string too would defeat paste-as-file).
+        let readBack = NSURL(from: raw)
+        #expect(readBack?.isFileURL == true)
+        #expect(readBack?.path == url.path)
+        #expect(raw.string(forType: .string) != "raw text to be replaced")
+    }
+
     @Test func changeCountMirrorsTheUnderlyingPasteboard() {
         let (pb, raw) = makePasteboard()
         let start = pb.changeCount

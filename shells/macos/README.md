@@ -16,7 +16,7 @@ library/exe targets plus tests:
 |-------------------|-------------|----------------|
 | `CSafetyStrip`    | C interop   | Exposes the frozen C ABI to Swift via a `module.modulemap`. Does **not** copy the header — `shim.h` `#include`s the single source of truth at `core-ffi/include/safetystrip.h`. |
 | `SafetyStripCore` | Swift       | Safe `Transformer` wrapping the ABI (`transform`, `capabilities`, `abiVersion`), plus `TransformConfig`/`Operation`/`CaseKind` as `Codable` types that encode **exactly** the Rust JSON schema. The only target that links the staticlib. |
-| `SafetyStripKit`  | Swift, no UI| The testable shell contract: `Pasteboard`, `ClipboardMonitor`, `HotkeyManager`, `Settings`, `StripController`. |
+| `SafetyStripKit`  | Swift, no UI| The testable shell contract: `Pasteboard`, `ClipboardMonitor`, `HotkeyManager`, `Settings`, `StripController`, `PasteFileStore` (the sanctioned paste-as-file writer). |
 | `SafetyStripApp`  | executable  | SwiftUI `MenuBarExtra` app wiring a `StripController`. |
 | `SafetyStripCoreTests`, `SafetyStripKitTests` | test | swift-testing suites (see *Testing* below). |
 
@@ -214,6 +214,12 @@ absent, if app-sandbox is missing/false, or if any banned key appears.
   off fully invalidates and drops the timer so nothing runs.
 - **No clipboard content is ever logged or persisted.** `StripController`
   surfaces only content-free outcomes; `Settings` persists preferences only.
+  The single sanctioned exception is the **opt-in** paste-as-file feature:
+  when enabled and the result exceeds the user's threshold, `PasteFileStore`
+  writes it to one owner-only, Spotlight/backup-excluded temp file (replaced
+  on every write, deleted when the pasteboard moves on, on launch, and on
+  quit) so the pasteboard can hold a file reference. See SECURITY.md
+  ("Opt-in paste-as-file exception").
 
 ## What is real vs. stubbed in this headless environment
 
