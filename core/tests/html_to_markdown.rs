@@ -186,3 +186,109 @@ proptest! {
         prop_assert_eq!(once, twice);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Second batch of mutation-survivor regressions. Outputs verified against the
+// real converter; each test names the source line of the mutant it pins.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn self_close_with_spaces_is_detected() {
+    // find_tag_end L169 whitespace arm: a '/' followed by whitespace before '>' must
+    // still self-close the tag (last_non_ws stays '/'), so <i/ > opens AND closes <em>.
+    // Mutating the `is_whitespace()` guard to true/false breaks self-close detection
+    // (a space would clobber last_non_ws, or '/' would be treated as whitespace).
+    assert_eq!(html_to_markdown("<i/ >x"), "__x");
+    assert_eq!(html_to_markdown("<i />x"), "__x");
+}
+
+#[test]
+fn nested_pre_keeps_outer_buffer() {
+    // start_tag L290 `pre_depth == 0` clears the pre buffer only on the OUTER <pre>.
+    // Mutating to `!= 0` would clear on the INNER <pre>, dropping the "a" already
+    // buffered, yielding "b" instead of "ab".
+    assert_eq!(html_to_markdown("<pre>a<pre>b</pre></pre>"), "```\nab\n```");
+}
+
+#[test]
+fn blockquote_and_table_close_blank_line() {
+    // end_tag L349 `blockquote || table` close emits a blank line. Mutating `||`->`&&`
+    // makes the condition unreachable, so the trailing block separation disappears.
+    assert_eq!(html_to_markdown("<blockquote>q</blockquote>after"), "> q\n\nafter");
+    assert_eq!(
+        html_to_markdown("<table><tr><td>a</td></tr></table>after"),
+        "a\n\nafter"
+    );
+}
+
+#[test]
+fn ordered_list_items_are_numbered() {
+    // start_list_item L364 `Some(ListKind::Ordered { next })` arm: deleting it falls
+    // through to the unordered "- " marker, so the numbers would vanish.
+    assert_eq!(html_to_markdown("<ol><li>a</li><li>b</li></ol>"), "1. a\n2. b");
+}
+
+#[test]
+fn newline_in_inline_code_becomes_space() {
+    // push_text L395 `c == '\n' || c == '\r'` collapses code-buffer line breaks to a
+    // space. Mutating `||`->`&&` makes the guard unreachable, leaking a raw newline.
+    assert_eq!(html_to_markdown("<code>a\nb</code>"), "`a b`");
+    assert_eq!(html_to_markdown("<code>a\rb</code>"), "`a b`");
+}
+
+#[test]
+fn trailing_space_trimmed_before_inline_close() {
+    // trim_trailing_inline L441 pops trailing spaces before emitting a closing marker.
+    // Mutating it to a no-op leaves the space inside the emphasis/strong markers.
+    assert_eq!(html_to_markdown("<em>x </em>y"), "_x_ y");
+    assert_eq!(html_to_markdown("<strong>x </strong>y"), "**x** y");
+}
+
+#[test]
+fn inline_code_edge_backtick_is_padded() {
+    // flush_inline_code L449 `starts_with('`') || ends_with('`')` adds edge spaces when
+    // the content touches a backtick. Mutating `||`->`&&` drops the space when only one
+    // edge has a backtick.
+    assert_eq!(html_to_markdown("<code>`x</code>tail"), "`` `x ``tail");
+    assert_eq!(html_to_markdown("<code>x`</code>tail"), "`` x` ``tail");
+}
+
+#[test]
+fn attr_lookup_terminates_when_attr_absent() {
+    // attr_value L518 `while pos < attrs.len()` must use `<` not `<=`; with `<=` the
+    // scan loops forever at pos == len when the wanted attr (here `alt`) is absent.
+    assert_eq!(html_to_markdown("<img src=a>"), "");
+    assert_eq!(html_to_markdown("<img src=a width=10>"), "");
+}
+
+#[test]
+fn unquoted_attr_value_stops_at_whitespace() {
+    // read_attr_value L552 `end += 1` index math + L562 `is_ascii_whitespace() || b == '/'`
+    // terminator. Mutating `||`->`&&` would swallow following attributes into the href;
+    // mutating the `+=` underflows/loops. The href must stop at the space before `bar`.
+    assert_eq!(html_to_markdown("<a href=foo bar=baz>t</a>"), "[t](<foo>)");
+    assert_eq!(html_to_markdown("<a href=mailto:a@b.com>t</a>"), "[t](<mailto:a@b.com>)");
+}
+
+#[test]
+fn link_destination_escapes_gt_and_backslash() {
+    // safe_link_destination L588 `'>' | '\\'` arm escapes those characters inside the
+    // emitted <...> destination. Deleting the arm leaks an unescaped '>' / '\'.
+    assert_eq!(
+        html_to_markdown(r#"<a href="http://e.com/a>b">t</a>"#),
+        "[t](<http://e.com/a\\>b>)"
+    );
+    assert_eq!(
+        html_to_markdown(r#"<a href="http://e.com/a\b">t</a>"#),
+        "[t](<http://e.com/a\\\\b>)"
+    );
+}
+
+#[test]
+fn no_space_inserted_after_open_bracket() {
+    // needs_space_before L629: returns false after '[' (and '\n',' ','\t','>','('), so a
+    // pending space at the start of link text is dropped. Mutating the body to always
+    // `true` would inject a leading space inside the `[...]`.
+    assert_eq!(html_to_markdown("<a href=http://e.com> x</a>"), "[x](<http:>)");
+}
+

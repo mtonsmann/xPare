@@ -249,6 +249,24 @@ mod html_regression {
         assert_eq!(strip_html(r#"x<script s="/>y"#), "x");
         assert_eq!(strip_html(r#"<script x="a">EVIL</script>safe"#), "safe");
     }
+
+    #[test]
+    fn inner_tag_in_raw_text_does_not_close_script() {
+        // matches_close_tag L429 must return false for a non-`/` tag like <b>; mutating
+        // it to always-true would treat the first inner '<' as the close tag, ending the
+        // raw-text region early and leaking the script body text ("c").
+        assert_eq!(strip_html("<script>a<b>c</script>keep"), "keep");
+    }
+
+    #[test]
+    fn entity_after_plain_prefix_is_decoded() {
+        // strip_html fast-path guard L92: the `!bytes.contains(&b'&')` term must stay
+        // negated. An input that does NOT start with `<`/`&`, has no `<`, but contains a
+        // decodable entity must take the full decoding path (not the verbatim fast path).
+        // Mutating the term to `bytes.contains(&b'&')` would emit `x&amp;y` undecoded.
+        assert_eq!(strip_html("x&amp;y"), "x&y");
+        assert_eq!(strip_html("a&lt;b"), "a<b");
+    }
 }
 
 mod markdown_regression {
@@ -457,6 +475,37 @@ mod markdown_regression {
     fn inline_code_leading_whitespace_normalized() {
         // normalize: leading buffer whitespace (start > 0) is drained.
         assert_eq!(strip_markdown("`\tx`"), "x");
+    }
+
+    #[test]
+    fn setext_heading_underline_is_not_plain_content() {
+        // plain_log_line_kind L231 `b'=' => { all_blank=false; all_dash=false }` keeps
+        // `all_equals` true so an all-`=` line is rejected from the fast path and the
+        // parser renders `abc\n===` as a setext heading (the `===` underline dropped).
+        // Deleting the arm makes the `=` line ordinary content, so the fast path would
+        // join it as `abc ===`.
+        assert_eq!(strip_markdown("abc\n==="), "abc");
+        assert_eq!(strip_markdown("abc\n===\ndef"), "abc\n\ndef");
+    }
+
+    #[test]
+    fn fenced_code_block_internal_blank_lines_are_preserved() {
+        // observe_str_suffix L362/L376: the trailing-whitespace handling and the
+        // `(trailing + suffix).min(2)` accumulation control how code-block content
+        // newlines (pushed as literal text, bypassing the structural collapser) survive.
+        // These pin the exact newline counts so a counter perturbation is observable.
+        assert_eq!(strip_markdown("a\n\n```\n\n```\n\nb"), "a\n\n\nb");
+        assert_eq!(strip_markdown("a\n\n```\n   \n```\n\nb"), "a\n\n   \nb");
+        assert_eq!(strip_markdown("p\n\n```\n \n \n```\n\nq"), "p\n\n \n \nq");
+    }
+
+    #[test]
+    fn html_block_whitespace_does_not_add_blank_lines() {
+        // observe_str_suffix L376 with a whitespace-only / empty push_str value: the
+        // `+`->`*` mutant would reset the trailing-newline count to 0, letting the
+        // following block boundary emit extra newlines around the (empty) HTML block.
+        assert_eq!(strip_markdown("x\n\n<pre> </pre>\n\ny"), "x\n\ny");
+        assert_eq!(strip_markdown("a\n\n<div> </div>\n\nb"), "a\n\nb");
     }
 }
 
