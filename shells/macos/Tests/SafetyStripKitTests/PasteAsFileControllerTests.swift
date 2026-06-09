@@ -27,8 +27,9 @@ struct PasteAsFileControllerTests {
 
     private func isolatedStore() -> (PasteFileStore, URL) {
         let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("PasteAsFileControllerTests.\(UUID().uuidString)",
-                                    isDirectory: true)
+            .appendingPathComponent(
+                "PasteAsFileControllerTests.\(UUID().uuidString)",
+                isDirectory: true)
         return (PasteFileStore(directory: dir), dir)
     }
 
@@ -37,10 +38,11 @@ struct PasteAsFileControllerTests {
     private let largeText = String(repeating: "lorem ipsum,", count: 170)
 
     private func enabledSettings(thresholdKB: Int = 1) -> Settings {
-        Settings(mode: .onDemand,
-                 operations: [.trimTrailingWhitespace],
-                 pasteLargeAsFile: true,
-                 pasteAsFileThresholdKB: thresholdKB)
+        Settings(
+            mode: .onDemand,
+            operations: [.trimTrailingWhitespace],
+            pasteLargeAsFile: true,
+            pasteAsFileThresholdKB: thresholdKB)
     }
 
     @Test func largeOutputBecomesAFileWhenEnabled() async throws {
@@ -61,8 +63,9 @@ struct PasteAsFileControllerTests {
         #expect(outcome == .strippedToFile)
         #expect(pb.writes.isEmpty, "no raw string may be written alongside the file")
         let url = try #require(pb.fileURLWrites.first)
-        #expect(try String(contentsOf: url, encoding: .utf8) == largeText,
-                "the file must hold exactly what a plain write would have pasted")
+        #expect(
+            try String(contentsOf: url, encoding: .utf8) == largeText,
+            "the file must hold exactly what a plain write would have pasted")
     }
 
     @Test func outputAtOrBelowThresholdStaysPlain() async throws {
@@ -71,13 +74,15 @@ struct PasteAsFileControllerTests {
         let (store, dir) = isolatedStore()
         defer { store.removeAll() }
 
-        let pb = FakePasteboard(snapshot:
-            PasteboardSnapshot(text: "small  text ", kind: .plain))
+        let pb = FakePasteboard(
+            snapshot:
+                PasteboardSnapshot(text: "small  text ", kind: .plain))
         let controller = StripController(
-            settings: Settings(mode: .onDemand,
-                               operations: [.collapseWhitespace, .trimTrailingWhitespace],
-                               pasteLargeAsFile: true,
-                               pasteAsFileThresholdKB: 1),
+            settings: Settings(
+                mode: .onDemand,
+                operations: [.collapseWhitespace, .trimTrailingWhitespace],
+                pasteLargeAsFile: true,
+                pasteAsFileThresholdKB: 1),
             pasteboard: pb,
             defaults: defaults,
             pasteFileStore: store
@@ -96,8 +101,9 @@ struct PasteAsFileControllerTests {
         let (store, dir) = isolatedStore()
         defer { store.removeAll() }
 
-        let pb = FakePasteboard(snapshot:
-            PasteboardSnapshot(text: largeText + "  ", kind: .plain))
+        let pb = FakePasteboard(
+            snapshot:
+                PasteboardSnapshot(text: largeText + "  ", kind: .plain))
         // Default settings: pasteLargeAsFile must be false.
         let controller = StripController(
             settings: Settings(mode: .onDemand, operations: [.trimTrailingWhitespace]),
@@ -116,8 +122,9 @@ struct PasteAsFileControllerTests {
         let (defaults, suite) = try isolatedDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
 
-        let pb = FakePasteboard(snapshot:
-            PasteboardSnapshot(text: largeText + "  ", kind: .plain))
+        let pb = FakePasteboard(
+            snapshot:
+                PasteboardSnapshot(text: largeText + "  ", kind: .plain))
         let failing = FailingPasteFileStore()
         let controller = StripController(
             settings: enabledSettings(),
@@ -128,8 +135,9 @@ struct PasteAsFileControllerTests {
 
         let outcome = await controller.stripNow(trigger: .manual)
         #expect(failing.writeAttempts == 1)
-        #expect(outcome == .stripped(changed: true),
-                "a failed file write must degrade to the normal in-place write")
+        #expect(
+            outcome == .stripped(changed: true),
+            "a failed file write must degrade to the normal in-place write")
         #expect(pb.writes == [largeText])
         #expect(pb.fileURLWrites.isEmpty)
     }
@@ -155,8 +163,9 @@ struct PasteAsFileControllerTests {
         // Another app replaces the clipboard — nothing references our file anymore.
         pb.externalSet(PasteboardSnapshot(text: "fresh small copy", kind: .plain))
         _ = await controller.stripNow(trigger: .manual)
-        #expect(!FileManager.default.fileExists(atPath: url.path),
-                "the stale paste file must be removed on the next strip")
+        #expect(
+            !FileManager.default.fileExists(atPath: url.path),
+            "the stale paste file must be removed on the next strip")
         #expect(!FileManager.default.fileExists(atPath: dir.path))
     }
 
@@ -175,7 +184,8 @@ struct PasteAsFileControllerTests {
 
         #expect(await controller.stripNow(trigger: .manual) == .strippedToFile)
         controller.deactivate()
-        #expect(!FileManager.default.fileExists(atPath: dir.path),
-                "no paste file may outlive the controller")
+        #expect(
+            !FileManager.default.fileExists(atPath: dir.path),
+            "no paste file may outlive the controller")
     }
 }

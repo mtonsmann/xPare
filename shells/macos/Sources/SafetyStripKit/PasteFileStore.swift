@@ -19,9 +19,9 @@ public protocol PasteFileWriting: AnyObject {
 /// This is a documented exception to the "no persistence of content" posture —
 /// see SECURITY.md ("Opt-in paste-as-file exception") and
 /// `docs/guardrails/privacy-and-data-handling.md`. The
-/// `safetystrip:allow-content-persistence` markers below are recognized by
+/// `safetystrip:allow-content-persistence` marker below is recognized by
 /// `cargo xtask check-no-content-logging` *only in this file*; anywhere else
-/// they are themselves a violation.
+/// it is itself a violation.
 ///
 /// Mitigations, in order of importance:
 /// - the file lives in a dedicated `PasteAsFile.noindex` directory inside the
@@ -45,7 +45,7 @@ public final class PasteFileStore: PasteFileWriting {
         self.directory =
             directory
             ?? FileManager.default.temporaryDirectory
-                .appendingPathComponent("PasteAsFile.noindex", isDirectory: true)
+            .appendingPathComponent("PasteAsFile.noindex", isDirectory: true)
     }
 
     public func write(_ text: String) -> URL? {
@@ -61,8 +61,10 @@ public final class PasteFileStore: PasteFileWriting {
                 withIntermediateDirectories: true,
                 attributes: [.posixPermissions: 0o700])
             // The sanctioned persistence point (see the type doc): the transformed
-            // clipboard result becomes the single paste file, owner-only.
-            try Data(text.utf8).write(to: url, options: [.atomic]) // safetystrip:allow-content-persistence: persists the transformed clipboard result
+            // clipboard result becomes the single paste file, owner-only. A write
+            // that fails midway is cleaned up by the catch below.
+            let transformed = Data(text.utf8)
+            try transformed.write(to: url)  // safetystrip:allow-content-persistence
             try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
             // Transient by design — keep Time Machine and friends away from it.
             var values = URLResourceValues()
@@ -78,7 +80,7 @@ public final class PasteFileStore: PasteFileWriting {
     }
 
     public func removeAll() {
-        try? FileManager.default.removeItem(at: directory) // safetystrip:allow-content-persistence: deletes the persisted clipboard file
+        try? FileManager.default.removeItem(at: directory)
     }
 
     /// `Clipboard <local timestamp> (<n>).txt` — operational metadata only,

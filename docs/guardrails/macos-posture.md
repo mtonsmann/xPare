@@ -120,7 +120,10 @@ you from. Full rationale: [`DESIGN.md`](../../DESIGN.md) (D8, D9) and
 - `shells/macos/release.sh dist` — resolves the same file by default, rejects
   alternate resolved paths, refuses to sign if it is missing, and verifies that the
   signed payload is still minimal after Developer ID signing.
-- The macOS build smoke (`swift build`) runs best-effort on macOS CI.
+- The macOS shell anti-slop tier (`cargo xtask check-swift`: swift-format lint +
+  `swift test` + a Sources coverage floor, plus SwiftLint if present) runs best-effort
+  on macOS CI (the `continue-on-error` `macos-shell` job), superseding the old bare
+  `swift build` smoke.
 
 ## What a PR must call out
 

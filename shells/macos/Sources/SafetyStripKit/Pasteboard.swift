@@ -93,15 +93,18 @@ public final class SystemPasteboard: PasteboardProtocol {
         //    bytes first so an oversized rich representation is refused before
         //    Swift/AppKit materializes it as a String.
         if let htmlData = pasteboard.data(forType: .html),
-           !htmlData.isEmpty {
+            !htmlData.isEmpty
+        {
             if htmlData.count > ceiling {
                 return .tooLarge(bytes: htmlData.count, changeCount: generation)
             }
             if let html = Self.decodeHtml(htmlData),
-               !html.isEmpty {
-                return .content(PasteboardRead(
-                    snapshot: PasteboardSnapshot(text: html, kind: .html),
-                    changeCount: generation))
+                !html.isEmpty
+            {
+                return .content(
+                    PasteboardRead(
+                        snapshot: PasteboardSnapshot(text: html, kind: .html),
+                        changeCount: generation))
             }
         }
 
@@ -109,7 +112,8 @@ public final class SystemPasteboard: PasteboardProtocol {
         //    the RTF->plain decode here (an OS/AppKit concern) rather than in
         //    the core, which only deals in plain/HTML/Markdown text.
         if let rtfData = pasteboard.data(forType: .rtf),
-           !rtfData.isEmpty {
+            !rtfData.isEmpty
+        {
             if rtfData.count > ceiling {
                 return .tooLarge(bytes: rtfData.count, changeCount: generation)
             }
@@ -117,19 +121,23 @@ public final class SystemPasteboard: PasteboardProtocol {
                 data: rtfData,
                 options: [.documentType: NSAttributedString.DocumentType.rtf],
                 documentAttributes: nil),
-               !attributed.string.isEmpty {
-                return .content(PasteboardRead(
-                    snapshot: PasteboardSnapshot(text: attributed.string, kind: .rtf),
-                    changeCount: generation))
+                !attributed.string.isEmpty
+            {
+                return .content(
+                    PasteboardRead(
+                        snapshot: PasteboardSnapshot(text: attributed.string, kind: .rtf),
+                        changeCount: generation))
             }
         }
 
         // 3. Fall back to a plain string.
         if let plain = pasteboard.string(forType: .string),
-           !plain.isEmpty {
-            return .content(PasteboardRead(
-                snapshot: PasteboardSnapshot(text: plain, kind: .plain),
-                changeCount: generation))
+            !plain.isEmpty
+        {
+            return .content(
+                PasteboardRead(
+                    snapshot: PasteboardSnapshot(text: plain, kind: .plain),
+                    changeCount: generation))
         }
 
         return .empty(changeCount: generation)
@@ -150,10 +158,16 @@ public final class SystemPasteboard: PasteboardProtocol {
     }
 
     private static func decodeHtml(_ data: Data) -> String? {
+        // The final rung is a deliberate *lossy* UTF-8 decode (replacement chars) so we
+        // always hand the core *some* markup rather than dropping the clipboard entirely
+        // when every strict decode fails. That's exactly why the failable initializer that
+        // `optional_data_string_conversion` prefers is wrong for that last rung.
+        // swiftlint:disable optional_data_string_conversion
         String(data: data, encoding: .utf8)
             ?? String(data: data, encoding: .utf16)
             ?? String(data: data, encoding: .utf16LittleEndian)
             ?? String(data: data, encoding: .utf16BigEndian)
             ?? String(decoding: data, as: UTF8.self)
+        // swiftlint:enable optional_data_string_conversion
     }
 }

@@ -164,7 +164,10 @@ final class HotkeyDispatch {
 /// This is a top-level function (no captures) so it can be passed as an
 /// `EventHandlerUPP`. Carbon delivers the event on the main run loop, so hopping
 /// onto the main actor via `assumeIsolated` is safe.
-private func hotKeyEventHandler(
+///
+/// `internal` (not `private`) so a test can drive it with a synthesized Carbon
+/// `kEventHotKeyPressed` event rather than leaving the trampoline uncovered.
+func hotKeyEventHandler(
     _ callRef: EventHandlerCallRef?,
     _ event: EventRef?,
     _ userData: UnsafeMutableRawPointer?

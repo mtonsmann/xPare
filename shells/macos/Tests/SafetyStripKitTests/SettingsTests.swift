@@ -62,8 +62,9 @@ import Foundation
         defer { defaults.removePersistentDomain(forName: suite) }
 
         defaults.set(Data("garbage not json".utf8), forKey: Settings.defaultsKey)
-        #expect(Settings.load(from: defaults) == Settings(),
-                "a corrupt stored blob must degrade to defaults, not crash")
+        #expect(
+            Settings.load(from: defaults) == Settings(),
+            "a corrupt stored blob must degrade to defaults, not crash")
     }
 
     @Test func pasteAsFileIsOffByDefaultAndOldBlobsDecodeTolerantly() throws {
@@ -86,8 +87,9 @@ import Foundation
         #expect(decoded.pasteAsFileThresholdBytes == 64 * 1024)
 
         var clamped = Settings(pasteAsFileThresholdKB: 0)
-        #expect(clamped.pasteAsFileThresholdBytes == 1024,
-                "a zero threshold must not turn every strip into a file write")
+        #expect(
+            clamped.pasteAsFileThresholdBytes == 1024,
+            "a zero threshold must not turn every strip into a file write")
         clamped.pasteAsFileThresholdKB = -5
         #expect(clamped.pasteAsFileThresholdBytes == 1024)
     }
@@ -99,11 +101,32 @@ import Foundation
             .maskIdentifiers(emails: true, ipv4: false, ipv6: true),
         ])
         let config = s.transformConfig()
-        #expect(config.operations == [
-            .stripHtml,
-            .collapseWhitespace,
-            .maskIdentifiers(emails: true, ipv4: false, ipv6: true),
-        ])
+        #expect(
+            config.operations == [
+                .stripHtml,
+                .collapseWhitespace,
+                .maskIdentifiers(emails: true, ipv4: false, ipv6: true),
+            ])
         #expect(config.version == TransformConfig.schemaVersion)
+    }
+
+    @Test func partialBlobFromAnOlderBuildUpgradesMissingFieldsToDefaults() throws {
+        // A settings JSON written by an older build that predates `ordering` (and omits
+        // several fields) must decode tolerantly — each absent key falls back to its
+        // default rather than throwing. Exercises the `decodeIfPresent ?? default` ladder.
+        let legacy = Data(#"{"mode":"continuous"}"#.utf8)
+        let decoded = try JSONDecoder().decode(Settings.self, from: legacy)
+
+        #expect(decoded.mode == .continuous, "the present field is honored")
+        #expect(decoded.operations == Settings.defaultOperations)
+        #expect(decoded.hotkey == .defaultCombo)
+        #expect(decoded.pollIntervalMs == 500)
+        #expect(decoded.ordering == .canonical)
+    }
+
+    @Test func emptyObjectDecodesToAllDefaults() throws {
+        // The fully-empty case: `{}` is a valid settings blob that yields a default Settings.
+        let decoded = try JSONDecoder().decode(Settings.self, from: Data("{}".utf8))
+        #expect(decoded == Settings())
     }
 }

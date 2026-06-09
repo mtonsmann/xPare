@@ -99,9 +99,11 @@ contract they implement.)
 
 ## Enforcing checks
 
-- **Build smoke:** `cargo build -p safetystrip-ffi --release` then
-  `swift build --package-path shells/macos`. CI runs this best-effort on macOS
-  (`continue-on-error`, since the image may lack full Xcode).
+- **Swift anti-slop tier:** `cargo xtask check-swift` (`make swift`) builds the FFI
+  staticlib, then runs `swift format lint --strict`, `swift test`, and a Sources-only
+  line-coverage floor (plus SwiftLint if present). CI runs this best-effort on macOS
+  (`continue-on-error`, since the image may lack full Xcode), so the shell's tests run
+  in CI, not just locally. It supersedes the old bare `swift build` smoke.
 - **Entitlements (macOS):** `cargo xtask check-entitlements` — see
   [macos-posture](macos-posture.md).
 - The ABI the shell links against is frozen by `cargo xtask check-abi`.

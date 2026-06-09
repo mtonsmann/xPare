@@ -10,8 +10,9 @@ import Foundation
 
     private func isolatedStore() -> (PasteFileStore, URL) {
         let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("PasteFileStoreTests.\(UUID().uuidString)",
-                                    isDirectory: true)
+            .appendingPathComponent(
+                "PasteFileStoreTests.\(UUID().uuidString)",
+                isDirectory: true)
         return (PasteFileStore(directory: dir), dir)
     }
 
@@ -31,11 +32,13 @@ import Foundation
         #expect(url.deletingLastPathComponent().path == dir.path)
 
         let fileAttrs = try FileManager.default.attributesOfItem(atPath: url.path)
-        #expect((fileAttrs[.posixPermissions] as? Int) == 0o600,
-                "the paste file must be owner-only")
+        #expect(
+            (fileAttrs[.posixPermissions] as? Int) == 0o600,
+            "the paste file must be owner-only")
         let dirAttrs = try FileManager.default.attributesOfItem(atPath: dir.path)
-        #expect((dirAttrs[.posixPermissions] as? Int) == 0o700,
-                "the store directory must be owner-only")
+        #expect(
+            (dirAttrs[.posixPermissions] as? Int) == 0o700,
+            "the store directory must be owner-only")
     }
 
     @Test func eachWriteReplacesThePreviousFile() throws {
@@ -46,11 +49,13 @@ import Foundation
         let second = try #require(store.write("second"))
 
         #expect(contents(of: dir).count == 1, "at most one paste file may exist")
-        #expect(!FileManager.default.fileExists(atPath: first.path),
-                "the previous paste file must be gone")
+        #expect(
+            !FileManager.default.fileExists(atPath: first.path),
+            "the previous paste file must be gone")
         #expect(try String(contentsOf: second, encoding: .utf8) == "second")
-        #expect(first.lastPathComponent != second.lastPathComponent,
-                "a replacing write must not reuse the previous URL")
+        #expect(
+            first.lastPathComponent != second.lastPathComponent,
+            "a replacing write must not reuse the previous URL")
     }
 
     @Test func removeAllDeletesTheWholeDirectory() throws {
@@ -58,13 +63,14 @@ import Foundation
         _ = try #require(store.write("transient"))
 
         store.removeAll()
-        #expect(!FileManager.default.fileExists(atPath: dir.path),
-                "removeAll must leave nothing behind, not even the directory")
+        #expect(
+            !FileManager.default.fileExists(atPath: dir.path),
+            "removeAll must leave nothing behind, not even the directory")
     }
 
     @Test func removeAllIsSafeWhenNothingWasWritten() {
         let (store, _) = isolatedStore()
-        store.removeAll() // must not crash or throw
+        store.removeAll()  // must not crash or throw
     }
 
     @Test func fileNameCarriesNoContent() throws {
@@ -72,8 +78,9 @@ import Foundation
         defer { store.removeAll() }
 
         let url = try #require(store.write("hunter2 password"))
-        #expect(!url.lastPathComponent.contains("hunter2"),
-                "the file name must never be derived from clipboard content")
+        #expect(
+            !url.lastPathComponent.contains("hunter2"),
+            "the file name must never be derived from clipboard content")
         #expect(url.lastPathComponent.hasPrefix("Clipboard "))
     }
 }

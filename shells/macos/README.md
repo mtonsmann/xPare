@@ -104,7 +104,7 @@ Notes:
 
 The tests use **swift-testing** (`import Testing`), not XCTest — a deliberate
 choice forced by the environment (see *What is real vs. stubbed* below). The
-suite (30 tests, 5 suites) covers:
+suite (91 tests, 7 suites) covers:
 
 - **FFI integration** through the *real linked core*: `strip_html` on
   `"<p>hi  there</p>"` + `collapse_whitespace` → `"hi there"`, ABI version,
@@ -119,7 +119,45 @@ suite (30 tests, 5 suites) covers:
   defaults on absent/corrupt data.
 - **`StripController`** end-to-end: HTML is stripped and written back in place;
   HTML sources force `strip_html` even if unset; unchanged plain text is not
-  rewritten.
+  rewritten; the `activate`/`deactivate`/`update` lifecycle wires and tears down the
+  monitor + hotkey; a throwing transform surfaces the content-free `.failed` outcome.
+- **`SystemPasteboard`** against an app-private `NSPasteboard(name:)`: the HTML →
+  RTF → plain read ladder, the size ceiling (oversized refused before
+  materialization), the UTF-8/UTF-16 decode fallback, and in-place `writePlain`.
+- **`HotkeyManager`** / `HotkeyDispatch`: Carbon constant derivation, the id/handler
+  dispatch table, the real `register`/`unregister` lifecycle, and the C event
+  trampoline driven by a synthesized `kEventHotKeyPressed` event.
+
+## Linting & coverage (anti-slop tier)
+
+The shell's anti-slop gate is `cargo xtask check-swift` (`make swift` from the repo
+root) — the cross-language analog of the Rust `xtask` gates. From a clean checkout:
+
+```sh
+cargo run -p xtask -- check-swift
+```
+
+It runs, in order:
+
+- **`swift format lint --strict`** against [`.swift-format`](.swift-format) (4-space
+  indent, 100-col). Auto-fix with
+  `swift format --in-place --recursive --configuration .swift-format Sources Tests`.
+- **`swift test`** (after building the FFI staticlib it links).
+- a **Sources-only line-coverage floor** via `llvm-cov` (`SWIFT_COVERAGE_FLOOR_PCT`
+  in `xtask/src/main.rs`, currently 95% — matching the Rust product floor; measured
+  baseline ~95.8%). It excludes the `Tests/` files and the SwiftUI app target (an
+  executable, not linked into the test bundle). The OS-facing layers *are* covered:
+  `SystemPasteboard` is tested against an app-private `NSPasteboard(name:)` and the Carbon
+  hot-key trampoline by invoking it with a synthesized event.
+- **SwiftLint** against [`.swiftlint.yml`](.swiftlint.yml) **if `swiftlint` is on
+  `PATH`** (style/complexity, non-`--strict`: warnings advise, only `error`-severity
+  findings fail). CI installs a pinned, checksum-verified `swiftlint`, so this phase runs
+  there; locally it's opt-in via `brew install swiftlint` and skips with a note otherwise.
+  Run with `SWIFTLINT_DISABLE_SOURCEKIT=1` (a CLT-only host can't load SourceKit).
+
+This tier is **best-effort and macOS-only**: it sits outside the required Linux
+`cargo xtask ci` and runs in the `continue-on-error` `macos-shell` CI job, so the
+shell's tests now run in CI rather than only via `./build.sh test` locally.
 
 ## Packaging & distribution
 
@@ -192,7 +230,7 @@ absent, if app-sandbox is missing/false, or if any banned key appears.
   produces a working linked executable.
 - The FFI link against the real Rust staticlib, verified by passing integration
   tests that call the core and round-trip buffers.
-- `swift test`: 30 tests green (using swift-testing).
+- `swift test`: 91 tests green (using swift-testing).
 
 **Adapted to the environment:**
 

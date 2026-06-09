@@ -288,6 +288,36 @@ they are event-driven, not scheduled: on demand locally, and path-filtered in
 mutation run to the PR diff via `SS_DIFF_BASE`). There is **no cron** — a stable repo
 pays nothing. See [code & test hygiene](docs/guardrails/code-and-test-hygiene.md).
 
+## macOS shell anti-slop (`check-swift`, best-effort)
+
+The numbered gates above are Rust/cargo-specific, so the Swift macOS shell
+(`shells/macos/`) has its own cross-language anti-slop tier in `cargo xtask check-swift`
+(`make swift`):
+
+```sh
+cargo run -p xtask -- check-swift   # builds the FFI staticlib, then lint + test + coverage
+```
+
+It runs, in order: `swift format lint --strict` (driven by
+[`shells/macos/.swift-format`](shells/macos/.swift-format)); a `cargo build -p
+safetystrip-ffi --release` so the package can link the staticlib over the frozen C ABI;
+`swift test`; and a **Sources-only** line-coverage floor via `llvm-cov`
+(`SWIFT_COVERAGE_FLOOR_PCT`, currently 95% — matching the Rust product floor; baseline
+~95.8%, with the OS-facing pasteboard/hotkey layers tested headlessly and only the SwiftUI
+app executable left unmeasured). If
+[`swiftlint`](https://github.com/realm/SwiftLint) is on `PATH` it also runs a
+style/complexity pass against [`shells/macos/.swiftlint.yml`](shells/macos/.swiftlint.yml)
+(non-`--strict`: warnings advise, only `error`-severity findings fail). CI installs a
+**pinned, checksum-verified** SwiftLint (the `portable_swiftlint.zip` release asset, hashed
+like actionlint), so this phase runs there; locally it's **run-if-present** and skips with a
+note. SourceKit is disabled for determinism (a CLT-only host can't load it).
+
+This tier is **macOS-only and best-effort**: it sits outside the required `cargo xtask ci`
+(which runs on Linux), runs in the `continue-on-error` `macos-shell` CI job, and skips
+cleanly where the Swift toolchain or sources are absent. The security-critical transform
+logic lives in the gated Rust core, not the shell. See
+[code & test hygiene](docs/guardrails/code-and-test-hygiene.md).
+
 ## Pull requests
 
 - State the change class and any compatibility/posture impact (ABI, privacy,

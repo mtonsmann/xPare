@@ -132,12 +132,13 @@ final class AppModel: ObservableObject {
     func setSortMode(_ mode: SortMode) {
         var ops = settings.operations
         guard let flags = mode.flags else {
-            ops.removeAll(where: isSort) // .off → drop the sort op
+            ops.removeAll(where: isSort)  // .off → drop the sort op
             commit(ops)
             return
         }
-        let newOp = SafetyStripCore.Operation.sortLines(descending: flags.descending,
-                                                        caseInsensitive: flags.caseInsensitive)
+        let newOp = SafetyStripCore.Operation.sortLines(
+            descending: flags.descending,
+            caseInsensitive: flags.caseInsensitive)
         // Update in place when present (preserves pipeline position in manual order);
         // otherwise append.
         if let idx = ops.firstIndex(where: isSort) {
@@ -198,7 +199,7 @@ final class AppModel: ObservableObject {
     func setCaseMode(_ mode: CaseMode) {
         var ops = settings.operations
         guard let kind = mode.kind else {
-            ops.removeAll(where: isChangeCase) // .off → drop the op
+            ops.removeAll(where: isChangeCase)  // .off → drop the op
             commit(ops)
             return
         }
@@ -438,9 +439,11 @@ final class AppModel: ObservableObject {
 
     /// Run a transient single-op command against the clipboard (never persisted).
     /// Reductions/conversions and refang are surfaced this way per D12.
-    func runCommand(_ op: SafetyStripCore.Operation,
-                    label: String,
-                    notApplicableStatus: String? = nil) {
+    func runCommand(
+        _ op: SafetyStripCore.Operation,
+        label: String,
+        notApplicableStatus: String? = nil
+    ) {
         Task { @MainActor in
             switch await controller.runOnce(operations: [op]) {
             case .stripped(let changed):
@@ -547,7 +550,7 @@ final class AppModel: ObservableObject {
     private func matches(_ kind: ParamOp, _ op: SafetyStripCore.Operation) -> Bool {
         switch (kind, op) {
         case (.prefix, .prefixLines), (.suffix, .suffixLines),
-             (.join, .joinWith), (.split, .splitOn):
+            (.join, .joinWith), (.split, .splitOn):
             return true
         default:
             return false
@@ -585,18 +588,23 @@ private struct MenuContent: View {
         Divider()
 
         // Mode toggle: continuous monitoring is opt-in.
-        Toggle("Continuous monitoring", isOn: Binding(
-            get: { model.settings.mode == .continuous },
-            set: { model.setMode($0 ? .continuous : .onDemand) }
-        ))
+        Toggle(
+            "Continuous monitoring",
+            isOn: Binding(
+                get: { model.settings.mode == .continuous },
+                set: { model.setMode($0 ? .continuous : .onDemand) }
+            ))
         // Output mode: how the stripped result lands on the pasteboard. Bounded
         // options live here per D12 (status-bearing row + radio submenu); the
         // typed threshold is the free parameter, so "Custom…" routes to Settings.
         Menu("Paste as file: \(model.pasteAsFileMode.shortLabel)") {
-            Picker("Paste as file", selection: Binding(
-                get: { model.pasteAsFileMode },
-                set: { model.setPasteAsFileMode($0) }
-            )) {
+            Picker(
+                "Paste as file",
+                selection: Binding(
+                    get: { model.pasteAsFileMode },
+                    set: { model.setPasteAsFileMode($0) }
+                )
+            ) {
                 ForEach(model.pasteAsFileModes) { mode in
                     Text(mode.label).tag(mode)
                 }
@@ -617,47 +625,57 @@ private struct MenuContent: View {
         // so the menu reads top-to-bottom as the pipeline runs. Keep it in sync
         // when ranks change.
         Text("Clean")
-        cleanToggle(.stripHtml, "Strip HTML") // rank 1
-        cleanToggle(.stripMarkdown, "Strip Markdown") // rank 2
-        cleanToggle(.unwrapLines, "Unwrap lines") // rank 5
-        cleanToggle(.collapseWhitespace, "Collapse whitespace") // rank 6
-        cleanToggle(.trimTrailingWhitespace, "Trim trailing whitespace") // rank 7
-        cleanToggle(.cleanUrls, "Clean URL trackers") // rank 8
-        Menu("Mask identifiers: \(model.maskSummaryLabel)") { // rank 9
+        cleanToggle(.stripHtml, "Strip HTML")  // rank 1
+        cleanToggle(.stripMarkdown, "Strip Markdown")  // rank 2
+        cleanToggle(.unwrapLines, "Unwrap lines")  // rank 5
+        cleanToggle(.collapseWhitespace, "Collapse whitespace")  // rank 6
+        cleanToggle(.trimTrailingWhitespace, "Trim trailing whitespace")  // rank 7
+        cleanToggle(.cleanUrls, "Clean URL trackers")  // rank 8
+        Menu("Mask identifiers: \(model.maskSummaryLabel)") {  // rank 9
             ForEach(AppModel.MaskTarget.allCases) { target in
-                Toggle(target.label, isOn: Binding(
-                    get: { model.maskEnabled(target) },
-                    set: { model.setMask(target, enabled: $0) }
-                ))
+                Toggle(
+                    target.label,
+                    isOn: Binding(
+                        get: { model.maskEnabled(target) },
+                        set: { model.setMask(target, enabled: $0) }
+                    ))
             }
         }
         // (Defang's bracket style is a parameter, so it lives in the Settings window.)
-        Toggle("Defang IOCs", isOn: Binding( // rank 10
-            get: { model.isDefangEnabled },
-            set: { model.setDefang(enabled: $0) }
-        ))
-        cleanToggle(.removeBlankLines, "Remove blank lines") // rank 14
-        cleanToggle(.dedupeLines, "Dedupe lines") // rank 15
+        Toggle(
+            "Defang IOCs",
+            isOn: Binding(  // rank 10
+                get: { model.isDefangEnabled },
+                set: { model.setDefang(enabled: $0) }
+            ))
+        cleanToggle(.removeBlankLines, "Remove blank lines")  // rank 14
+        cleanToggle(.dedupeLines, "Dedupe lines")  // rank 15
         // Sort is a SINGLE entry: a submenu whose title shows the active mode, with the
         // modes as an inline Picker so the active one gets the system ✓ — the same
         // native checkmark the sibling toggles use, just on the child (Finder "Sort By"
         // idiom). One menu line; state visible in the title; no glyph-alignment hacks.
-        Menu("Sort lines: \(model.sortMode.shortLabel)") { // rank 16
-            Picker("Sort lines", selection: Binding(
-                get: { model.sortMode },
-                set: { model.setSortMode($0) }
-            )) {
+        Menu("Sort lines: \(model.sortMode.shortLabel)") {  // rank 16
+            Picker(
+                "Sort lines",
+                selection: Binding(
+                    get: { model.sortMode },
+                    set: { model.setSortMode($0) }
+                )
+            ) {
                 ForEach(AppModel.SortMode.allCases) { mode in
                     Text(mode.label).tag(mode)
                 }
             }
             .pickerStyle(.inline)
         }
-        Menu("Change case: \(model.caseMode.label)") { // rank 17
-            Picker("Change case", selection: Binding(
-                get: { model.caseMode },
-                set: { model.setCaseMode($0) }
-            )) {
+        Menu("Change case: \(model.caseMode.label)") {  // rank 17
+            Picker(
+                "Change case",
+                selection: Binding(
+                    get: { model.caseMode },
+                    set: { model.setCaseMode($0) }
+                )
+            ) {
                 ForEach(AppModel.CaseMode.allCases) { mode in
                     Text(mode.label).tag(mode)
                 }
@@ -670,21 +688,22 @@ private struct MenuContent: View {
         // --- Extract: one-shot commands (replace the clipboard; never persisted) ---
         // Same rule: canonical-rank order.
         Text("Extract / convert (replaces clipboard)")
-        Button("Convert HTML to Markdown") { // rank 3
-            model.runCommand(.htmlToMarkdown,
-                             label: "Converted to Markdown",
-                             notApplicableStatus: "No HTML content")
+        Button("Convert HTML to Markdown") {  // rank 3
+            model.runCommand(
+                .htmlToMarkdown,
+                label: "Converted to Markdown",
+                notApplicableStatus: "No HTML content")
         }
         .disabled(model.isStripping)
-        Button("Refang clipboard") { // rank 11
+        Button("Refang clipboard") {  // rank 11
             model.runCommand(.refang, label: "Refanged")
         }
         .disabled(model.isStripping)
-        Button("Extract emails") { // rank 12
+        Button("Extract emails") {  // rank 12
             model.runCommand(.extractEmails, label: "Extracted emails")
         }
         .disabled(model.isStripping)
-        Button("Extract URLs") { // rank 13
+        Button("Extract URLs") {  // rank 13
             model.runCommand(.extractUrls, label: "Extracted URLs")
         }
         .disabled(model.isStripping)
@@ -711,9 +730,11 @@ private struct MenuContent: View {
         _ op: SafetyStripCore.Operation,
         _ label: String
     ) -> some View {
-        Toggle(label, isOn: Binding(
-            get: { model.isEnabled(op) },
-            set: { model.setOperation(op, enabled: $0) }
-        ))
+        Toggle(
+            label,
+            isOn: Binding(
+                get: { model.isEnabled(op) },
+                set: { model.setOperation(op, enabled: $0) }
+            ))
     }
 }

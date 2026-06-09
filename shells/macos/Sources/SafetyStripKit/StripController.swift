@@ -198,36 +198,22 @@ public final class StripController {
         trigger: StripTrigger,
         makeConfig: (PasteboardSnapshot) -> TransformConfig?
     ) async -> StripOutcome {
-        // Best-effort paste-file lifetime minimization: once the pasteboard has
-        // moved past our file-URL write, nothing references the file — delete it.
-        if let fileGeneration = pasteFileChangeCount,
-           pasteboard.changeCount != fileGeneration {
-            pasteFileStore.removeAll()
-            pasteFileChangeCount = nil
-        }
+        removeStalePasteFile()
 
         if trigger == .clipboardChanged,
-           pasteboard.changeCount == lastSelfWriteChangeCount {
+            pasteboard.changeCount == lastSelfWriteChangeCount
+        {
             return .stripped(changed: false)
         }
 
         let read: PasteboardRead
-        switch pasteboard.readBest(maxRepresentationBytes: maxInputBytes) {
-        case .content(let content):
+        switch readWithinCeiling() {
+        case .ok(let content):
             read = content
-        case .empty:
-            return .empty
-        case .tooLarge(let bytes, _):
-            return .tooLarge(bytes: bytes)
+        case .bail(let earlyOutcome):
+            return earlyOutcome
         }
-
-        // Safety ceiling: refuse an oversized clipboard rather than risk an
-        // out-of-memory abort transforming it. The clipboard is left untouched.
         let snapshot = read.snapshot
-        let byteCount = snapshot.text.utf8.count
-        if byteCount > maxInputBytes {
-            return .tooLarge(bytes: byteCount)
-        }
 
         guard var config = makeConfig(snapshot) else {
             return .notApplicable
@@ -248,7 +234,7 @@ public final class StripController {
             do {
                 try await Task.sleep(for: threshold)
             } catch {
-                return false // cancelled before the threshold elapsed → never signaled
+                return false  // cancelled before the threshold elapsed → never signaled
             }
             self?.onStrippingChange?(true)
             return true
@@ -276,19 +262,10 @@ public final class StripController {
             return .stripped(changed: false)
         }
 
-        // Opt-in paste-as-file: when enabled and the transformed result exceeds
-        // the user's threshold, persist it via the (sanctioned) PasteFileStore and
-        // put a file reference on the pasteboard instead of the raw string. Runs
-        // before the unchanged-skip below: an already-plain large buffer should
-        // still become a file. A failed file write falls through to the normal
-        // in-place plain write so the strip result is never lost.
-        if settings.pasteLargeAsFile,
-           output.utf8.count > settings.pasteAsFileThresholdBytes,
-           let fileURL = pasteFileStore.write(output) {
-            let generation = pasteboard.writeFileURL(fileURL)
-            lastSelfWriteChangeCount = generation
-            pasteFileChangeCount = generation
-            return .strippedToFile
+        // Runs before the unchanged-skip below: an already-plain large buffer
+        // should still become a file.
+        if let fileOutcome = writeAsFileIfLarge(output) {
+            return fileOutcome
         }
 
         // Only rewrite when the result actually differs from what a plain paste would
@@ -300,6 +277,61 @@ public final class StripController {
         }
         lastSelfWriteChangeCount = pasteboard.writePlain(output)
         return .stripped(changed: true)
+    }
+
+    /// A ceiling-checked pasteboard read: the content, or the content-free
+    /// outcome `perform` should return early.
+    private enum CeilingRead {
+        case ok(PasteboardRead)
+        case bail(StripOutcome)
+    }
+
+    /// Read the best pasteboard representation, refusing an oversized clipboard
+    /// at both levels — raw representation bytes (inside `readBest`) and the
+    /// extracted text (the safety ceiling here: refuse rather than risk an
+    /// out-of-memory abort transforming it; the clipboard is left untouched).
+    private func readWithinCeiling() -> CeilingRead {
+        switch pasteboard.readBest(maxRepresentationBytes: maxInputBytes) {
+        case .empty:
+            return .bail(.empty)
+        case .tooLarge(let bytes, _):
+            return .bail(.tooLarge(bytes: bytes))
+        case .content(let content):
+            let byteCount = content.snapshot.text.utf8.count
+            if byteCount > maxInputBytes {
+                return .bail(.tooLarge(bytes: byteCount))
+            }
+            return .ok(content)
+        }
+    }
+
+    // MARK: - Paste-as-file (the opt-in persistence exception; see PasteFileStore)
+
+    /// Best-effort paste-file lifetime minimization, run at the top of every
+    /// strip: once the pasteboard has moved past our file-URL write, nothing
+    /// references the file — delete it.
+    private func removeStalePasteFile() {
+        guard let fileGeneration = pasteFileChangeCount,
+            pasteboard.changeCount != fileGeneration
+        else { return }
+        pasteFileStore.removeAll()
+        pasteFileChangeCount = nil
+    }
+
+    /// Opt-in paste-as-file: when enabled and the transformed result exceeds the
+    /// user's threshold, persist it via the (sanctioned) ``PasteFileStore`` and
+    /// put a file reference on the pasteboard instead of the raw string. Returns
+    /// `nil` — including on a failed file write — to let the caller degrade to
+    /// the normal in-place plain write so the strip result is never lost.
+    private func writeAsFileIfLarge(_ output: String) -> StripOutcome? {
+        guard settings.pasteLargeAsFile,
+            output.utf8.count > settings.pasteAsFileThresholdBytes,
+            let fileURL = pasteFileStore.write(output)
+        else { return nil }
+        let generation = pasteboard.writeFileURL(fileURL)
+        lastSelfWriteChangeCount = generation
+        pasteFileChangeCount = generation
+        return .strippedToFile
     }
 
     /// Build the config to run for a given snapshot. The user's ordered
