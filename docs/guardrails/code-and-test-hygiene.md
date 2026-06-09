@@ -28,7 +28,9 @@ style note. Fix the code to satisfy the check; never weaken the check.
    test is a disabled test; re-enable it rather than letting the count grow.
 6. Docs build clean (`check-docs`): no broken intra-doc links, no public doc linking to
    a private item, no invalid inline HTML. Make the link resolve, drop the brackets to
-   plain inline code, or fence a usage snippet — do not `#[allow]` the lint.
+   plain inline code, or fence a usage snippet — do not `#[allow]` the lint. Every public
+   item in the shipped libs (`core`, `core-ffi`) is documented — `#![deny(missing_docs)]`
+   makes a new undocumented `pub` item a build error; document it, do not `#[allow]` it.
 7. New behavior earns its tests. Prefer a reference-interpreter clause + a property test
    over a single happy-path example. A test that runs code but asserts nothing is slop —
    it will not survive `check-mutants` (below), and it does not count as coverage.

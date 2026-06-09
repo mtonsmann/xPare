@@ -23,6 +23,8 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 // (`clippy::dbg_macro` is denied workspace-wide; `print_*` stay FFI-specific here.)
 #![deny(clippy::print_stdout, clippy::print_stderr)]
+// The C ABI is the audited surface; every exported item must be documented.
+#![deny(missing_docs)]
 
 use std::borrow::Cow;
 use std::ffi::{CStr, CString};

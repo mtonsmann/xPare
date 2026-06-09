@@ -49,13 +49,16 @@ Every `#[ignore]` must carry a reason; the total count must not exceed `MAX_IGNO
 Assertion *quality* (tests that run but prove nothing) is out of scope here — it is the
 job of `check-mutants` (D-5).
 
-### D-4 - `check-docs` (required), `missing_docs` / `lychee` deferred
+### D-4 - `check-docs` + `missing_docs` (required), `lychee` deferred
 
 `check-docs` builds the workspace docs with `RUSTDOCFLAGS=-D warnings` (deterministic,
 offline, first-party — no new pinned tool). Landing it required a one-time cleanup of 7
 pre-existing doc-slop issues (5 public→private intra-doc links, 2 invalid-HTML-tag
-placeholders). **Deferred:** `missing_docs` (23 undocumented public items — a larger
-doc-writing effort, worth doing as a focused follow-up) and `lychee` markdown
+placeholders). **`missing_docs` (done, 2026-06-09):** documented the 23 undocumented
+public items (all `Operation` / `ConfigError` struct-variant fields in `config.rs`) and
+added `#![deny(missing_docs)]` to `core` and `core-ffi` — the two shipped libs whose
+public surface is the FFI/ABI contract; the `cli`/`xtask` tools are intentionally
+exempt (per-crate, like the `print_*` denies). **Deferred:** `lychee` markdown
 link-checking (external URLs are inherently flaky; lower value).
 
 ### D-5 - Coverage & mutation testing are best-effort and event-driven (NOT cron)
@@ -92,10 +95,11 @@ Landed (Phase 5): D-6 — the tier-2 agent-review doctrine is documented in
 `docs/guardrails/code-and-test-hygiene.md` (`## Tier-2 review (the residue)`), cross-linked
 to `review-finding-closure.md`.
 
-Remaining follow-up: under D-5, the one-time **full-tree** mutation baseline sweep
-(`SS_DIFF_BASE` unset) and survivor triage — the per-diff path is live and smoke-tested;
-the full sweep is a focused pass that strengthens tests for any genuine survivors. Deferred
-(tracked in `deferred-work.md`): `cargo-public-api` snapshot, `missing_docs`, `lychee`.
+Remaining follow-up: none outstanding. The D-5 full-tree mutation sweep + exhaustive
+survivor triage is **complete** and `missing_docs` (D-4) is now enforced (see the Decision
+log). Still deferred (low value / poor fit; tracked here until 0013 is archived):
+`cargo-public-api` snapshot (nightly-brittle) and `lychee` markdown link-checking
+(external-URL flakiness).
 
 ## Decision log
 
