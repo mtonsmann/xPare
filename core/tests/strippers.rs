@@ -219,6 +219,36 @@ mod html_regression {
             "link"
         );
     }
+
+    // Mutation-survivor regressions: each input pins behavior an existing test missed.
+    #[test]
+    fn close_tag_requires_a_real_lt() {
+        // A bare "/script>" inside the body must NOT close the element; only a real
+        // "</script>" does (advance_to_byte / find_byte / matches_close_tag).
+        assert_eq!(strip_html("<script>x/script>y</script>z"), "z");
+    }
+
+    #[test]
+    fn entity_name_scan_stops_at_lt() {
+        // The entity-name scan must stop at '<' instead of swallowing the next tag.
+        assert_eq!(strip_html("&a<b>c"), "&ac");
+    }
+
+    #[test]
+    fn max_scalar_numeric_entity_is_decoded() {
+        // U+10FFFF is the maximum valid scalar: decoded, not mapped to U+FFFD.
+        assert_eq!(strip_html("&#x10FFFF;"), "\u{10FFFF}");
+    }
+
+    #[test]
+    fn self_close_detection_boundaries() {
+        // skip_tag_rest_detect_self_close: whitespace handling and the quote arm decide
+        // whether a tag self-closes (and thus whether a raw-text body is consumed).
+        assert_eq!(strip_html("<script/z>body</script>tail"), "tail");
+        assert_eq!(strip_html("a<script / >b</script>c"), "abc");
+        assert_eq!(strip_html(r#"x<script s="/>y"#), "x");
+        assert_eq!(strip_html(r#"<script x="a">EVIL</script>safe"#), "safe");
+    }
 }
 
 mod markdown_regression {
@@ -393,6 +423,40 @@ mod markdown_regression {
             !sanitized.contains("evil"),
             "StripHtml -> StripMarkdown must drop the body, got {sanitized:?}"
         );
+    }
+
+    // Mutation-survivor regressions for the plain-log fast path + ordered-list / heading
+    // / normalize logic. (Expected outputs verified against the real parser.)
+    #[test]
+    fn all_dash_line_is_a_thematic_break() {
+        // plain_log_line_kind: an all-dash line is rejected from the fast path and the
+        // parser renders it as a thematic break (dropped), not literal content.
+        assert_eq!(strip_markdown("---"), "");
+    }
+
+    #[test]
+    fn trailing_underscore_does_not_overrun() {
+        // is_intraword_ascii_underscore must not index past the last byte for a trailing '_'.
+        assert_eq!(strip_markdown("x_"), "x_");
+    }
+
+    #[test]
+    fn ordered_list_marker_is_detected() {
+        // starts_ordered_list_marker: "1. item" is a list item (marker dropped), not content.
+        assert_eq!(strip_markdown("1. item"), "item");
+    }
+
+    #[test]
+    fn blank_line_between_blocks_after_code_fence() {
+        // observe_str_suffix: a trailing newline in a Text chunk must not suppress the
+        // structural blank line between blocks.
+        assert_eq!(strip_markdown("```\ncode\n```\n\nafter"), "code\n\nafter");
+    }
+
+    #[test]
+    fn inline_code_leading_whitespace_normalized() {
+        // normalize: leading buffer whitespace (start > 0) is drained.
+        assert_eq!(strip_markdown("`\tx`"), "x");
     }
 }
 
