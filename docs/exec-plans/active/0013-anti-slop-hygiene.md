@@ -109,3 +109,20 @@ the full sweep is a focused pass that strengthens tests for any genuine survivor
   the `check-mutants` plumbing (incl. `SS_DIFF_BASE` diff scoping) was smoke-tested. Phase 5
   (D-6) tier-2 agent-review doctrine documented in the hygiene guardrail. Remaining: the
   one-time full-tree mutation baseline sweep + survivor triage.
+- 2026-06-08: Full-tree mutation baseline run. **Found a config bug first:** cargo-mutants
+  reads `.cargo/mutants.toml`, but the config was committed at the repo root, so all
+  exclusions/timeouts were silently ignored (the first sweep wasted ~193 mutants on `xtask`
+  and mutated the `#[cfg(kani)]` harnesses). Fixed: moved to `.cargo/mutants.toml`, added
+  `exclude_re=["kani_proofs"]`, corrected the `hygiene.yml` path filter + doc refs (commit
+  7b54389). Authoritative baseline (929 product mutants, `-j 10` local): **684 caught, 120
+  missed, 105 timeout, 20 unviable.** Timeouts are a mix — genuine cursor-advance infinite
+  loops in the parsers (effectively caught) plus a contention-spurious tail from `-j 10`
+  oversubscription (e.g. all 8 `mask.rs` timeouts are in the non-looping `has_relevant_byte`
+  perf pre-filter, which cannot loop). The 120 real survivors cluster in
+  `html_to_markdown`(45)/`html`(27)/`markdown`(10) — mostly equivalent mutants in internal
+  index math — plus a high-value genuine minority: `defang` boolean logic (15;
+  security-relevant), `config` envelope (`Config::validate`, `max_growth_factor`,
+  `ConfigError` Display), and `pipeline` boundaries. Triage next: strengthen tests for the
+  genuine minority (each a permanent regression), skip-list confirmed-equivalent mutants
+  with reasons. Follow-up tuning: the `-j 10` contention tail argues for capping per-job test
+  threads (or a higher timeout multiplier) so timeouts classify cleanly.
