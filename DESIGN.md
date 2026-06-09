@@ -649,6 +649,16 @@ plans are collected in [`docs/deferred-work.md`](docs/deferred-work.md).)
 - **Quality-grade cadences** — scheduled audits, dependency-review rotations,
   fuzzing campaigns beyond the CI smoke. Today the CI gate + on-demand fuzzing
   suffice.
+- **Swift (shell) fuzzing.** Swift supports libFuzzer (`-sanitize=fuzzer`), but the
+  shell has nothing fuzz-worthy *by construction*: the hard rule above ("no transform
+  logic in a shell") keeps every untrusted-markup parser in the already-fuzzed core,
+  and the shell's only byte-level work is bounded encoding sniffing
+  (`SystemPasteboard.decodeHtml`, size-ceilinged before decode) plus Apple's own RTF
+  decoder. The shell's realistic crash class is arithmetic traps on settings values,
+  which the shell-contract clamp rule + extreme-value unit tests cover deterministically
+  (cheaper and more targeted than a fuzz harness for fixed scalar math). Revisit only
+  if a shell ever grows real parsing — which the contract forbids — or the
+  platform-decode wrapper surface grows.
 - **Per-worktree app booting / preview harnesses** — spinning up the full app per
   branch. Not warranted at this size.
 - **Additional platform shells** (Windows/Linux), paste simulation, WASM/iOS, and

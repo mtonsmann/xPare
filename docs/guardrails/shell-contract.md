@@ -61,6 +61,15 @@ new platform.
    operation pipeline / chosen config). Settings are *configuration*, never clipboard
    *content* — persisting content is forbidden (see
    [privacy-and-data-handling](privacy-and-data-handling.md)).
+   **Numeric settings are typo/corruption-shaped input**: any arithmetic on a
+   user-controlled value (size thresholds, intervals) must be clamped or saturating
+   *at the point of use* — mirroring the core's saturating growth-product discipline
+   (DESIGN.md D14 / `saturating_growth_product`) — and unit-tested at the extremes
+   (zero, negative, the type's max). The lesson is from a real finding: the macOS
+   paste-as-file threshold was floored but not capped, so a 16-digit typed KB value
+   overflow-trapped `* 1024` on every strip (caught in PR #33's review; the
+   `Int.max` regression test in `SettingsTests` now blocks the class for that
+   field — give new fields the same treatment).
 7. **Calling the core.** Link the FFI staticlib and call the four C symbols:
    `ss_abi_version` (negotiate), `ss_capabilities_json` (discover supported ops —
    don't hardcode them), `ss_transform` (read → transform), and `ss_buffer_free`
