@@ -79,3 +79,19 @@ Nothing here is committed scope; it's a memory aid for the next maintainer.
   branches where a false-green hides. The highest-risk parser (`classify_ignore_line`) now
   has a unit test; the broader gap remains. Consider a scoped mutation/coverage pass over
   `xtask` (or at least unit tests for each check's failure branch). (0013 → D-6 review finding)
+- **Anti-slop parity for the Swift macOS shell.** Exec plan 0013's new gates are
+  Rust/cargo-specific (`[workspace.lints]`/`clippy.toml`, `check-unused-deps`,
+  `check-test-hygiene` (scans `.rs` only), `check-docs`/`missing_docs`, `check-coverage`,
+  `check-mutants`), so the ~3.2k-LOC Swift shell (`shells/macos/`) has no linter, dead-code,
+  complexity, coverage, mutation, or test-hygiene gate, and `swift test` runs only locally
+  (`build.sh`), never in CI — CI does a best-effort `swift build` compile smoke only. (The
+  security posture *is* enforced cross-language: `check-no-content-logging` and
+  `check-clipboard-safety` already scan `shells/macos/Sources` `.swift` files, alongside
+  `check-c-ffi-surface` and the entitlements checks.) To close it in-doctrine, add a
+  **best-effort** tier (like the existing `macos-shell` job, `continue-on-error` since CI
+  runners may lack full Xcode): `swift format lint` + SwiftLint (style/complexity),
+  `periphery` (dead code), Swift coverage via llvm-cov, and run `swift test` in CI — fronted
+  by an `xtask` check so local == CI. Deferred because the shell is comparatively thin
+  OS-glue (the security-critical transform logic lives in the gated Rust core) and the repo
+  defers tooling expansion until growth; revisit when a second platform shell lands or the
+  Swift surface grows. (0013 → cross-language follow-up)
