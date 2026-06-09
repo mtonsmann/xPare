@@ -53,3 +53,22 @@ Nothing here is committed scope; it's a memory aid for the next maintainer.
   the Settings window's "Manual order" mode provides drag-to-reorder for exact control.
 - ~~**Measured throughput for `defang` / `clean_urls`.**~~ Done — the throughput
   harness (`make perf`) now measures the new ops alongside the existing pipeline.
+
+## From exec-plan 0013 — anti-slop code & test hygiene
+
+- **`cargo-public-api` snapshot gate.** Freeze `core`'s public API surface and diff it in
+  CI (like the frozen C header). Deferred because `cargo-public-api` needs a pinned
+  *nightly* rustdoc and its output drifts across toolchains — a brittle, nightly-dependent
+  required gate fights the repo's determinism ethos, and the concern (dangling `pub`
+  surface) is already covered by `unreachable_pub` + `dead_code` + the frozen FFI
+  `check-abi` + mutation testing. (0013 → D-2)
+- **`lychee` markdown link-checking.** Catch dead links in `docs/`. Deferred because
+  external URLs flake (network-dependent, non-deterministic); only internal/relative-link
+  checking would be worth a gate, and its value is low next to `check-docs` (which already
+  catches broken intra-doc links in Rust). (0013 → D-4)
+- **Mutation-testing parallelism tuning.** `check-mutants` runs local at `-j <cores>`
+  ("hammer the box"); the first full-tree run at `-j 10` produced contention-spurious
+  timeouts. Mitigated by the `timeout_multiplier = 5` / `minimum_test_timeout = 60` in
+  `.cargo/mutants.toml` (subsequent `-j 6` runs were clean). If `-j <cores>` ever
+  spurious-times-out again, cap per-job test threads (so jobs × test-threads ≈ cores)
+  rather than lowering `-j`. (0013 → D-5)
