@@ -39,7 +39,7 @@ struct ClipboardMonitorTests {
         let pb = FakePasteboard()
         var fireCount = 0
         let monitor = ClipboardMonitor(pasteboard: pb) { fireCount += 1 }
-        monitor.start(intervalMs: 1000) // long interval; we drive poll() by hand
+        monitor.start(intervalMs: 1000)  // long interval; we drive poll() by hand
         defer { monitor.stop() }
 
         // No change yet.
@@ -67,7 +67,7 @@ struct ClipboardMonitorTests {
         let pb = FakePasteboard()
         let monitor = ClipboardMonitor(pasteboard: pb) {}
         monitor.start(intervalMs: 50)
-        monitor.start(intervalMs: 50) // restarts; previous timer invalidated
+        monitor.start(intervalMs: 50)  // restarts; previous timer invalidated
         #expect(monitor.isRunning)
         monitor.stop()
         #expect(!monitor.isRunning)

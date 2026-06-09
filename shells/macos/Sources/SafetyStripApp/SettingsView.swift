@@ -20,10 +20,13 @@ struct SettingsView: View {
             }
 
             Section("Defang") {
-                Picker("Bracket style", selection: Binding(
-                    get: { model.defangStyle },
-                    set: { model.setDefangStyle($0) }
-                )) {
+                Picker(
+                    "Bracket style",
+                    selection: Binding(
+                        get: { model.defangStyle },
+                        set: { model.setDefangStyle($0) }
+                    )
+                ) {
                     Text("Square  [.]").tag(BracketStyle.square)
                     Text("Round  (.)").tag(BracketStyle.round)
                 }
@@ -39,10 +42,12 @@ struct SettingsView: View {
             // control), so they're intentionally not duplicated here.
 
             Section("Pipeline order") {
-                Toggle("Manual order (drag to arrange)", isOn: Binding(
-                    get: { model.isManualOrder },
-                    set: { model.setManualOrder($0) }
-                ))
+                Toggle(
+                    "Manual order (drag to arrange)",
+                    isOn: Binding(
+                        get: { model.isManualOrder },
+                        set: { model.setManualOrder($0) }
+                    ))
                 if model.isManualOrder {
                     if model.settings.operations.isEmpty {
                         Text("No operations enabled yet — turn some on in the menu.")
@@ -58,10 +63,12 @@ struct SettingsView: View {
                         .frame(minHeight: 140)
                     }
                 } else {
-                    Text("Operations run in the recommended canonical order (correct and "
-                        + "efficient). Turn on manual order to arrange them yourself.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Text(
+                        "Operations run in the recommended canonical order (correct and "
+                            + "efficient). Turn on manual order to arrange them yourself."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
             }
         }
@@ -79,15 +86,20 @@ private struct ParamRow: View {
 
     var body: some View {
         HStack {
-            Toggle(kind.label, isOn: Binding(
-                get: { model.paramEnabled(kind) },
-                set: { model.setParam(kind, enabled: $0, value: model.paramValue(kind)) }
-            ))
+            Toggle(
+                kind.label,
+                isOn: Binding(
+                    get: { model.paramEnabled(kind) },
+                    set: { model.setParam(kind, enabled: $0, value: model.paramValue(kind)) }
+                ))
             Spacer(minLength: 8)
-            TextField("value", text: Binding(
-                get: { model.paramValue(kind) },
-                set: { model.setParam(kind, enabled: model.paramEnabled(kind), value: $0) }
-            ))
+            TextField(
+                "value",
+                text: Binding(
+                    get: { model.paramValue(kind) },
+                    set: { model.setParam(kind, enabled: model.paramEnabled(kind), value: $0) }
+                )
+            )
             .textFieldStyle(.roundedBorder)
             .frame(width: 150)
             .disabled(!model.paramEnabled(kind))

@@ -22,7 +22,7 @@ import Foundation
         let obj = try JSONSerialization.jsonObject(with: Data(caps.utf8))
         let dict = try #require(obj as? [String: Any])
         #expect(dict["config_version"] as? Int == Int(TransformConfig.schemaVersion))
-        #expect(dict["operations"] as? [Any] != nil)
+        #expect(dict["operations"] is [Any])
     }
 
     @Test func stripHtmlAndCollapseWhitespace() throws {
@@ -65,6 +65,26 @@ import Foundation
         #expect(throws: TransformError.invalidConfig) {
             try transformer.transform("x", configJSON: "not json")
         }
+    }
+
+    @Test func inputAboveTheCoreCeilingThrowsInputTooLarge() {
+        // One byte past the core's hard backstop must map to the ABI's too-large status.
+        let oversized = String(repeating: "a", count: Transformer.coreMaxInputBytes + 1)
+        #expect(throws: TransformError.inputTooLarge) {
+            try transformer.transform(oversized, config: TransformConfig())
+        }
+    }
+
+    @Test func everyErrorHasANonEmptyDescription() {
+        let all: [TransformError] = [
+            .nullArgument, .invalidConfig, .internalError, .inputTooLarge,
+            .unknownStatus(42), .missingOutputBuffer, .encodingFailed, .decodingFailed,
+        ]
+        for err in all {
+            #expect(!err.description.isEmpty)
+        }
+        // Spot-check that the raw status is interpolated into the message.
+        #expect(TransformError.unknownStatus(42).description.contains("42"))
     }
 
     @Test func manyTransformsDoNotLeakOrCrash() throws {

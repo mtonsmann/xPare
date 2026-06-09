@@ -1,0 +1,76 @@
+# SwiftLint configuration for the SafetyStrip macOS shell.
+#
+# Scope and intent
+# ----------------
+# This is the *style + complexity* half of the Swift anti-slop tier (the formatting
+# half is `swift format lint`, driven by `.swift-format`). `cargo xtask check-swift`
+# runs `swiftlint lint` (NOT `--strict`) only when the `swiftlint` binary is on PATH
+# — so warnings are advisory and the gate FAILS only on `error`-severity findings.
+# That fits its role: swift-format (strict), `swift test`, and the 95% coverage floor
+# are the hard gates; SwiftLint is a backstop against egregious complexity/length slop.
+#
+# The size/complexity error thresholds below are set as a *ratchet baseline*: generous
+# enough that the current code is error-clean, tight enough that runaway growth trips
+# them. Lower them as the code is refactored; treat the warning level as the real target.
+# Keep the rule surface to widely-supported keys so the config doesn't break across
+# SwiftLint releases.
+
+included:
+  - Sources
+  - Tests
+
+excluded:
+  - .build
+  - .swiftpm
+
+# Rules we deliberately turn off. These fight swift-format (which already owns
+# formatting) or are noise on a small SwiftUI/AppKit shell.
+disabled_rules:
+  - trailing_whitespace        # owned by swift-format
+  - opening_brace              # owned by swift-format (brace placement)
+  - todo                       # TODO/FIXME tracking is a review concern, not a lint gate
+  - trailing_comma             # owned by swift-format (multiElementCollectionTrailingCommas)
+
+# Long lines (e.g. exact-JSON test fixtures, descriptive #expect messages) warn but do
+# not fail the gate; an absurdly long line still errors.
+line_length:
+  warning: 100
+  error: 200
+  ignores_comments: true
+  ignores_urls: true
+
+# A SwiftUI `body`/Settings builder and the wire-format encode/decode switch run higher
+# than the default-12 complexity by nature (flat builders / one arm per Operation), so the
+# error bar sits above them; the warning still flags genuinely tangled control flow.
+cyclomatic_complexity:
+  warning: 12
+  error: 30
+
+# The SwiftUI app view and the controller/test suites are legitimately large; error only
+# on runaway files/types, warn earlier.
+type_body_length:
+  warning: 320
+  error: 650
+
+file_length:
+  warning: 520
+  error: 900
+  ignore_comment_only_lines: true
+
+function_body_length:
+  warning: 60
+  error: 120
+
+# Local UI code uses a few 3-member tuples; 3 is allowed, 4+ warns.
+large_tuple:
+  warning: 3
+  error: 4
+
+# Allow short, conventional identifiers (e.g. `c` for a Codable container, `id`).
+identifier_name:
+  min_length: 1
+  excluded:
+    - id
+    - c
+    - x
+    - y

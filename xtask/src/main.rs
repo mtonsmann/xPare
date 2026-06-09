@@ -27,6 +27,8 @@
 //!   check-kani          run the bounded Kani proofs over the resource-envelope arithmetic
 //!   check-coverage      line-coverage floor (best-effort; heavy; outside `ci`)
 //!   check-mutants       cargo-mutants; `SS_DIFF_BASE` scopes to a diff (best-effort; outside `ci`)
+//!   check-swift         macOS shell anti-slop: swift-format lint + swift test + coverage floor
+//!                       (+ SwiftLint if present); best-effort, macOS-only, outside `ci`
 //!   ci                  run fmt --check, clippy -D warnings, test, and all the above
 //!
 //! Every check exits nonzero on violation with a remediation-oriented message so a
@@ -62,6 +64,7 @@ fn main() -> ExitCode {
         Some("check-kani") => report(check_kani()),
         Some("check-coverage") => report(check_coverage()),
         Some("check-mutants") => report(check_mutants()),
+        Some("check-swift") => report(check_swift()),
         Some("ci") => run_ci(),
         Some(other) => {
             eprintln!("xtask: unknown subcommand '{other}'");
@@ -102,6 +105,7 @@ fn usage() {
          \x20 check-kani           run the bounded Kani proofs over the resource-envelope arithmetic\n\
          \x20 check-coverage       line-coverage floor (best-effort; heavy; outside `ci`)\n\
          \x20 check-mutants        cargo-mutants; SS_DIFF_BASE=<ref> scopes to a diff (best-effort; outside `ci`)\n\
+         \x20 check-swift          macOS shell: swift-format lint + swift test + coverage (+ SwiftLint if present)\n\
          \x20 ci                   fmt + clippy + test + every structural & external check"
     );
 }
@@ -2045,6 +2049,18 @@ fn check_kani() -> Result<(), String> {
 /// because proptest explores fresh inputs each run, so keep a margin above the floor.
 const COVERAGE_FLOOR_PCT: u32 = 95;
 
+/// Sources-only line-coverage floor for `check-swift`, as a percent. Same ratchet
+/// discipline as [`COVERAGE_FLOOR_PCT`]: raise it (never lower it) as the shell's tests
+/// improve. Matches the Rust product floor (95%) — the OS-facing layers are tested
+/// headlessly: `SystemPasteboard` against an app-private `NSPasteboard(name:)`, and the
+/// Carbon hot-key trampoline by invoking it with a synthesized `kEventHotKeyPressed` event.
+/// (The `SafetyStripApp` SwiftUI target is the only unmeasured Swift: it's an executable,
+/// not linked into the test bundle — the analog of the Rust binary crates the workspace
+/// floor doesn't gate on.) Measured Sources-only baseline at this floor was ~95.8% lines
+/// (Tests/ and the derived test runner are excluded); the floor sits just under so a
+/// refactor doesn't spuriously trip it.
+const SWIFT_COVERAGE_FLOOR_PCT: f64 = 95.0;
+
 /// Ensure the `llvm-tools` rustup component (the instrumentation runtime cargo-llvm-cov
 /// needs) is installed, adding it on demand the same way `check-miri` bootstraps `miri`.
 fn ensure_llvm_tools() -> Result<(), String> {
@@ -2206,6 +2222,366 @@ fn check_mutants() -> Result<(), String> {
                 .to_string(),
         )
     }
+}
+
+// ---------------------------------------------------------------------------
+// check-swift
+// ---------------------------------------------------------------------------
+//
+// Anti-slop parity for the Swift macOS shell. The §13 anti-slop gates are
+// Rust/cargo-specific (clippy, the `[workspace.lints]`, cargo-llvm-cov, cargo-mutants,
+// the `.rs`-only check-test-hygiene), so `shells/macos/` had no linter/coverage/test
+// gate and its tests ran only locally. This is the cross-language analog:
+//   * swift-format lint (style/format) — toolchain-native, deterministic; a HARD gate.
+//   * swift test                       — runs the shell's tests in CI, not just locally.
+//   * Sources-only line-coverage floor — via llvm-cov; a HARD ratchet (SWIFT_COVERAGE_FLOOR_PCT).
+//   * SwiftLint (style/complexity)     — OPTIONAL, run-if-present: SwiftLint has no
+//                                        SHA-pinned install path like the rest of the repo's
+//                                        tooling, so we don't add it to CI; it runs for devs
+//                                        who have it, and skips with a note otherwise.
+//
+// Best-effort and macOS-only: the required suite is the Linux `cargo xtask ci`. This check is
+// invoked by the `macos-shell` CI job (continue-on-error) and skips cleanly where the Swift
+// toolchain is absent. Fronted by xtask so local == CI.
+
+/// The macOS shell package, relative to the workspace root.
+const SWIFT_SHELL_DIR: &str = "shells/macos";
+
+/// CommandLineTools-only environments (no full Xcode) don't put swift-testing's
+/// `Testing.framework` / interop dylib on the default search path; these `-F`/`-rpath`
+/// flags let `swift test` load them. With full Xcode the dirs are absent and we add
+/// nothing (Xcode resolves them itself). Mirrors `shells/macos/build.sh`.
+const CLT_FRAMEWORKS_DIR: &str = "/Library/Developer/CommandLineTools/Library/Developer/Frameworks";
+const CLT_INTEROP_DIR: &str = "/Library/Developer/CommandLineTools/Library/Developer/usr/lib";
+
+/// Extra `swift test` flags so the test bundle finds swift-testing under CLT-only hosts.
+fn swift_test_runtime_flags() -> Vec<String> {
+    let mut flags: Vec<String> = Vec::new();
+    if std::path::Path::new(CLT_FRAMEWORKS_DIR).is_dir() {
+        flags.extend(
+            [
+                "-Xswiftc",
+                "-F",
+                "-Xswiftc",
+                CLT_FRAMEWORKS_DIR,
+                "-Xlinker",
+                "-rpath",
+                "-Xlinker",
+                CLT_FRAMEWORKS_DIR,
+            ]
+            .into_iter()
+            .map(String::from),
+        );
+    }
+    if std::path::Path::new(CLT_INTEROP_DIR).is_dir() {
+        flags.extend(
+            ["-Xlinker", "-rpath", "-Xlinker", CLT_INTEROP_DIR]
+                .into_iter()
+                .map(String::from),
+        );
+    }
+    flags
+}
+
+// llvm-cov `export -summary-only` JSON model (only the field we read).
+#[derive(serde::Deserialize)]
+struct LlvmCovExport {
+    data: Vec<LlvmCovData>,
+}
+#[derive(serde::Deserialize)]
+struct LlvmCovData {
+    totals: LlvmCovTotals,
+}
+#[derive(serde::Deserialize)]
+struct LlvmCovTotals {
+    lines: LlvmCovMetric,
+}
+#[derive(serde::Deserialize)]
+struct LlvmCovMetric {
+    percent: f64,
+}
+
+/// Extract the line-coverage percent from `llvm-cov export -summary-only` JSON.
+fn parse_llvm_cov_lines_percent(json: &str) -> Result<f64, String> {
+    let export: LlvmCovExport = serde_json::from_str(json)
+        .map_err(|e| format!("could not parse llvm-cov export JSON: {e}"))?;
+    let first = export
+        .data
+        .first()
+        .ok_or_else(|| "llvm-cov export JSON had no `data` entries".to_string())?;
+    Ok(first.totals.lines.percent)
+}
+
+/// Pure pass/fail verdict for a measured coverage percent against the floor. Factored out
+/// so the ratchet is unit-tested without an instrumented build (matching how the Rust
+/// checks keep their parsing/decision logic testable).
+fn swift_coverage_verdict(percent: f64, floor: f64) -> Result<(), String> {
+    // Small epsilon so a value sitting exactly on the floor isn't tripped by float repr.
+    if percent + 1e-9 >= floor {
+        Ok(())
+    } else {
+        Err(format!(
+            "check-swift: FAIL — macOS shell Sources line coverage {percent:.2}% is below the \
+             {floor:.1}% floor.\n\
+             \n\
+             New Swift code landed without tests exercising it. Add tests for the uncovered\n\
+             lines in shells/macos/Tests. Only raise SWIFT_COVERAGE_FLOOR_PCT in\n\
+             xtask/src/main.rs when coverage genuinely improves — the floor is a ratchet that\n\
+             moves up, never down."
+        ))
+    }
+}
+
+/// Find the SwiftPM test bundle's executable: `<dir>/<Name>.xctest/Contents/MacOS/<Name>`.
+fn find_xctest_binary(debug_dir: &std::path::Path) -> Option<PathBuf> {
+    for entry in std::fs::read_dir(debug_dir).ok()?.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|x| x.to_str()) == Some("xctest") {
+            let stem = path.file_stem()?.to_owned();
+            let bin = path.join("Contents").join("MacOS").join(&stem);
+            if bin.is_file() {
+                return Some(bin);
+            }
+        }
+    }
+    None
+}
+
+/// Phase 1 (HARD): toolchain-native `swift format lint`, strict.
+fn check_swift_format(swift: &std::path::Path, shell: &std::path::Path) -> Result<(), String> {
+    println!(
+        "check-swift: $ swift format lint --strict --recursive --configuration .swift-format \
+         Sources Tests"
+    );
+    let status = Command::new(swift)
+        .args([
+            "format",
+            "lint",
+            "--strict",
+            "--recursive",
+            "--configuration",
+            ".swift-format",
+            "Sources",
+            "Tests",
+        ])
+        .current_dir(shell)
+        .status()
+        .map_err(|e| format!("check-swift: FAIL — could not launch `swift format`: {e}"))?;
+    if status.success() {
+        println!("check-swift: swift-format lint clean.");
+        Ok(())
+    } else {
+        Err(
+            "check-swift: FAIL — `swift format lint` found style violations.\n\
+             Fix them mechanically with:\n\
+             \x20 swift format --in-place --recursive --configuration shells/macos/.swift-format \
+             shells/macos/Sources shells/macos/Tests\n\
+             Do not loosen shells/macos/.swift-format to silence the gate."
+                .to_string(),
+        )
+    }
+}
+
+/// Phase 2: build the FFI staticlib the Swift package links over the frozen C ABI.
+fn swift_build_ffi_staticlib() -> Result<(), String> {
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+    println!("check-swift: $ {cargo} build -p safetystrip-ffi --release");
+    let status = Command::new(&cargo)
+        .args(["build", "-p", "safetystrip-ffi", "--release"])
+        .current_dir(workspace_root())
+        .status()
+        .map_err(|e| format!("check-swift: FAIL — could not launch `cargo build`: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(
+            "check-swift: FAIL — building the FFI staticlib (`cargo build -p safetystrip-ffi \
+             --release`) failed; the Swift package links it over the frozen C ABI."
+                .to_string(),
+        )
+    }
+}
+
+/// Measure Sources-only line coverage from the just-run instrumented test build. Returns
+/// `Ok(None)` if the coverage toolchain (`xcrun llvm-cov`) isn't available — best-effort, so
+/// a host without it still gets the test-pass signal.
+fn measure_swift_coverage(
+    swift: &std::path::Path,
+    shell: &std::path::Path,
+) -> Result<Option<f64>, String> {
+    // SwiftPM tells us where the exported coverage JSON lives; its directory also holds
+    // default.profdata, and the parent (debug) dir holds the .xctest bundle. Deriving paths
+    // this way avoids hard-coding the target triple (arm64/x86_64-apple-macosx).
+    let cov_path_out = Command::new(swift)
+        .args(["test", "--show-code-coverage-path"])
+        .current_dir(shell)
+        .output()
+        .map_err(|e| format!("check-swift: FAIL — could not query coverage path: {e}"))?;
+    if !cov_path_out.status.success() {
+        return Err(
+            "check-swift: FAIL — `swift test --show-code-coverage-path` failed.".to_string(),
+        );
+    }
+    let cov_json_raw = String::from_utf8_lossy(&cov_path_out.stdout)
+        .trim()
+        .to_string();
+    let cov_json = std::path::Path::new(&cov_json_raw);
+    let codecov_dir = cov_json
+        .parent()
+        .ok_or_else(|| "check-swift: FAIL — coverage path had no parent directory.".to_string())?;
+    let debug_dir = codecov_dir
+        .parent()
+        .ok_or_else(|| "check-swift: FAIL — could not locate the SwiftPM debug dir.".to_string())?;
+    let profdata = codecov_dir.join("default.profdata");
+
+    let Some(test_binary) = find_xctest_binary(debug_dir) else {
+        return Err(format!(
+            "check-swift: FAIL — could not find the .xctest bundle binary under {}.",
+            debug_dir.display()
+        ));
+    };
+
+    // xcrun fronts llvm-cov from the active toolchain. Absent (no Xcode/CLT) => best-effort skip.
+    let Some(xcrun) = resolve_tool("xcrun") else {
+        return Ok(None);
+    };
+
+    // Sources-only: exclude the test files and the SwiftPM-derived test runner so the floor
+    // measures product code, not the tests measuring themselves.
+    let ignore = r"(/Tests/|\.derived/|/\.build/)";
+    let bin = test_binary.to_string_lossy();
+    let prof = profdata.to_string_lossy();
+    println!(
+        "check-swift: $ xcrun llvm-cov export <test-bin> -instr-profile <profdata> \
+         -ignore-filename-regex='{ignore}' -summary-only"
+    );
+    let out = Command::new(&xcrun)
+        .args([
+            "llvm-cov",
+            "export",
+            bin.as_ref(),
+            "-instr-profile",
+            prof.as_ref(),
+            "-ignore-filename-regex",
+            ignore,
+            "-summary-only",
+        ])
+        .current_dir(shell)
+        .output()
+        .map_err(|e| format!("check-swift: FAIL — could not launch `xcrun llvm-cov`: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "check-swift: FAIL — `xcrun llvm-cov export` failed:\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+    let json = String::from_utf8_lossy(&out.stdout);
+    let percent =
+        parse_llvm_cov_lines_percent(&json).map_err(|e| format!("check-swift: FAIL — {e}"))?;
+    Ok(Some(percent))
+}
+
+/// Phase 3 (HARD): run the shell's tests, then enforce the Sources coverage floor.
+fn check_swift_tests_and_coverage(
+    swift: &std::path::Path,
+    shell: &std::path::Path,
+) -> Result<(), String> {
+    let mut args: Vec<String> = vec!["test".to_string(), "--enable-code-coverage".to_string()];
+    args.extend(swift_test_runtime_flags());
+    println!("check-swift: $ swift {}", args.join(" "));
+    let status = Command::new(swift)
+        .args(&args)
+        .current_dir(shell)
+        .status()
+        .map_err(|e| format!("check-swift: FAIL — could not launch `swift test`: {e}"))?;
+    if !status.success() {
+        return Err(
+            "check-swift: FAIL — `swift test` reported failing test(s) in the macOS shell."
+                .to_string(),
+        );
+    }
+    println!("check-swift: swift test passed; measuring Sources line coverage…");
+
+    match measure_swift_coverage(swift, shell)? {
+        Some(percent) => {
+            println!(
+                "check-swift: Sources line coverage = {percent:.2}% \
+                 (floor {SWIFT_COVERAGE_FLOOR_PCT:.1}%)."
+            );
+            swift_coverage_verdict(percent, SWIFT_COVERAGE_FLOOR_PCT)
+        }
+        None => {
+            println!(
+                "check-swift: coverage tooling (`xcrun llvm-cov`) unavailable — skipping the \
+                 coverage floor (tests still passed)."
+            );
+            Ok(())
+        }
+    }
+}
+
+/// Phase 4 (OPTIONAL): SwiftLint style/complexity, run only if `swiftlint` is on PATH.
+/// Not `--strict`: warnings are advisory and only `error`-severity findings fail the gate
+/// (thresholds are tuned in `.swiftlint.yml` so the current code is error-clean). SourceKit
+/// is disabled for determinism — a CLT-only host (no full Xcode) crashes trying to load
+/// `sourcekitdInProc`, so we skip the handful of SourceKit-dependent rules and behave
+/// identically locally and in CI.
+fn check_swift_lint_if_present(shell: &std::path::Path) -> Result<(), String> {
+    let Some(swiftlint) = resolve_tool("swiftlint") else {
+        println!(
+            "check-swift: `swiftlint` not on PATH — skipping the optional style/complexity pass \
+             (enable it locally with `brew install swiftlint`; CI installs a pinned, \
+             checksum-verified build). swift-format + tests + coverage above are the enforced \
+             gates."
+        );
+        return Ok(());
+    };
+    println!("check-swift: $ SWIFTLINT_DISABLE_SOURCEKIT=1 swiftlint lint --config .swiftlint.yml");
+    let status = Command::new(&swiftlint)
+        .args(["lint", "--config", ".swiftlint.yml"])
+        .env("SWIFTLINT_DISABLE_SOURCEKIT", "1")
+        .current_dir(shell)
+        .status()
+        .map_err(|e| format!("check-swift: FAIL — could not launch `swiftlint`: {e}"))?;
+    if status.success() {
+        println!("check-swift: SwiftLint clean (no error-severity findings).");
+        Ok(())
+    } else {
+        Err(
+            "check-swift: FAIL — SwiftLint reported error-severity style/complexity violations. \
+             Fix them, or for a genuine false positive add a scoped `// swiftlint:disable` with a \
+             reason (or tune a threshold in shells/macos/.swiftlint.yml)."
+                .to_string(),
+        )
+    }
+}
+
+/// check-swift: the macOS shell anti-slop tier. See the module comment above for the
+/// gate/skip contract.
+fn check_swift() -> Result<(), String> {
+    let root = workspace_root();
+    let shell = root.join(SWIFT_SHELL_DIR);
+    if !shell.join("Package.swift").is_file() {
+        println!("check-swift: {SWIFT_SHELL_DIR}/Package.swift not present; nothing to check.");
+        return Ok(());
+    }
+    // macOS-only, best-effort: the required gate is the Linux `cargo xtask ci`. If the Swift
+    // toolchain isn't here (e.g. the Linux CI host), skip cleanly rather than fail.
+    let Some(swift) = resolve_tool("swift") else {
+        println!(
+            "check-swift: `swift` not found — skipping (best-effort, macOS-only gate; the required \
+             suite is `cargo xtask ci`)."
+        );
+        return Ok(());
+    };
+
+    check_swift_format(&swift, &shell)?;
+    swift_build_ffi_staticlib()?;
+    check_swift_tests_and_coverage(&swift, &shell)?;
+    check_swift_lint_if_present(&shell)?;
+
+    println!("check-swift: macOS shell anti-slop gates passed.");
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -2876,5 +3252,36 @@ mod tests {
             parse_make_rule("preview: ## help text"),
             Some(("preview", ""))
         );
+    }
+
+    // ---- check-swift -------------------------------------------------------
+
+    #[test]
+    fn llvm_cov_lines_percent_is_read_from_export_json() {
+        // Shape of `llvm-cov export -summary-only`: data[0].totals.lines.percent.
+        let json = r#"{"data":[{"totals":{"lines":{"count":780,"covered":608,"percent":77.95}}}],"type":"llvm.coverage.json.export","version":"2.0.1"}"#;
+        let pct = parse_llvm_cov_lines_percent(json).unwrap();
+        assert!((pct - 77.95).abs() < 1e-9);
+    }
+
+    #[test]
+    fn llvm_cov_export_with_no_data_is_an_error() {
+        assert!(parse_llvm_cov_lines_percent(r#"{"data":[]}"#).is_err());
+        assert!(parse_llvm_cov_lines_percent("not json").is_err());
+    }
+
+    #[test]
+    fn swift_coverage_verdict_ratchets_on_the_floor() {
+        // Above and exactly-on the floor pass; below fails.
+        assert!(swift_coverage_verdict(80.0, 75.0).is_ok());
+        assert!(swift_coverage_verdict(75.0, 75.0).is_ok());
+        assert!(swift_coverage_verdict(74.9, 75.0).is_err());
+    }
+
+    #[test]
+    fn swift_coverage_floor_is_at_or_below_the_measured_baseline() {
+        // The floor must sit under the ~95.8% Sources baseline measured at introduction,
+        // or every run trips it. Guards against an accidental bump above reality.
+        const { assert!(SWIFT_COVERAGE_FLOOR_PCT <= 95.8) }
     }
 }

@@ -114,8 +114,8 @@ extension Operation: Codable {
         try c.encode(opTag, forKey: .op)
         switch self {
         case .stripHtml, .stripMarkdown, .htmlToMarkdown, .collapseWhitespace,
-             .trimTrailingWhitespace, .removeBlankLines, .unwrapLines,
-             .dedupeLines, .extractEmails, .extractUrls, .refang, .cleanUrls:
+            .trimTrailingWhitespace, .removeBlankLines, .unwrapLines,
+            .dedupeLines, .extractEmails, .extractUrls, .refang, .cleanUrls:
             // No payload — the `op` tag is the whole object.
             break
         case .defang(let style):
@@ -216,9 +216,11 @@ public struct TransformConfig: Codable, Equatable, Sendable {
     /// Defaults to ``Ordering/canonical`` (matches the core's serde default).
     public var ordering: Ordering
 
-    public init(version: UInt32 = TransformConfig.schemaVersion,
-                operations: [Operation] = [],
-                ordering: Ordering = .canonical) {
+    public init(
+        version: UInt32 = TransformConfig.schemaVersion,
+        operations: [Operation] = [],
+        ordering: Ordering = .canonical
+    ) {
         self.version = version
         self.operations = operations
         self.ordering = ordering
