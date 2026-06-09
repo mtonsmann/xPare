@@ -62,6 +62,27 @@ fn defang_bare_domain() {
     assert_eq!(defang("example.com", SQ), "example[.]com");
 }
 
+// is_bare_domain boundary coverage (mutation-survivor regressions): the TLD-length,
+// edge-hyphen, and allowed-label-byte rules each gate whether a token is treated as a
+// bare domain at all. Without these a `<`->`<=`, `||`->`&&`, or `==`->`!=` slip silently.
+#[test]
+fn defang_bare_domain_two_char_tld() {
+    // TLD length must be >= 2: a 2-char TLD is still a domain and must be defanged.
+    assert_eq!(defang("example.io", SQ), "example[.]io");
+}
+
+#[test]
+fn defang_label_with_edge_hyphen_is_not_a_domain() {
+    // A label may not start or end with '-', so this is not a bare domain -> left verbatim.
+    assert_eq!(defang("bad-.example.com", SQ), "bad-.example.com");
+}
+
+#[test]
+fn defang_label_with_non_alnum_byte_is_not_a_domain() {
+    // Labels are ASCII alphanumeric or '-' only; an '_' disqualifies it -> left verbatim.
+    assert_eq!(defang("ex_ample.com", SQ), "ex_ample.com");
+}
+
 #[test]
 fn defang_mixed_prose_touches_only_the_indicator() {
     assert_eq!(
