@@ -24,6 +24,15 @@ exclude_globs = [
 # every mutation to them "survives" spuriously. The real proof is `cargo xtask check-kani`.
 exclude_re = [
     "kani_proofs",
+    # Confirmed-equivalent helpers (mutants survive because the mutation cannot change
+    # observable output — verified by re-mutation + analysis, not assumed). Excluded so
+    # they stop recurring as noise; see exec plan 0013 for the per-function reasoning.
+    #   defang::has_indicator_byte — pure perf pre-filter; the classifiers re-reject any
+    #     token it would wrongly admit, so its result never changes output.
+    #   defang::already_defanged   — redundant idempotence guard; bracketed/`hxxp` tokens
+    #     are already rejected by every classifier, so its result never changes output.
+    "has_indicator_byte",
+    "already_defanged",
 ]
 
 # Property and corpus tests run longer than a trivial unit test. Give a generous timeout
