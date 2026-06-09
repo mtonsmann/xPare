@@ -15,6 +15,10 @@ public enum StripTrigger: Equatable, Sendable {
 public enum StripOutcome: Equatable, Sendable {
     /// Pasteboard was read, transformed, and (if changed) rewritten in place.
     case stripped(changed: Bool)
+    /// Paste-as-file (opt-in) kicked in: the transformed result exceeded the
+    /// user's threshold and the pasteboard now holds a file reference instead
+    /// of the raw string. Carries no clipboard content.
+    case strippedToFile
     /// Nothing text-like was on the pasteboard.
     case empty
     /// The core rejected the input or config.
@@ -42,6 +46,9 @@ public final class StripController {
     private let pasteboard: PasteboardProtocol
     private let transformer: any Transforming
     private let defaults: UserDefaults
+    /// Owns the single transient file behind the opt-in paste-as-file feature —
+    /// the sanctioned content-persistence exception (see ``PasteFileStore``).
+    private let pasteFileStore: any PasteFileWriting
     /// Largest clipboard (in UTF-8 bytes) this controller will hand to the core.
     /// See ``defaultMaxInputBytes()``.
     private let maxInputBytes: Int
@@ -52,6 +59,11 @@ public final class StripController {
     private var monitor: ClipboardMonitor?
     private var hotkey: HotkeyManager?
     private var lastSelfWriteChangeCount: Int?
+    /// The pasteboard generation of our last file-URL write, while the paste
+    /// file still exists. The file is referenced by the pasteboard iff
+    /// `pasteboard.changeCount` still equals this; once it differs, the file is
+    /// stale and is deleted on the next strip (best-effort lifetime minimization).
+    private var pasteFileChangeCount: Int?
     private var continuousStripInFlight = false
     private var continuousStripPending = false
 
@@ -69,13 +81,15 @@ public final class StripController {
         transformer: any Transforming = Transformer(),
         defaults: UserDefaults = .standard,
         maxInputBytes: Int = StripController.defaultMaxInputBytes(),
-        busyThreshold: Duration = .milliseconds(400)
+        busyThreshold: Duration = .milliseconds(400),
+        pasteFileStore: any PasteFileWriting = PasteFileStore()
     ) {
         self.pasteboard = pasteboard
         self.transformer = transformer
         self.defaults = defaults
         self.maxInputBytes = maxInputBytes
         self.busyThreshold = busyThreshold
+        self.pasteFileStore = pasteFileStore
         self.settings = settings ?? Settings.load(from: defaults)
     }
 
@@ -97,12 +111,18 @@ public final class StripController {
     /// hotkey and, if in continuous mode, start the monitor. Tear down anything
     /// not needed by the current mode.
     public func activate() {
+        // Leftover paste files from a previous run are deleted up front, even if
+        // the pasteboard might still reference one — when in doubt, the privacy
+        // posture wins over a stale paste working.
+        pasteFileStore.removeAll()
+        pasteFileChangeCount = nil
         installHotkey()
         applyMonitorForCurrentMode()
     }
 
     /// Tear down all OS integrations (monitor timer + hotkey). After this no
-    /// timer or event handler from this controller remains live.
+    /// timer or event handler from this controller remains live, and no paste
+    /// file remains on disk.
     public func deactivate() {
         monitor?.stop()
         monitor = nil
@@ -110,6 +130,8 @@ public final class StripController {
         continuousStripPending = false
         hotkey?.unregister()
         hotkey = nil
+        pasteFileStore.removeAll()
+        pasteFileChangeCount = nil
     }
 
     /// Replace settings, persist them, and re-apply side effects so a mode or
@@ -176,6 +198,14 @@ public final class StripController {
         trigger: StripTrigger,
         makeConfig: (PasteboardSnapshot) -> TransformConfig?
     ) async -> StripOutcome {
+        // Best-effort paste-file lifetime minimization: once the pasteboard has
+        // moved past our file-URL write, nothing references the file — delete it.
+        if let fileGeneration = pasteFileChangeCount,
+           pasteboard.changeCount != fileGeneration {
+            pasteFileStore.removeAll()
+            pasteFileChangeCount = nil
+        }
+
         if trigger == .clipboardChanged,
            pasteboard.changeCount == lastSelfWriteChangeCount {
             return .stripped(changed: false)
@@ -244,6 +274,21 @@ public final class StripController {
 
         guard pasteboard.changeCount == read.changeCount else {
             return .stripped(changed: false)
+        }
+
+        // Opt-in paste-as-file: when enabled and the transformed result exceeds
+        // the user's threshold, persist it via the (sanctioned) PasteFileStore and
+        // put a file reference on the pasteboard instead of the raw string. Runs
+        // before the unchanged-skip below: an already-plain large buffer should
+        // still become a file. A failed file write falls through to the normal
+        // in-place plain write so the strip result is never lost.
+        if settings.pasteLargeAsFile,
+           output.utf8.count > settings.pasteAsFileThresholdBytes,
+           let fileURL = pasteFileStore.write(output) {
+            let generation = pasteboard.writeFileURL(fileURL)
+            lastSelfWriteChangeCount = generation
+            pasteFileChangeCount = generation
+            return .strippedToFile
         }
 
         // Only rewrite when the result actually differs from what a plain paste would

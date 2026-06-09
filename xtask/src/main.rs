@@ -1123,6 +1123,32 @@ fn flags_content_logging(line: &str) -> bool {
     line_logs_or_persists(line) && line_names_content(&line.to_ascii_lowercase())
 }
 
+/// The explicit, audited exemption for the **opt-in paste-as-file feature** — the
+/// one sanctioned place that persists clipboard-derived content (SECURITY.md,
+/// "Opt-in paste-as-file exception"). A line carrying this marker is exempt from
+/// the content scan, but only inside [`CONTENT_PERSISTENCE_ALLOWED_FILES`];
+/// anywhere else the marker's presence is itself a violation, so the exemption
+/// cannot quietly spread.
+const CONTENT_PERSISTENCE_ALLOW_MARKER: &str = "safetystrip:allow-content-persistence";
+
+/// The only shipped source files permitted to carry the allow marker.
+const CONTENT_PERSISTENCE_ALLOWED_FILES: &[&str] =
+    &["shells/macos/Sources/SafetyStripKit/PasteFileStore.swift"];
+
+/// Per-line verdict for `check-no-content-logging`, marker-aware. Returns a short
+/// reason when the line is a violation; `None` when it is clean or exempted.
+/// Pure (no I/O) so it is unit-tested directly.
+fn content_line_violation(line: &str, marker_allowed_here: bool) -> Option<&'static str> {
+    if line.contains(CONTENT_PERSISTENCE_ALLOW_MARKER) {
+        return if marker_allowed_here {
+            None
+        } else {
+            Some("carries the allow-content-persistence marker outside the allowlisted file")
+        };
+    }
+    flags_content_logging(line).then_some("appears to log or persist clipboard-derived content")
+}
+
 // ---------------------------------------------------------------------------
 // check-test-hygiene
 // ---------------------------------------------------------------------------
@@ -1257,10 +1283,12 @@ fn check_no_content_logging() -> Result<(), String> {
         let Ok(text) = std::fs::read_to_string(path) else {
             continue;
         };
+        let shown = path.strip_prefix(&root).unwrap_or(path.as_path());
+        let rel = shown.display().to_string().replace('\\', "/");
+        let marker_allowed = CONTENT_PERSISTENCE_ALLOWED_FILES.contains(&rel.as_str());
         for (i, line) in text.lines().enumerate() {
-            if flags_content_logging(line) {
-                let shown = path.strip_prefix(&root).unwrap_or(path.as_path());
-                hits.push(format!("{}:{}: {}", shown.display(), i + 1, line.trim()));
+            if let Some(reason) = content_line_violation(line, marker_allowed) {
+                hits.push(format!("{rel}:{}: {reason}: {}", i + 1, line.trim()));
             }
         }
     }
@@ -1268,7 +1296,7 @@ fn check_no_content_logging() -> Result<(), String> {
     if hits.is_empty() {
         println!(
             "check-no-content-logging: scanned {} shipped source file(s); no clipboard-content \
-             logging or persistence.",
+             logging or persistence outside the sanctioned paste-as-file store.",
             files.len()
         );
         Ok(())
@@ -1280,7 +1308,11 @@ fn check_no_content_logging() -> Result<(), String> {
              SafetyStrip must never write clipboard content to a log sink, to disk, or to user\n\
              defaults. Log fixed operational states only; persist user *settings* (operation\n\
              choices, shortcuts), never clipboard input/output/derived text. If this is a false\n\
-             positive, rename the local so the line no longer reads as logging real content.",
+             positive, rename the local so the line no longer reads as logging real content.\n\
+             The ONE sanctioned exception is the opt-in paste-as-file store\n\
+             (PasteFileStore.swift), whose sink lines carry the\n\
+             `safetystrip:allow-content-persistence` marker; that marker is honored nowhere\n\
+             else, and never silences a finding by being copied around.",
             hits.join("\n  ")
         ))
     }
@@ -2859,6 +2891,49 @@ mod tests {
         assert!(!flags_content_logging(
             "let transformed = strip(&clipboard);"
         ));
+    }
+
+    #[test]
+    fn content_persistence_marker_exempts_only_the_allowlisted_file() {
+        let sink_line = "try Data(text.utf8).write(to: url) \
+                         // safetystrip:allow-content-persistence: transformed clipboard result";
+        // In the sanctioned store file, the marker exempts the line.
+        assert_eq!(content_line_violation(sink_line, true), None);
+        // Anywhere else, carrying the marker is itself a violation — the exemption
+        // cannot be copied around to silence findings.
+        assert!(content_line_violation(sink_line, false).is_some());
+        // Even a harmless line is flagged if it smuggles the marker into a
+        // non-allowlisted file.
+        assert!(
+            content_line_violation("// safetystrip:allow-content-persistence", false).is_some()
+        );
+        // Without the marker, the ordinary scan applies regardless of file.
+        assert!(content_line_violation(
+            "UserDefaults.standard.set(clipboardText, forKey: key)",
+            true
+        )
+        .is_some());
+        assert_eq!(
+            content_line_violation("let transformed = strip(&clipboard);", false),
+            None
+        );
+    }
+
+    #[test]
+    fn content_persistence_allowlist_names_only_the_paste_file_store() {
+        // The exemption stays exactly this narrow; widening it is a posture change
+        // that must be made deliberately (and update SECURITY.md + the guardrail).
+        assert_eq!(
+            CONTENT_PERSISTENCE_ALLOWED_FILES,
+            &["shells/macos/Sources/SafetyStripKit/PasteFileStore.swift"]
+        );
+        // ...and the file it names must actually exist (rename protection).
+        assert!(
+            workspace_root()
+                .join(CONTENT_PERSISTENCE_ALLOWED_FILES[0])
+                .is_file(),
+            "allowlisted paste-as-file store is missing — update the allowlist with the move"
+        );
     }
 
     // --- check-clipboard-safety ---

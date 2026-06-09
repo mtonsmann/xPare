@@ -148,6 +148,71 @@ final class AppModel: ObservableObject {
         commit(ops)
     }
 
+    /// Case modes — off plus the four `CaseKind`s — surfaced as a single inline
+    /// Picker submenu (the Sort lines idiom: one menu line, active mode in the
+    /// title, system ✓ on the child). Mutually exclusive; on iff a non-`off`
+    /// mode is picked.
+    enum CaseMode: Hashable, CaseIterable, Identifiable {
+        case off, upper, lower, title, sentence
+        var id: Self { self }
+
+        var label: String {
+            switch self {
+            case .off: return "Off"
+            case .upper: return "UPPERCASE"
+            case .lower: return "lowercase"
+            case .title: return "Title Case"
+            case .sentence: return "Sentence case"
+            }
+        }
+
+        /// The `changeCase` parameter for this mode, or `nil` when off.
+        var kind: CaseKind? {
+            switch self {
+            case .off: return nil
+            case .upper: return .upper
+            case .lower: return .lower
+            case .title: return .title
+            case .sentence: return .sentence
+            }
+        }
+
+        init(kind: CaseKind) {
+            switch kind {
+            case .upper: self = .upper
+            case .lower: self = .lower
+            case .title: self = .title
+            case .sentence: self = .sentence
+            }
+        }
+    }
+
+    /// The selected case mode, derived from the pipeline.
+    var caseMode: CaseMode {
+        for op in settings.operations {
+            if case let .changeCase(kind) = op { return CaseMode(kind: kind) }
+        }
+        return .off
+    }
+
+    func setCaseMode(_ mode: CaseMode) {
+        var ops = settings.operations
+        guard let kind = mode.kind else {
+            ops.removeAll(where: isChangeCase) // .off → drop the op
+            commit(ops)
+            return
+        }
+        // Update in place when present (preserves pipeline position in manual
+        // order); otherwise append.
+        let newOp = SafetyStripCore.Operation.changeCase(case: kind)
+        if let idx = ops.firstIndex(where: isChangeCase) {
+            ops[idx] = newOp
+        } else {
+            ops.append(newOp)
+        }
+        commit(ops)
+    }
+
     /// Defang toggle + bracket style. Defang carries a `style`, so it needs its own
     /// presence/style accessors rather than the exact-equality `setOperation`.
     var isDefangEnabled: Bool { settings.operations.contains(where: isDefang) }
@@ -279,6 +344,76 @@ final class AppModel: ObservableObject {
         commit(ops)
     }
 
+    // MARK: - Paste large clipboards as a file (opt-in posture exception)
+
+    /// Menu modes for paste-as-file: off, or "over N KB". Presets cover the
+    /// common cases; a threshold typed in Settings appears as an extra
+    /// "(custom)" choice so the active mode always carries the system ✓.
+    enum PasteAsFileMode: Hashable, Identifiable {
+        case off
+        case over(kb: Int)
+        var id: Self { self }
+
+        /// Full label for the Picker rows.
+        var label: String {
+            switch self {
+            case .off: return "Off"
+            case .over(let kb): return "Over \(Self.sizeLabel(kb))"
+            }
+        }
+
+        /// Compact label for the collapsed submenu title.
+        var shortLabel: String {
+            switch self {
+            case .off: return "Off"
+            case .over(let kb): return "> \(Self.sizeLabel(kb))"
+            }
+        }
+
+        static func sizeLabel(_ kb: Int) -> String {
+            kb >= 1024 && kb % 1024 == 0 ? "\(kb / 1024) MB" : "\(kb) KB"
+        }
+    }
+
+    /// The threshold presets offered in the menu, in KB.
+    static let pasteAsFilePresetsKB = [64, 256, 512, 1024]
+
+    /// The selected paste-as-file mode, derived from settings.
+    var pasteAsFileMode: PasteAsFileMode {
+        settings.pasteLargeAsFile ? .over(kb: settings.pasteAsFileThresholdKB) : .off
+    }
+
+    /// The menu's choices: Off, the presets, and — when the user typed a
+    /// non-preset threshold in Settings — that custom value, inserted in size
+    /// order so the list stays sorted.
+    var pasteAsFileModes: [PasteAsFileMode] {
+        var kbs = Self.pasteAsFilePresetsKB
+        if settings.pasteLargeAsFile, !kbs.contains(settings.pasteAsFileThresholdKB) {
+            kbs.append(settings.pasteAsFileThresholdKB)
+            kbs.sort()
+        }
+        return [.off] + kbs.map { .over(kb: $0) }
+    }
+
+    func setPasteAsFileMode(_ mode: PasteAsFileMode) {
+        switch mode {
+        case .off:
+            // Keep the threshold so re-enabling restores the previous choice.
+            settings.pasteLargeAsFile = false
+        case .over(let kb):
+            settings.pasteLargeAsFile = true
+            settings.pasteAsFileThresholdKB = kb
+        }
+        controller.update(settings)
+    }
+
+    /// The typed *custom* threshold (Settings; the menu's "Custom…" continuation).
+    func setPasteAsFileThresholdKB(_ kb: Int) {
+        // Floor at 1 KB; Settings clamps again at use, but don't persist nonsense.
+        settings.pasteAsFileThresholdKB = max(1, kb)
+        controller.update(settings)
+    }
+
     // MARK: - Pipeline ordering
 
     /// True when the user has opted into arranging the pipeline themselves
@@ -310,6 +445,8 @@ final class AppModel: ObservableObject {
             switch await controller.runOnce(operations: [op]) {
             case .stripped(let changed):
                 lastStatus = changed ? label : "\(label): no change"
+            case .strippedToFile:
+                lastStatus = "\(label) — clipboard is now a file"
             case .empty:
                 lastStatus = "Clipboard empty"
             case .failed:
@@ -329,6 +466,8 @@ final class AppModel: ObservableObject {
             switch await controller.stripNow(trigger: .manual) {
             case .stripped(let changed):
                 lastStatus = changed ? "Stripped clipboard" : "Already plain"
+            case .strippedToFile:
+                lastStatus = "Stripped — clipboard is now a file"
             case .empty:
                 lastStatus = "Clipboard empty"
             case .failed:
@@ -339,6 +478,15 @@ final class AppModel: ObservableObject {
                 lastStatus = "Clipboard too large (\(bytes / (1024 * 1024)) MB)"
             }
         }
+    }
+
+    /// Quit via the controller so its teardown runs first — in particular the
+    /// paste-as-file store cleanup, so no paste file outlives the app. Launch-time
+    /// cleanup in `activate()` is the backstop for terminations that skip this
+    /// path (logout, force quit).
+    func quit() {
+        controller.deactivate()
+        NSApplication.shared.terminate(nil)
     }
 
     // MARK: - Private helpers
@@ -355,6 +503,11 @@ final class AppModel: ObservableObject {
 
     private func isDefang(_ op: SafetyStripCore.Operation) -> Bool {
         if case .defang = op { return true }
+        return false
+    }
+
+    private func isChangeCase(_ op: SafetyStripCore.Operation) -> Bool {
+        if case .changeCase = op { return true }
         return false
     }
 
@@ -418,20 +571,6 @@ private struct MenuContent: View {
     // window for an accessory (`LSUIElement`) menu-bar app; see the Settings button.
     @Environment(\.openSettings) private var openSettings
 
-    /// Zero-parameter rewrite ops exposed as simple on/off toggles in the *Clean*
-    /// section. Parameterized rewrites (`sort`, `defang`) and the free-text ops are
-    /// handled separately (a sort/defang toggle here, the rest in Settings).
-    private static let cleanToggles: [(SafetyStripCore.Operation, String)] = [
-        (.stripHtml, "Strip HTML"),
-        (.stripMarkdown, "Strip Markdown"),
-        (.collapseWhitespace, "Collapse whitespace"),
-        (.trimTrailingWhitespace, "Trim trailing whitespace"),
-        (.removeBlankLines, "Remove blank lines"),
-        (.unwrapLines, "Unwrap lines"),
-        (.dedupeLines, "Dedupe lines"),
-        (.cleanUrls, "Clean URL trackers"),
-    ]
-
     var body: some View {
         Button("Strip clipboard now") {
             model.stripNow()
@@ -450,23 +589,60 @@ private struct MenuContent: View {
             get: { model.settings.mode == .continuous },
             set: { model.setMode($0 ? .continuous : .onDemand) }
         ))
+        // Output mode: how the stripped result lands on the pasteboard. Bounded
+        // options live here per D12 (status-bearing row + radio submenu); the
+        // typed threshold is the free parameter, so "Custom…" routes to Settings.
+        Menu("Paste as file: \(model.pasteAsFileMode.shortLabel)") {
+            Picker("Paste as file", selection: Binding(
+                get: { model.pasteAsFileMode },
+                set: { model.setPasteAsFileMode($0) }
+            )) {
+                ForEach(model.pasteAsFileModes) { mode in
+                    Text(mode.label).tag(mode)
+                }
+            }
+            .pickerStyle(.inline)
+            Divider()
+            Button("Custom…") {
+                NSApp.activate(ignoringOtherApps: true)
+                openSettings()
+            }
+        }
 
         Divider()
 
-        // --- Clean: persistent rewrite toggles (run in order, every strip) ---
+        // --- Clean: persistent rewrite toggles (run on every strip) ---
+        // Row order mirrors the core's canonical pipeline order (DESIGN.md D13,
+        // `Operation::canonical_rank` in core/src/config.rs — ranks in comments),
+        // so the menu reads top-to-bottom as the pipeline runs. Keep it in sync
+        // when ranks change.
         Text("Clean")
-        ForEach(Array(Self.cleanToggles.enumerated()), id: \.offset) { _, entry in
-            let (op, label) = entry
-            Toggle(label, isOn: Binding(
-                get: { model.isEnabled(op) },
-                set: { model.setOperation(op, enabled: $0) }
-            ))
+        cleanToggle(.stripHtml, "Strip HTML") // rank 1
+        cleanToggle(.stripMarkdown, "Strip Markdown") // rank 2
+        cleanToggle(.unwrapLines, "Unwrap lines") // rank 5
+        cleanToggle(.collapseWhitespace, "Collapse whitespace") // rank 6
+        cleanToggle(.trimTrailingWhitespace, "Trim trailing whitespace") // rank 7
+        cleanToggle(.cleanUrls, "Clean URL trackers") // rank 8
+        Menu("Mask identifiers: \(model.maskSummaryLabel)") { // rank 9
+            ForEach(AppModel.MaskTarget.allCases) { target in
+                Toggle(target.label, isOn: Binding(
+                    get: { model.maskEnabled(target) },
+                    set: { model.setMask(target, enabled: $0) }
+                ))
+            }
         }
+        // (Defang's bracket style is a parameter, so it lives in the Settings window.)
+        Toggle("Defang IOCs", isOn: Binding( // rank 10
+            get: { model.isDefangEnabled },
+            set: { model.setDefang(enabled: $0) }
+        ))
+        cleanToggle(.removeBlankLines, "Remove blank lines") // rank 14
+        cleanToggle(.dedupeLines, "Dedupe lines") // rank 15
         // Sort is a SINGLE entry: a submenu whose title shows the active mode, with the
         // modes as an inline Picker so the active one gets the system ✓ — the same
         // native checkmark the sibling toggles use, just on the child (Finder "Sort By"
         // idiom). One menu line; state visible in the title; no glyph-alignment hacks.
-        Menu("Sort lines: \(model.sortMode.shortLabel)") {
+        Menu("Sort lines: \(model.sortMode.shortLabel)") { // rank 16
             Picker("Sort lines", selection: Binding(
                 get: { model.sortMode },
                 set: { model.setSortMode($0) }
@@ -477,40 +653,39 @@ private struct MenuContent: View {
             }
             .pickerStyle(.inline)
         }
-        Toggle("Defang IOCs", isOn: Binding(
-            get: { model.isDefangEnabled },
-            set: { model.setDefang(enabled: $0) }
-        ))
-        // (Defang's bracket style is a parameter, so it lives in the Settings window.)
-        Menu("Mask identifiers: \(model.maskSummaryLabel)") {
-            ForEach(AppModel.MaskTarget.allCases) { target in
-                Toggle(target.label, isOn: Binding(
-                    get: { model.maskEnabled(target) },
-                    set: { model.setMask(target, enabled: $0) }
-                ))
+        Menu("Change case: \(model.caseMode.label)") { // rank 17
+            Picker("Change case", selection: Binding(
+                get: { model.caseMode },
+                set: { model.setCaseMode($0) }
+            )) {
+                ForEach(AppModel.CaseMode.allCases) { mode in
+                    Text(mode.label).tag(mode)
+                }
             }
+            .pickerStyle(.inline)
         }
 
         Divider()
 
         // --- Extract: one-shot commands (replace the clipboard; never persisted) ---
+        // Same rule: canonical-rank order.
         Text("Extract / convert (replaces clipboard)")
-        Button("Extract emails") {
-            model.runCommand(.extractEmails, label: "Extracted emails")
-        }
-        .disabled(model.isStripping)
-        Button("Extract URLs") {
-            model.runCommand(.extractUrls, label: "Extracted URLs")
-        }
-        .disabled(model.isStripping)
-        Button("Convert HTML to Markdown") {
+        Button("Convert HTML to Markdown") { // rank 3
             model.runCommand(.htmlToMarkdown,
                              label: "Converted to Markdown",
                              notApplicableStatus: "No HTML content")
         }
         .disabled(model.isStripping)
-        Button("Refang clipboard") {
+        Button("Refang clipboard") { // rank 11
             model.runCommand(.refang, label: "Refanged")
+        }
+        .disabled(model.isStripping)
+        Button("Extract emails") { // rank 12
+            model.runCommand(.extractEmails, label: "Extracted emails")
+        }
+        .disabled(model.isStripping)
+        Button("Extract URLs") { // rank 13
+            model.runCommand(.extractUrls, label: "Extracted URLs")
         }
         .disabled(model.isStripping)
 
@@ -526,8 +701,19 @@ private struct MenuContent: View {
         .keyboardShortcut(",", modifiers: [.command])
 
         Button("Quit SafetyStrip") {
-            NSApplication.shared.terminate(nil)
+            model.quit()
         }
         .keyboardShortcut("q")
+    }
+
+    /// One on/off row for a zero-parameter rewrite in the *Clean* section.
+    private func cleanToggle(
+        _ op: SafetyStripCore.Operation,
+        _ label: String
+    ) -> some View {
+        Toggle(label, isOn: Binding(
+            get: { model.isEnabled(op) },
+            set: { model.setOperation(op, enabled: $0) }
+        ))
     }
 }

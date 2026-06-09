@@ -55,8 +55,9 @@ should distrust, so the posture is deliberately minimal and is checked mechanica
    and write the result back to the same pasteboard. **Never** simulate a paste
    (synthesizing Cmd-V) — that needs Accessibility and can target the wrong app.
 7. **No persistence or logging of pasteboard content** — see
-   [privacy-and-data-handling](privacy-and-data-handling.md). Free the core's output
-   buffer with `ss_buffer_free` (it is zeroized on free).
+   [privacy-and-data-handling](privacy-and-data-handling.md); the single sanctioned
+   exception is the opt-in paste-as-file store (`PasteFileStore`, rule 2 there).
+   Free the core's output buffer with `ss_buffer_free` (it is zeroized on free).
 8. **Refuse oversized clipboards gracefully.** Before handing pasteboard text to the
    core, check it against a RAM-proportional ceiling
    (`StripController.defaultMaxInputBytes()` = `min(SS_MAX_INPUT_BYTES,

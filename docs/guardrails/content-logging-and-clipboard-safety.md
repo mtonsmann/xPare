@@ -19,7 +19,12 @@ upstream FormatStripper `guardrails.py` and enforced here by the in-tree `xtask`
    dbg_macro)]`; this check extends the guarantee to the CLI and the Swift shell.)
 2. **Never persist clipboard-derived content.** Persist only user *settings* —
    operation choices, the hotkey, window state. Never write clipboard input/output
-   or derived text to disk, `UserDefaults`, or an archive.
+   or derived text to disk, `UserDefaults`, or an archive. The single sanctioned
+   exception is the opt-in **paste-as-file** store (`PasteFileStore.swift`): its
+   sink lines carry the `safetystrip:allow-content-persistence` marker, which the
+   check honors **only in that file** — the marker appearing anywhere else is
+   itself a violation. See `SECURITY.md` ("Opt-in paste-as-file exception") and
+   [privacy-and-data-handling](privacy-and-data-handling.md) rule 2.
 3. **Default verification must not touch the real clipboard.** Any exercise of
    `NSPasteboard.general` stays behind an explicitly opt-in target. `make ci`,
    `make check`, `make build`, `make test`, `make app`, `make run`, `make preview`,
@@ -30,7 +35,7 @@ upstream FormatStripper `guardrails.py` and enforced here by the in-tree `xtask`
 
 | Rule | Check | Command |
 |------|-------|---------|
-| 1, 2 | `check-no-content-logging` — scans shipped source (`core/src`, `cli/src`, `shells/macos/Sources`) for a line that both calls a log/persist sink **and** names clipboard-derived content | `cargo xtask check-no-content-logging` |
+| 1, 2 | `check-no-content-logging` — scans shipped source (`core/src`, `cli/src`, `shells/macos/Sources`) for a line that both calls a log/persist sink **and** names clipboard-derived content; honors the paste-as-file allow-marker only inside `PasteFileStore.swift` and flags the marker anywhere else | `cargo xtask check-no-content-logging` |
 | 3 | `check-clipboard-safety` — fails if a default Make target depends on a `*general*` (real-clipboard) smoke | `cargo xtask check-clipboard-safety` |
 
 Both run inside `cargo xtask ci` (and `make checks`). The same gate also runs

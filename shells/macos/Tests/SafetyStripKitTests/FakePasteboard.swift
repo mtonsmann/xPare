@@ -6,6 +6,7 @@ import Foundation
 final class FakePasteboard: PasteboardProtocol {
     private(set) var changeCount: Int = 0
     private(set) var writes: [String] = []
+    private(set) var fileURLWrites: [URL] = []
     private(set) var readBestCalls: Int = 0
     private(set) var materializedReadCount: Int = 0
     var snapshot: PasteboardSnapshot?
@@ -35,6 +36,17 @@ final class FakePasteboard: PasteboardProtocol {
     func writePlain(_ text: String) -> Int {
         writes.append(text)
         snapshot = PasteboardSnapshot(text: text, kind: .plain)
+        rawRepresentationBytes = nil
+        changeCount += 1
+        return changeCount
+    }
+
+    @discardableResult
+    func writeFileURL(_ url: URL) -> Int {
+        fileURLWrites.append(url)
+        // A file-URL pasteboard has no text-like representation to read back,
+        // mirroring SystemPasteboard.writeFileURL (which writes only the URL type).
+        snapshot = nil
         rawRepresentationBytes = nil
         changeCount += 1
         return changeCount

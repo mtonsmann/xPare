@@ -12,7 +12,8 @@ explicit instruction and a PR call-out:
 - The **FFI ABI** between core and shells — narrow, stable, language-neutral.
 - `#![forbid(unsafe_code)]` in the core.
 - The **privacy posture**: no network anywhere, no persistence or logging of
-  clipboard content, in-memory only.
+  clipboard content, in-memory only. (Persistence has exactly one sanctioned,
+  opt-in exception — paste-as-file via `PasteFileStore`; see SECURITY.md.)
 - The core's freedom from OS, filesystem, and network dependencies.
 - **Deterministic** transform output for a given `(input, config)`.
 

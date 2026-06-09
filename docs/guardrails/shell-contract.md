@@ -34,6 +34,12 @@ new platform.
    intrusive input permissions and can fire into the wrong app. Replace the
    clipboard's own contents only. This is not a lock against same-user local
    pasteboard writers; another process may race the read/transform/rewrite window.
+   When the user has opted into **paste-as-file** and the result exceeds their
+   threshold, the in-place write may instead place a *file reference* backed by the
+   platform's sanctioned paste-file store (on macOS, `PasteFileStore` — the one
+   permitted content-persistence point; see
+   [privacy-and-data-handling](privacy-and-data-handling.md) rule 2). Still never
+   simulate a paste, and never write the raw string alongside the file reference.
 3. **Change detection.** Support a **continuous mode** that watches the platform
    clipboard change signal and auto-cleans. It must be an **owned watcher that is
    fully torn down (stopped and released) when the mode is off** — no loop/timer runs
