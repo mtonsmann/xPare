@@ -4,7 +4,7 @@ Status: **active** · Started: 2026-06-05
 
 ## Goal
 
-Drive SafetyStrip's transform performance toward a *calibrated practical maximum*
+Drive xPare's transform performance toward a *calibrated practical maximum*
 for its current semantics, or to documented diminishing returns, **without
 weakening any safety/privacy invariant**: the frozen C ABI, the pure
 `#![forbid(unsafe_code)]` core, no OS/IO/network in the core, no-network-anywhere,
@@ -33,7 +33,7 @@ target. For a machine with bandwidth `B` GB/s, peak traffic is `B * 1e9 / 1024²
 B * 953.7` MiB/s. A perfect transform reads each input byte once and writes an
 equal-sized output once — ≥ 2 bytes of traffic per input byte — so its absolute
 input-throughput ceiling is roughly `B * 477` MiB/s. Treat that as a sanity bound
-only; the practical ceiling is far lower because SafetyStrip decodes UTF-8, parses
+only; the practical ceiling is far lower because xPare decodes UTF-8, parses
 syntax, branches per character, allocates output strings, hashes lines for dedupe,
 and zeroizes buffers.
 
@@ -218,7 +218,7 @@ let two agents edit the same file family at once.
 - 2026-06-05: Establish the methodology — roofline-calibrated, synthetic-only,
   median-reported throughput; criterion for statistics; `perf_guard` as the only
   always-on gate; explicit accept / diminishing-returns rules. (Ported and adapted
-  from the upstream FormatStripper performance track onto the SafetyStrip tree:
+  from the upstream FormatStripper performance track onto the xPare tree:
   `make perf` now drives `core/tests/throughput.rs` instead of an FFI-coupled test,
   and CI gates complexity, not absolute speed.)
 - 2026-06-05: Already-banked wins recorded for continuity — the O(n²) `strip_html`
@@ -343,7 +343,7 @@ let two agents edit the same file family at once.
   allocation-preserving reuse. `cargo xtask check-pipeline-zeroization` blocks a
   regression to plain `Vec::new()` or growth without `scratch.zeroize()`.
   Threat-model calibration: zeroization is a best-effort persistence control for
-  SafetyStrip-owned heap storage after use, not a live-memory exfiltration control;
+  xPare-owned heap storage after use, not a live-memory exfiltration control;
   private scratch that remains owned by one transform does not need a hot-path wipe
   on every line. Same-worktree 128 MiB / 5-sample conservative per-line-wipe →
   boundary-wipe comparison: `default-log` 160.6 → 198.0 MiB/s (+23%),
@@ -452,8 +452,8 @@ let two agents edit the same file family at once.
 - 2026-06-06: W1d accepted for pipeline first-pass borrowing: `transform` now applies
   the first ordered operation directly to the caller-owned input and only wraps
   operation outputs that will feed later passes in `Zeroizing`. This removes an
-  unnecessary SafetyStrip-owned full-input duplicate while keeping every
-  SafetyStrip-owned intermediate and fused scratch buffer covered by the wipe
+  unnecessary xPare-owned full-input duplicate while keeping every
+  xPare-owned intermediate and fused scratch buffer covered by the wipe
   posture; the caller input was already outside the core/FFI ownership boundary.
   A focused pipeline regression covers first-output-to-later-operation flow, and
   `check-pipeline-zeroization` still passes. Same-worktree 128 MiB / 5-sample

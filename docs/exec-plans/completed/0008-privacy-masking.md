@@ -99,7 +99,7 @@ heuristics, not validators.
 
 ### D-4 — V1 masking is token-level and honest about limits
 
-Masking follows SafetyStrip's existing token model: split on whitespace, trim the
+Masking follows xPare's existing token model: split on whitespace, trim the
 same fixed surrounding punctuation set, classify the trimmed token core, and
 re-emit surrounding punctuation unchanged.
 
@@ -169,14 +169,14 @@ Minimum checks before PR:
 
 ```sh
 cargo fmt --all --check
-cargo clippy -p safetystrip-core --all-targets -- -D warnings
-cargo test -p safetystrip-core
-cargo test -p safetystrip-core --test perf_guard
+cargo clippy -p xpare-core --all-targets -- -D warnings
+cargo test -p xpare-core
+cargo test -p xpare-core --test perf_guard
 cargo xtask check-abi
 cargo xtask check-no-network
 cargo xtask check-no-content-logging
 cargo xtask check-pipeline-zeroization
-cargo build -p safetystrip-ffi --release
+cargo build -p xpare-ffi --release
 swift build --package-path shells/macos
 ```
 
@@ -197,15 +197,15 @@ cargo xtask ci
 
 Completed on 2026-06-06:
 
-- `cargo test -p safetystrip-core`
-- `cargo clippy -p safetystrip-core --all-targets -- -D warnings`
+- `cargo test -p xpare-core`
+- `cargo clippy -p xpare-core --all-targets -- -D warnings`
 - `cargo run -p xtask -- check-abi`
 - `cargo run -p xtask -- check-no-network`
 - `cargo run -p xtask -- check-no-content-logging`
 - `cargo run -p xtask -- check-pipeline-zeroization`
 - `cargo run -p xtask -- check-unsafe-forbid`
 - `cargo run -p xtask -- check-core-deps`
-- `cargo build -p safetystrip-ffi --release`
+- `cargo build -p xpare-ffi --release`
 - `./shells/macos/build.sh test`
 - `cargo test --workspace`
 - `make ci`

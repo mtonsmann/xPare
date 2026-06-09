@@ -16,8 +16,8 @@
 //!   mkdir -p corpus/defang && cp ../core/tests/corpus/defang/* corpus/defang/
 //!   cargo +nightly fuzz run defang
 use libfuzzer_sys::fuzz_target;
-use safetystrip_core::ops::defang::{defang, refang};
-use safetystrip_core::BracketStyle;
+use xpare_core::ops::defang::{defang, refang};
+use xpare_core::BracketStyle;
 
 fuzz_target!(|data: &[u8]| {
     let text = String::from_utf8_lossy(data);

@@ -1,6 +1,6 @@
 import Testing
 import Foundation
-@testable import SafetyStripCore
+@testable import XPareCore
 
 // NOTE ON TEST FRAMEWORK
 // ----------------------
@@ -197,7 +197,7 @@ import Foundation
     /// the wire form (tag + payload) for the whole enum, exercising every `encode`/`init`
     /// arm including the no-payload ops that the other tests don't name.
     @Test func everyOperationRoundTrips() throws {
-        let all: [SafetyStripCore.Operation] = [
+        let all: [XPareCore.Operation] = [
             .stripHtml, .stripMarkdown, .htmlToMarkdown, .collapseWhitespace,
             .trimTrailingWhitespace, .removeBlankLines, .unwrapLines, .dedupeLines,
             .extractEmails, .extractUrls, .refang, .cleanUrls,
@@ -220,7 +220,7 @@ import Foundation
     @Test func unknownOperationTagFailsToDecode() {
         let blob = Data(#"{"op":"teleport"}"#.utf8)
         #expect(throws: (any Error).self) {
-            try JSONDecoder().decode(SafetyStripCore.Operation.self, from: blob)
+            try JSONDecoder().decode(XPareCore.Operation.self, from: blob)
         }
     }
 }

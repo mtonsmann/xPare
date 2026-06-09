@@ -6,7 +6,7 @@
 //!
 //! ## Sensitive-data hygiene
 //!
-//! The caller-owned input and every SafetyStrip-owned intermediate are
+//! The caller-owned input and every xPare-owned intermediate are
 //! clipboard-derived and may hold secrets (passwords, tokens). The first operation
 //! borrows the caller input directly; each operation output that feeds another pass is
 //! then held in a [`Zeroizing`] buffer so its bytes are wiped from the heap as soon as
@@ -16,7 +16,7 @@
 //! reuse while the allocation remains owned by the transform. The final result is
 //! returned directly (the caller owns it, so no extra copy is made); the `core-ffi`
 //! shim zeroizes that output buffer when the caller frees it. So every
-//! SafetyStrip-owned buffer except the caller-owned result is wiped after use. The
+//! xPare-owned buffer except the caller-owned result is wiped after use. The
 //! measurable cost is the per-intermediate wipe — tens of percent of throughput on
 //! 100+ MiB inputs, but negligible at clipboard scale (sub-MiB), where the absolute
 //! time is microseconds either way. Quantified in `docs/performance.md`.
@@ -48,7 +48,7 @@ pub fn transform(input: &str, config: &Config) -> String {
         ordered.sort_by_key(|op| op.canonical_rank());
     }
     // Borrow the caller-owned input for the first pass. Only operation outputs that
-    // feed another pass become SafetyStrip-owned intermediates and need `Zeroizing`.
+    // feed another pass become xPare-owned intermediates and need `Zeroizing`.
     let (first, consumed) = apply_next(input, &ordered);
     let mut i = consumed;
     if i == ordered.len() {

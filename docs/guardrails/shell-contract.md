@@ -92,13 +92,13 @@ new platform.
 
 ## Wiring to the core (how the macOS shell does it)
 
-The macOS shell links `safetystrip-ffi` (build with
-`cargo build -p safetystrip-ffi --release`) and exposes the C ABI to Swift via a
-module map at `shells/macos/Sources/CSafetyStrip/include/`:
+The macOS shell links `xpare-ffi` (build with
+`cargo build -p xpare-ffi --release`) and exposes the C ABI to Swift via a
+module map at `shells/macos/Sources/CXPare/include/`:
 
-- `module.modulemap` declares a `CSafetyStrip` module whose header is `shim.h`.
+- `module.modulemap` declares a `CXPare` module whose header is `shim.h`.
 - `shim.h` **re-includes** the single source-of-truth header at
-  `core-ffi/include/safetystrip.h` by relative path rather than copying it, so the
+  `core-ffi/include/xpare.h` by relative path rather than copying it, so the
   shell can never drift from the frozen ABI.
 
 A new platform should follow the same principle: consume the one checked-in header,

@@ -7,7 +7,7 @@
 //! structural/ordering properties, never their exact output. Canonical-ordering
 //! behavior is covered separately in `ordering.rs`.
 
-use safetystrip_core::{transform, CaseKind, Config, Operation};
+use xpare_core::{transform, CaseKind, Config, Operation};
 
 /// Build an `as_given` pipeline so these tests pin exact left-to-right composition.
 fn pipeline(ops: Vec<Operation>) -> Config {

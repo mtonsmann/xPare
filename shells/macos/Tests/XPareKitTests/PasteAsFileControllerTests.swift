@@ -1,7 +1,7 @@
 import Testing
 import Foundation
-@testable import SafetyStripKit
-@testable import SafetyStripCore
+@testable import XPareKit
+@testable import XPareCore
 
 /// A `PasteFileWriting` whose writes always fail, to pin the controller's
 /// degrade-to-plain-write fallback.

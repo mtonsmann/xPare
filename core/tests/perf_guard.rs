@@ -15,12 +15,12 @@
 
 use std::time::{Duration, Instant};
 
-use safetystrip_core::ops::defang::{defang, refang};
-use safetystrip_core::ops::html::strip_html;
-use safetystrip_core::ops::markdown::strip_markdown;
-use safetystrip_core::ops::mask::mask_identifiers;
-use safetystrip_core::ops::urls::clean_urls;
-use safetystrip_core::{transform, BracketStyle, CaseKind, Config, Operation};
+use xpare_core::ops::defang::{defang, refang};
+use xpare_core::ops::html::strip_html;
+use xpare_core::ops::markdown::strip_markdown;
+use xpare_core::ops::mask::mask_identifiers;
+use xpare_core::ops::urls::clean_urls;
+use xpare_core::{transform, BracketStyle, CaseKind, Config, Operation};
 
 /// Generous per-case ceiling (see module docs for why this can't reasonably flake).
 const BUDGET: Duration = Duration::from_secs(8);
@@ -161,7 +161,7 @@ fn full_pipeline_on_large_rich_input_stays_linear() {
 /// Run explicitly:
 ///
 /// ```sh
-/// cargo test -p safetystrip-core --test perf_guard -- --ignored
+/// cargo test -p xpare-core --test perf_guard -- --ignored
 /// ```
 ///
 /// Asserts a realistic 256 MB log-cleanup pipeline (collapse → trim → dedupe → sort)

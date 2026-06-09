@@ -1,6 +1,6 @@
 //! Shared token and indicator heuristics.
 //!
-//! These helpers intentionally stay small and heuristic. SafetyStrip is a clipboard
+//! These helpers intentionally stay small and heuristic. xPare is a clipboard
 //! utility, not an RFC-grade email/IP/URL validator, and several operations need to
 //! agree on what a token edge or simple indicator is. Keeping the classifiers here
 //! prevents extractors, defang, URL cleaning, and privacy masking from drifting.

@@ -1,18 +1,18 @@
 import Foundation
-import CSafetyStrip
+import CXPare
 
 /// Errors surfaced by the Swift wrapper around the C ABI. Each ``status`` case
 /// maps 1:1 to a non-OK `SsStatus` from the core; ``encodingFailed`` /
 /// ``decodingFailed`` cover the Swift-side marshalling.
 public enum TransformError: Error, Equatable, CustomStringConvertible {
-    /// A required pointer argument was null (`SS_STATUS_ERR_NULL_ARG`).
+    /// A required pointer argument was null (`XP_STATUS_ERR_NULL_ARG`).
     case nullArgument
-    /// The config JSON was rejected by the core (`SS_STATUS_ERR_INVALID_CONFIG`).
+    /// The config JSON was rejected by the core (`XP_STATUS_ERR_INVALID_CONFIG`).
     case invalidConfig
-    /// An unexpected internal error / caught panic (`SS_STATUS_ERR_INTERNAL`).
+    /// An unexpected internal error / caught panic (`XP_STATUS_ERR_INTERNAL`).
     case internalError
     /// Input exceeded the core's hard size ceiling
-    /// (`SS_STATUS_ERR_INPUT_TOO_LARGE`, ABI v2).
+    /// (`XP_STATUS_ERR_INPUT_TOO_LARGE`, ABI v2).
     case inputTooLarge
     /// The core returned a status not covered by the frozen ABI.
     case unknownStatus(UInt32)
@@ -39,17 +39,17 @@ public enum TransformError: Error, Equatable, CustomStringConvertible {
     /// Translate a raw `SsStatus` into a thrown error, or `nil` for OK.
     static func from(status: SsStatus) -> TransformError? {
         switch status {
-        case SS_STATUS_OK: return nil
-        case SS_STATUS_ERR_NULL_ARG: return .nullArgument
-        case SS_STATUS_ERR_INVALID_CONFIG: return .invalidConfig
-        case SS_STATUS_ERR_INTERNAL: return .internalError
-        case SS_STATUS_ERR_INPUT_TOO_LARGE: return .inputTooLarge
+        case XP_STATUS_OK: return nil
+        case XP_STATUS_ERR_NULL_ARG: return .nullArgument
+        case XP_STATUS_ERR_INVALID_CONFIG: return .invalidConfig
+        case XP_STATUS_ERR_INTERNAL: return .internalError
+        case XP_STATUS_ERR_INPUT_TOO_LARGE: return .inputTooLarge
         default: return .unknownStatus(status.rawValue)
         }
     }
 }
 
-/// Safe, memory-correct Swift facade over the SafetyStrip C ABI.
+/// Safe, memory-correct Swift facade over the xPare C ABI.
 ///
 /// Responsibilities:
 /// * encode a ``TransformConfig`` to JSON,
@@ -67,10 +67,10 @@ public struct Transformer: Sendable {
         ss_abi_version()
     }
 
-    /// The core's hard input ceiling in bytes (`SS_MAX_INPUT_BYTES`). Exposed so the
+    /// The core's hard input ceiling in bytes (`XP_MAX_INPUT_BYTES`). Exposed so the
     /// shell can clamp its own RAM-proportional limit to the core's backstop without
     /// importing the C module itself.
-    public static var coreMaxInputBytes: Int { Int(SS_MAX_INPUT_BYTES) }
+    public static var coreMaxInputBytes: Int { Int(XP_MAX_INPUT_BYTES) }
 
     /// The core's self-describing capabilities JSON (`ss_capabilities_json`).
     /// The returned pointer is process-static and must not be freed, so we copy

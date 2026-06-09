@@ -201,6 +201,6 @@ If the docs-only change captures a review lesson, also consult
   ("Tier-2 review") — anti-slop on every code PR, security focus on the security-relevant
   surface listed there. Advisory only; the required gate is `cargo xtask ci`.
 - GitHub integration: prefer the Codex GitHub connector for PR metadata/creation
-  now that it has repo scope for `mtonsmann/SafetyStrip`. Use escalated local
+  now that it has repo scope for `mtonsmann/xPare`. Use escalated local
   `gh` as the fallback; sandboxed, non-escalated `gh` auth/network results are
   not the source of truth for this repo.

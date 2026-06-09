@@ -1,4 +1,4 @@
-# SafetyStrip workspace.
+# xPare workspace.
 #
 # Members:
 #   core      - pure, deterministic transformation core (#![forbid(unsafe_code)], no OS/IO/net)
@@ -17,7 +17,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.80"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/safetystrip/safetystrip"
+repository = "https://github.com/xpare/xpare"
 
 # Workspace-wide lint policy — one source of truth for the anti-slop posture. Members
 # opt in with `[lints] workspace = true`. Crate-SPECIFIC lints stay as source
@@ -68,7 +68,7 @@ criterion = { version = "0.5", default-features = false, features = ["cargo_benc
 # Speed-tuned release artifacts. Transform latency on large clipboard/log buffers is
 # a product requirement; keep safety/privacy posture enforced by `cargo xtask ci`.
 # NOTE: panic stays "unwind" (the default) on purpose. The FFI shim wraps every
-# call in `catch_unwind`, so a stray panic is converted to SS_ERR_INTERNAL at the
+# call in `catch_unwind`, so a stray panic is converted to XP_ERR_INTERNAL at the
 # boundary instead of unwinding across it (UB) or aborting the host app.
 opt-level = 3
 lto = true

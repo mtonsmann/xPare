@@ -23,18 +23,18 @@
 //!
 //! Run it via `make perf` (see the Makefile) or directly:
 //! ```sh
-//! SS_PERF_MIB=128 SS_PERF_SAMPLES=7 \
-//!   cargo test -p safetystrip-core --release --test throughput -- --ignored --nocapture
+//! XP_PERF_MIB=128 XP_PERF_SAMPLES=7 \
+//!   cargo test -p xpare-core --release --test throughput -- --ignored --nocapture
 //! ```
-//! Env knobs: `SS_PERF_MIB` (input size, default 64), `SS_PERF_SAMPLES` (default 3),
-//! `SS_PERF_MIN_MIB_PER_SEC` (optional; if set, the end-to-end scenarios must meet
+//! Env knobs: `XP_PERF_MIB` (input size, default 64), `XP_PERF_SAMPLES` (default 3),
+//! `XP_PERF_MIN_MIB_PER_SEC` (optional; if set, the end-to-end scenarios must meet
 //! this floor or the test fails — use only on a calibrated machine).
 
 use std::fmt::Write as _;
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
-use safetystrip_core::{transform, BracketStyle, CaseKind, Config, Operation};
+use xpare_core::{transform, BracketStyle, CaseKind, Config, Operation};
 
 const MIB: usize = 1024 * 1024;
 
@@ -48,18 +48,18 @@ fn env_usize(key: &str, default: usize) -> usize {
 /// Optional MiB/s floor for the end-to-end scenarios. Absent (or unparseable) means
 /// "report only, never fail" — the default, since absolute throughput is noisy.
 fn env_floor() -> Option<f64> {
-    match std::env::var("SS_PERF_MIN_MIB_PER_SEC") {
+    match std::env::var("XP_PERF_MIN_MIB_PER_SEC") {
         Ok(v) if !v.trim().is_empty() => v.trim().parse::<f64>().ok(),
         _ => None,
     }
 }
 
 fn target_bytes() -> usize {
-    env_usize("SS_PERF_MIB", 64).max(1) * MIB
+    env_usize("XP_PERF_MIB", 64).max(1) * MIB
 }
 
 fn samples() -> usize {
-    env_usize("SS_PERF_SAMPLES", 3).max(1)
+    env_usize("XP_PERF_SAMPLES", 3).max(1)
 }
 
 /// Repeat `unit` until the buffer reaches at least `target` bytes.
@@ -279,7 +279,7 @@ fn throughput_baseline() {
     let mut failures: Vec<Failure> = Vec::new();
 
     println!(
-        "\nSafetyStrip throughput — {} MiB input, {} samples (median reported){}\n",
+        "\nxPare throughput — {} MiB input, {} samples (median reported){}\n",
         target / MIB,
         n,
         match floor {
@@ -659,7 +659,7 @@ fn throughput_baseline() {
 
     if !failures.is_empty() {
         let mut msg = String::from(
-            "\nthroughput floor not met (SS_PERF_MIN_MIB_PER_SEC) on end-to-end scenarios:\n",
+            "\nthroughput floor not met (XP_PERF_MIN_MIB_PER_SEC) on end-to-end scenarios:\n",
         );
         for f in &failures {
             msg.push_str(&format!(
@@ -669,7 +669,7 @@ fn throughput_baseline() {
         }
         msg.push_str(
             "\nA floor is only meaningful on a calibrated machine; unset \
-             SS_PERF_MIN_MIB_PER_SEC for report-only runs.\n",
+             XP_PERF_MIN_MIB_PER_SEC for report-only runs.\n",
         );
         panic!("{msg}");
     }

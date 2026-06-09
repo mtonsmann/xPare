@@ -1,6 +1,6 @@
 import Testing
 import Foundation
-@testable import SafetyStripKit
+@testable import XPareKit
 
 /// `PasteFileStore` is the single sanctioned content-persistence point (opt-in
 /// paste-as-file). These tests pin its mitigations: one file at a time,

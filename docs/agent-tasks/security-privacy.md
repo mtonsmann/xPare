@@ -10,7 +10,7 @@ logging, network, telemetry, or in-memory lifetime / zeroization.
   and [`docs/guardrails/content-logging-and-clipboard-safety.md`](../guardrails/content-logging-and-clipboard-safety.md).
 - `SECURITY.md`, `DESIGN.md` (threat model).
 - The relevant source: `core/src/pipeline.rs` (zeroization), `core-ffi/src/lib.rs`
-  (buffer free / lossy input), `shells/macos/SafetyStrip.entitlements`,
+  (buffer free / lossy input), `shells/macos/xPare.entitlements`,
   `shells/macos/release.sh`.
 - The enforcing `xtask` checks: `check-no-network`, `check-no-content-logging`,
   `check-pipeline-zeroization`, `check-clipboard-safety`, `check-entitlements`,

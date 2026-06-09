@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Package the SafetyStrip macOS shell into a runnable menu-bar .app bundle.
+# Package the xPare macOS shell into a runnable menu-bar .app bundle.
 #
 # Usage:
-#   ./package-app.sh                 # build + assemble dist/SafetyStrip.app (ad-hoc signed)
+#   ./package-app.sh                 # build + assemble dist/xPare.app (ad-hoc signed)
 #   ./package-app.sh --version 1.2.3 # stamp the bundle version (default: exact tag, else 0.1.0)
-#   ./package-app.sh --sandbox       # additionally sign with SafetyStrip.entitlements (App Sandbox)
+#   ./package-app.sh --sandbox       # additionally sign with xPare.entitlements (App Sandbox)
 #   ./package-app.sh --run           # build, assemble, then `open` the app
 #
 # For release packaging (unsigned preview / Developer ID), use release.sh, which
@@ -39,8 +39,8 @@ while [ "$#" -gt 0 ]; do
     shift
 done
 
-APP_NAME="SafetyStrip"
-BUNDLE_ID="com.safetystrip.app"
+APP_NAME="xPare"
+BUNDLE_ID="com.xpare.app"
 APP="${SCRIPT_DIR}/dist/${APP_NAME}.app"
 CONTENTS="${APP}/Contents"
 
@@ -54,12 +54,12 @@ fi
 BUILD_VERSION="$(git -C "${REPO_ROOT}" rev-list --count HEAD 2>/dev/null || printf '1')"
 
 # --- 1. Build the Rust core staticlib (release) --------------------------------
-echo ">>> Building Rust core (safetystrip-ffi, release)…"
+echo ">>> Building Rust core (xpare-ffi, release)…"
 if [ -f "${HOME}/.cargo/env" ]; then
     # shellcheck disable=SC1091
     source "${HOME}/.cargo/env"
 fi
-( cd "${REPO_ROOT}" && cargo build -p safetystrip-ffi --release )
+( cd "${REPO_ROOT}" && cargo build -p xpare-ffi --release )
 
 # --- 2. Build the Swift app (release) ------------------------------------------
 echo ">>> swift build -c release --product ${APP_NAME}App"
@@ -115,7 +115,7 @@ if [ "${SANDBOX}" -eq 1 ]; then
     echo ">>> ad-hoc signing WITH App Sandbox entitlements"
     codesign --force --sign - \
         --identifier "${BUNDLE_ID}" \
-        --entitlements "${SCRIPT_DIR}/SafetyStrip.entitlements" \
+        --entitlements "${SCRIPT_DIR}/xPare.entitlements" \
         --options runtime \
         "${APP}"
 else

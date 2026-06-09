@@ -25,5 +25,5 @@ fuzz_target!(|data: &[u8]| {
     // result — both a parsed `Config` and a structured `ConfigError` are valid
     // outcomes; the invariant under test is that parsing/validation never panics.
     let json = String::from_utf8_lossy(data);
-    let _ = safetystrip_core::parse_config(&json);
+    let _ = xpare_core::parse_config(&json);
 });

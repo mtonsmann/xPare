@@ -9,7 +9,7 @@
 # the mutants config, or this workflow) plus on demand. On a stable repo it never fires.
 #
 # Run locally any time: `cargo run -p xtask -- check-coverage` / `check-mutants`
-# (`SS_DIFF_BASE=origin/main cargo run -p xtask -- check-mutants` scopes to your diff).
+# (`XP_DIFF_BASE=origin/main cargo run -p xtask -- check-mutants` scopes to your diff).
 # Both stay OUTSIDE the required `cargo xtask ci` gate (continue-on-error): the everyday
 # signal is the stable gate plus the property/reference/corpus tests. See
 # docs/guardrails/code-and-test-hygiene.md.
@@ -77,7 +77,7 @@ jobs:
         run: cargo run -p xtask -- check-coverage
 
   # --------------------------------------------------------------------------
-  # Mutation testing. On a PR, scope to the diff (fast feedback) via SS_DIFF_BASE;
+  # Mutation testing. On a PR, scope to the diff (fast feedback) via XP_DIFF_BASE;
   # on push-to-main / manual dispatch, run the full tree. A surviving mutant means
   # dead code or an under-asserted test.
   # --------------------------------------------------------------------------
@@ -111,9 +111,9 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
         run: git fetch --no-tags --depth=1 origin "$BASE_REF"
 
-      # SS_DIFF_BASE scopes the run to the PR diff; empty on push/dispatch = full tree
+      # XP_DIFF_BASE scopes the run to the PR diff; empty on push/dispatch = full tree
       # (xtask treats an empty value as unset). Set via env, never inlined into a script.
       - name: Run mutation testing
         env:
-          SS_DIFF_BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
+          XP_DIFF_BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
         run: cargo run -p xtask -- check-mutants

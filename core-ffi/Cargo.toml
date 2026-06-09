@@ -1,5 +1,5 @@
 [package]
-name = "safetystrip-ffi"
+name = "xpare-ffi"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,10 +9,10 @@ repository.workspace = true
 # release. Marking it private (like xtask) keeps its `path` dep on core off the
 # cargo-deny wildcard check and prevents an accidental `cargo publish`.
 publish = false
-description = "Thin, language-neutral C ABI shim over safetystrip-core. The only crate that uses `unsafe`."
+description = "Thin, language-neutral C ABI shim over xpare-core. The only crate that uses `unsafe`."
 
 [lib]
-name = "safetystrip_ffi"
+name = "xpare_ffi"
 # staticlib for static-linking into the native shells; cdylib for dynamic consumers.
 crate-type = ["staticlib", "cdylib", "rlib"]
 
@@ -22,5 +22,5 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 workspace = true
 
 [dependencies]
-safetystrip-core = { path = "../core" }
+xpare-core = { path = "../core" }
 zeroize = { workspace = true }

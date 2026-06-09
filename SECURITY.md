@@ -1,6 +1,6 @@
 # Security & privacy posture
 
-SafetyStrip handles the **clipboard** — passwords, API tokens, private keys, PII,
+xPare handles the **clipboard** — passwords, API tokens, private keys, PII,
 and proprietary source pass through it routinely, alongside untrusted HTML/Markdown
 markup. The entire design exists to make one promise credible: **your clipboard
 content never leaves the process, never gets persisted, and cannot corrupt the tool
@@ -43,9 +43,9 @@ The exception is kept as small as it can be:
 - **Strictly opt-in.** With the toggle off (the default), the code path never
   runs and nothing is ever written.
 - **One audited writer.** All file I/O lives in `PasteFileStore`
-  (`shells/macos/Sources/SafetyStripKit/PasteFileStore.swift`). It is the only
+  (`shells/macos/Sources/XPareKit/PasteFileStore.swift`). It is the only
   file in which `check-no-content-logging` honors the
-  `safetystrip:allow-content-persistence` marker; the marker anywhere else is
+  `xpare:allow-content-persistence` marker; the marker anywhere else is
   itself a CI failure, so the exception cannot quietly spread.
 - **Contained location, minimal privilege.** The file lives in a dedicated
   `PasteAsFile.noindex` directory inside the App Sandbox container's own
@@ -68,7 +68,7 @@ The privacy guarantee rests on a single architectural line: **the core is the on
 thing that parses untrusted content, and it has no way to talk to the outside
 world.**
 
-- The **core** (`safetystrip-core`) has no OS, filesystem, network, logging, or
+- The **core** (`xpare-core`) has no OS, filesystem, network, logging, or
   global mutable state. It cannot exfiltrate, persist, or log — there is no API in
   its dependency tree that could. This is enforced by a strict transitive
   dependency allowlist (`check-core-deps`), not by convention.
@@ -84,24 +84,24 @@ See the boundary diagram in [`ARCHITECTURE.md`](ARCHITECTURE.md#the-trust-bounda
 
 ## Threat model boundaries
 
-SafetyStrip protects users from **SafetyStrip itself** becoming a leak, persistence
+xPare protects users from **xPare itself** becoming a leak, persistence
 sink, over-privileged clipboard tool, or memory-unsafe parser. It does not claim to
 protect the clipboard from every same-user local process. On macOS, other local
 apps may be able to read or write the general pasteboard; a malicious or buggy local
-pasteboard writer can replace content before SafetyStrip reads it, race a rewrite,
-or feed oversized/rich malformed data. SafetyStrip treats that as a local
+pasteboard writer can replace content before xPare reads it, race a rewrite,
+or feed oversized/rich malformed data. xPare treats that as a local
 pasteboard race or denial-of-service condition, not as a confidentiality boundary it
-can enforce. The enforced guarantees are that SafetyStrip will not exfiltrate,
+can enforce. The enforced guarantees are that xPare will not exfiltrate,
 persist, log, or memory-unsafely parse the content it is handed.
 
 ## Where zeroization matters
 
 Zeroization is a best-effort **persistence** control. It reduces the chance that
-clipboard-derived bytes remain recoverable from SafetyStrip-owned heap storage
+clipboard-derived bytes remain recoverable from xPare-owned heap storage
 after that storage is no longer needed. It is not an exfiltration control and does
 not defend against an attacker who can read live process memory during a transform.
 
-SafetyStrip enforces zeroization at ownership and last-use boundaries:
+xPare enforces zeroization at ownership and last-use boundaries:
 
 - Full pipeline intermediates are wiped when the next operation supersedes them or
   when the transform returns.
@@ -125,7 +125,7 @@ Clipboard markup is attacker-influenced, so the core treats all input as hostile
   UTF-8 boundaries, runs in linear time with only bounded lookahead, and is proven
   panic-free by `cargo fuzz` targets, property tests, and a checked-in adversarial
   corpus. A panic, were one to occur, is caught at the FFI boundary and returned as
-  `SS_STATUS_ERR_INTERNAL` rather than unwinding into the host (which would be UB).
+  `XP_STATUS_ERR_INTERNAL` rather than unwinding into the host (which would be UB).
 - **Active content is neutralized by `StripHtml`** — `<script>`/`<style>` bodies are
   dropped entirely and all tags removed. The shell feeds the clipboard's HTML
   representation through `StripHtml`; the canonical sanitization order is
@@ -139,7 +139,7 @@ Clipboard markup is attacker-influenced, so the core treats all input as hostile
   not injected into continuous mode or the canonical sanitization pipeline.
 - **Size limits are enforced before the core transform** — the macOS shell refuses
   extracted text above its RAM-proportional limit, and the FFI rejects anything above
-  `SS_MAX_INPUT_BYTES` before reading or allocating. The macOS shell also checks raw
+  `XP_MAX_INPUT_BYTES` before reading or allocating. The macOS shell also checks raw
   HTML/RTF representation bytes before decoding them when AppKit exposes those
   bytes. Rich-format extraction itself is still platform work, so the limit is a
   pre-core-transform guard, not a streaming rich-format parser for every native
@@ -169,7 +169,7 @@ security-relevant ones:
 - **Zeroization is best-effort.** The core now holds each pipeline intermediate in
   `Zeroizing` storage, wipes transform-local scratch storage before capacity growth
   can release old clipboard-derived bytes, and the FFI wipes the output buffer on
-  free. Clipboard-derived content is scrubbed from SafetyStrip-owned heap storage
+  free. Clipboard-derived content is scrubbed from xPare-owned heap storage
   when that storage is no longer needed (at a measured throughput cost on very large
   inputs — see [`docs/performance.md`](docs/performance.md)). It remains
   *best-effort*: the caller's own input buffer (e.g. the shell's pasteboard read) and
@@ -180,10 +180,10 @@ security-relevant ones:
   outside the FFI's ownership.
 - **Continuous mode is best-effort under local races.** It polls the pasteboard
   `changeCount`; it does not lock the system pasteboard or prove that no other local
-  writer changed it before SafetyStrip read or after it rewrote the pasteboard. The
-  shell suppresses SafetyStrip self-write generations, coalesces continuous callbacks
+  writer changed it before xPare read or after it rewrote the pasteboard. The
+  shell suppresses xPare self-write generations, coalesces continuous callbacks
   while a strip is running, and drops stale transform completions if `changeCount`
-  moved in flight. SafetyStrip still performs content-free outcomes only and applies
+  moved in flight. xPare still performs content-free outcomes only and applies
   the same size limits to each attempted run.
 - **Official release sandboxing is part of the release gate.** Unsigned/ad-hoc
   previews are for testing and are not official downloadable binaries. `make dist`
@@ -197,7 +197,7 @@ security-relevant ones:
 - **Privacy masking is not comprehensive anonymization or DLP.** It is a
   deterministic, heuristic, token-level rewrite for selected emails and IPs. It does
   not promise to find every form of PII or to protect against other same-user apps
-  reading the system pasteboard before SafetyStrip rewrites it.
+  reading the system pasteboard before xPare rewrites it.
 
 ## Reporting a vulnerability
 

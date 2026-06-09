@@ -1,7 +1,7 @@
 //! Golden + property tests for privacy masking.
 
 use proptest::prelude::*;
-use safetystrip_core::{ops::mask::mask_identifiers, transform, Config, Operation};
+use xpare_core::{ops::mask::mask_identifiers, transform, Config, Operation};
 
 fn mask_all(input: &str) -> String {
     mask_identifiers(input, true, true, true)

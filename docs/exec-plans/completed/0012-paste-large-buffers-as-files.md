@@ -56,7 +56,7 @@ still runs first — oversized clipboards are refused before the core ever runs.
 
 `check-no-content-logging` would (rightly) flag `PasteFileStore`. We do not
 rename locals to dodge it — this is a true positive class, now sanctioned. The
-check learns a literal marker, `safetystrip:allow-content-persistence`, which
+check learns a literal marker, `xpare:allow-content-persistence`, which
 exempts a line **only** inside an allowlisted file (`PasteFileStore.swift`);
 the marker appearing anywhere else is itself a violation. Everyone else who
 persists content still fails CI.

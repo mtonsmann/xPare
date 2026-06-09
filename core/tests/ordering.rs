@@ -5,7 +5,7 @@
 //! order a caller assembled them; `Ordering::AsGiven` runs them exactly as listed.
 
 use proptest::prelude::*;
-use safetystrip_core::{transform, BracketStyle, Config, Operation};
+use xpare_core::{transform, BracketStyle, Config, Operation};
 
 const SQ: BracketStyle = BracketStyle::Square;
 

@@ -72,7 +72,7 @@ hangs, stays deterministic, neutralizes active content."
 
 ## Enforcing checks
 
-- **Property + regression tests:** `cargo test -p safetystrip-core`. New behavior
+- **Property + regression tests:** `cargo test -p xpare-core`. New behavior
   needs both a regression test (the right answer) **and** adversarial-input coverage.
   Config-envelope changes belong in `core/tests/config_roundtrip.rs`.
 - **Determinism property test:** `transform(x,c) == transform(x,c)`.
@@ -81,11 +81,11 @@ hangs, stays deterministic, neutralizes active content."
   mask_identifiers | transform_pipeline`. Commit
   any crashing input found under `fuzz/` so it replays as a regression. (CI runs a
   short best-effort fuzz smoke; the required signal is the property/corpus tests.)
-- **Performance regression guard:** `cargo test -p safetystrip-core --test perf_guard`
+- **Performance regression guard:** `cargo test -p xpare-core --test perf_guard`
   runs large pathological inputs through the strippers/pipeline under a generous time
   budget; a super-linear regression fails it. Part of `cargo xtask ci`. For
-  measurement (not pass/fail), `cargo bench -p safetystrip-core` (or `make bench`).
-- **Lints:** `cargo clippy -p safetystrip-core --all-targets -- -D warnings`,
+  measurement (not pass/fail), `cargo bench -p xpare-core` (or `make bench`).
+- **Lints:** `cargo clippy -p xpare-core --all-targets -- -D warnings`,
   `cargo fmt`.
 
 ## What a PR must call out

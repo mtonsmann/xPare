@@ -2,7 +2,7 @@
 
 use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
-use safetystrip_core::ops::mask::mask_identifiers;
+use xpare_core::ops::mask::mask_identifiers;
 
 #[derive(Arbitrary, Debug)]
 struct MaskInput {

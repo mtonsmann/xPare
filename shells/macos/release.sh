@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Release packaging for the SafetyStrip macOS shell.
+# Release packaging for the xPare macOS shell.
 #
-# The Swift app STATICALLY links libsafetystrip_ffi.a, so the bundle has no
+# The Swift app STATICALLY links libxpare_ffi.a, so the bundle has no
 # embedded dylib to sign or relocate — packaging is just the assembled .app plus
 # (for an official release) a Developer ID signature, notarization, and a stapled
 # ticket. The heavy assembly lives in package-app.sh; this script wraps it for the
@@ -22,19 +22,19 @@
 #   CERT_NAME="Developer ID Application: Name (TEAMID)"   Required for `dist`.
 #   NOTARY_PROFILE=name        `xcrun notarytool store-credentials` profile; required to notarize.
 #   SIGN_ENTITLEMENTS=path     Entitlements for the Developer ID signature. Defaults
-#                              to shells/macos/SafetyStrip.entitlements; dist rejects
+#                              to shells/macos/xPare.entitlements; dist rejects
 #                              any path that does not resolve to that checked file.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-APP_NAME="SafetyStrip"
+APP_NAME="xPare"
 APP="${SCRIPT_DIR}/dist/${APP_NAME}.app"
 EXE="${APP}/Contents/MacOS/${APP_NAME}"
 RELEASE_DIR="${REPO_ROOT}/dist/release"
 ARCH="$(uname -m)"
-DEFAULT_SIGN_ENTITLEMENTS="${SCRIPT_DIR}/SafetyStrip.entitlements"
+DEFAULT_SIGN_ENTITLEMENTS="${SCRIPT_DIR}/xPare.entitlements"
 
 die() { echo "release.sh: $*" >&2; exit 1; }
 
@@ -115,7 +115,7 @@ resolve_sign_entitlements() {
 verify_signed_entitlements() {
     local target="$1"
     local actual
-    actual="$(mktemp "${TMPDIR:-/tmp}/safetystrip-entitlements.XXXXXX")"
+    actual="$(mktemp "${TMPDIR:-/tmp}/xpare-entitlements.XXXXXX")"
     if ! codesign -d --entitlements :- "${target}" > "${actual}" 2>/dev/null; then
         rm -f "${actual}"
         die "could not read signed entitlements from ${target}."

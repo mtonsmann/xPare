@@ -7,9 +7,9 @@ code, ABI, entitlements, dependency posture, or transform behavior.
 
 ## Scope
 
-- Repository-wide scan of `/Users/marcus/Dev/SafetyStrip`.
+- Repository-wide scan of `/Users/marcus/Dev/xPare`.
 - Use the Codex Security Deep Security Scan workflow.
-- Produce scan artifacts under `/tmp/codex-security-scans/SafetyStrip/`.
+- Produce scan artifacts under `/tmp/codex-security-scans/xPare/`.
 - Produce final `report.md` and `report.html`.
 - Suggest follow-up changes to `SECURITY.md` or threat-model documentation when
   the scan evidence supports them.
@@ -38,7 +38,7 @@ code, ABI, entitlements, dependency posture, or transform behavior.
 
 - 2026-06-05: Treat this as security-review artifact work only; no source or
   posture changes are authorized by the scan request.
-- 2026-06-05: Use `/tmp/codex-security-scans/SafetyStrip/` for scan artifacts,
+- 2026-06-05: Use `/tmp/codex-security-scans/xPare/` for scan artifacts,
   matching the Codex Security artifact convention.
 - 2026-06-05: Completed the scan with final markdown and HTML reports at
-  `/tmp/codex-security-scans/SafetyStrip/e37b9cc36056_20260605T204714Z/`.
+  `/tmp/codex-security-scans/xPare/e37b9cc36056_20260605T204714Z/`.

@@ -5,7 +5,7 @@ Status: **completed** · Started: 2026-06-06 · Completed: 2026-06-06
 ## Goal
 
 Add a focused one-shot command that converts copied rich/web HTML into readable
-Markdown while preserving SafetyStrip's core invariants: no ABI change, no new
+Markdown while preserving xPare's core invariants: no ABI change, no new
 dependency, no network/IO/logging in the core, deterministic output, and no
 clipboard-content persistence.
 
@@ -70,7 +70,7 @@ Markdown result back as plain text.
 
 - 2026-06-06: Choose a worktree branch from `origin/main` after performance wave 10
   merged. Main checkout has unrelated local edits, so the feature lives in
-  `/private/tmp/SafetyStrip-html-to-markdown` on `codex/html-to-markdown-convert`.
+  `/private/tmp/xPare-html-to-markdown` on `codex/html-to-markdown-convert`.
 - 2026-06-06: Choose no new parser/converter dependency for v1. A small converter is
   enough for common copied-web content and avoids expanding the core dependency and
   audit surface.

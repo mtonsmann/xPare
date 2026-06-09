@@ -12,14 +12,14 @@ public protocol PasteFileWriting: AnyObject {
     func removeAll()
 }
 
-/// The **only** place in SafetyStrip that may persist clipboard-derived content,
+/// The **only** place in xPare that may persist clipboard-derived content,
 /// and only for the opt-in "paste large clipboards as a file" feature
 /// (`Settings.pasteLargeAsFile`, off by default).
 ///
 /// This is a documented exception to the "no persistence of content" posture —
 /// see SECURITY.md ("Opt-in paste-as-file exception") and
 /// `docs/guardrails/privacy-and-data-handling.md`. The
-/// `safetystrip:allow-content-persistence` marker below is recognized by
+/// `xpare:allow-content-persistence` marker below is recognized by
 /// `cargo xtask check-no-content-logging` *only in this file*; anywhere else
 /// it is itself a violation.
 ///
@@ -64,7 +64,7 @@ public final class PasteFileStore: PasteFileWriting {
             // clipboard result becomes the single paste file, owner-only. A write
             // that fails midway is cleaned up by the catch below.
             let transformed = Data(text.utf8)
-            try transformed.write(to: url)  // safetystrip:allow-content-persistence
+            try transformed.write(to: url)  // xpare:allow-content-persistence
             try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
             // Transient by design — keep Time Machine and friends away from it.
             var values = URLResourceValues()

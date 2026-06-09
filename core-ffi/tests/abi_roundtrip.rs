@@ -4,8 +4,8 @@
 //! These prove the *boundary* contract — pointer validation, the buffer/ownership
 //! protocol, the lossy-UTF-8 input handling, and the `SsStatus` error model — and
 //! that none of it can panic. The transform *logic* itself is owned and tested by
-//! `safetystrip-core`; where output correctness matters we compare against
-//! `safetystrip_core::transform` rather than hardcoding a brittle expected string,
+//! `xpare-core`; where output correctness matters we compare against
+//! `xpare_core::transform` rather than hardcoding a brittle expected string,
 //! which simultaneously asserts the FFI faithfully relays `(input, config)`.
 //!
 //! Every `unsafe` call is funnelled through a tiny safe helper below with a SAFETY
@@ -14,7 +14,7 @@
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 
-use safetystrip_ffi::{
+use xpare_ffi::{
     ss_abi_version, ss_buffer_free, ss_capabilities_json, ss_transform, SsStatus,
     SS_MAX_INPUT_BYTES,
 };
@@ -127,7 +127,7 @@ const IDENTITY_CFG: &str = r#"{"version":2,"operations":[]}"#;
 fn abi_version_is_two() {
     assert_eq!(ss_abi_version(), 2);
     // Cross-check against the public constant so a bump can never silently pass.
-    assert_eq!(ss_abi_version(), safetystrip_ffi::SS_ABI_VERSION);
+    assert_eq!(ss_abi_version(), xpare_ffi::SS_ABI_VERSION);
 }
 
 // ---------------------------------------------------------------------------
@@ -172,8 +172,8 @@ fn capabilities_json_matches_core_and_describes_schema() {
     // self-description. No JSON dependency needed.
     assert_eq!(
         caps,
-        safetystrip_core::capabilities(),
-        "ss_capabilities_json must relay safetystrip_core::capabilities() verbatim"
+        xpare_core::capabilities(),
+        "ss_capabilities_json must relay xpare_core::capabilities() verbatim"
     );
 
     // And it must actually be the capabilities document: an `operations` array and
@@ -183,11 +183,11 @@ fn capabilities_json_matches_core_and_describes_schema() {
         caps.contains("\"operations\":["),
         "capabilities must contain an operations array, got: {caps}"
     );
-    let expected_version = format!("\"config_version\":{}", safetystrip_core::CONFIG_VERSION);
+    let expected_version = format!("\"config_version\":{}", xpare_core::CONFIG_VERSION);
     assert!(
         caps.contains(&expected_version),
         "capabilities must report config_version {}, got: {caps}",
-        safetystrip_core::CONFIG_VERSION
+        xpare_core::CONFIG_VERSION
     );
 
     // Calling twice must yield the same (cached) static string, byte-for-byte.
@@ -217,8 +217,8 @@ fn transform_happy_path_strip_html_then_collapse_whitespace() {
 
     // Also assert the FFI relayed `(input, config)` faithfully by reproducing the
     // expected output directly from the core with the same parsed config.
-    let core_cfg = safetystrip_core::parse_config(cfg_json).expect("config parses");
-    let expected = safetystrip_core::transform(&String::from_utf8_lossy(input), &core_cfg);
+    let core_cfg = xpare_core::parse_config(cfg_json).expect("config parses");
+    let expected = xpare_core::transform(&String::from_utf8_lossy(input), &core_cfg);
     assert_eq!(out, expected);
 }
 

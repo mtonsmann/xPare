@@ -1,6 +1,6 @@
-# Contributing to SafetyStrip
+# Contributing to xPare
 
-SafetyStrip is a memory-safe, plain-text clipboard utility: a pure Rust
+xPare is a memory-safe, plain-text clipboard utility: a pure Rust
 transformation **core** driven by native **shells**. A small set of invariants
 (no `unsafe` in the core, a frozen C ABI, no network anywhere, no OS/IO/network
 dependencies in the core, deterministic output, minimal macOS entitlements) is
@@ -81,9 +81,9 @@ the PR.
 
 | Change class | What you touched | Run at minimum |
 |---|---|---|
-| **Core transform** | `core/` transform logic, ops, pipeline | `cargo test -p safetystrip-core`, `cargo clippy -p safetystrip-core --all-targets -- -D warnings`, `cargo fmt`, and the relevant fuzz target (below). New behavior needs regression **and** adversarial-input tests (prefer a reference-interpreter clause + property over a lone example); output must stay deterministic. For dead-code / weak-test confidence, run the best-effort `cargo xtask check-mutants` (`SS_DIFF_BASE=origin/main` scopes it to your diff). See [code & test hygiene](docs/guardrails/code-and-test-hygiene.md). |
-| **FFI boundary / ABI** | `core-ffi/` (incl. `cbindgen.toml`), config serialization, capabilities/version, `CSafetyStrip` shim files | `cargo xtask check-abi`, `cargo xtask check-c-ffi-surface`, `cargo test -p safetystrip-ffi`. An intended ABI change means: bump `SS_ABI_VERSION`, run `cargo xtask gen-header`, and call it out in the PR (confirm a non-Swift shell could still consume the boundary). Adding a transform must **not** change the ABI. |
-| **Shell** | `shells/macos/` (Swift), reserved `windows/`/`linux/` | `cargo build -p safetystrip-ffi --release` then `swift build --package-path shells/macos`. Touching entitlements → `cargo xtask check-entitlements`; touching release signing → `cargo xtask check-release-posture`; touching the build/release shell scripts → `cargo xtask check-shell`. No transform logic belongs in a shell. |
+| **Core transform** | `core/` transform logic, ops, pipeline | `cargo test -p xpare-core`, `cargo clippy -p xpare-core --all-targets -- -D warnings`, `cargo fmt`, and the relevant fuzz target (below). New behavior needs regression **and** adversarial-input tests (prefer a reference-interpreter clause + property over a lone example); output must stay deterministic. For dead-code / weak-test confidence, run the best-effort `cargo xtask check-mutants` (`XP_DIFF_BASE=origin/main` scopes it to your diff). See [code & test hygiene](docs/guardrails/code-and-test-hygiene.md). |
+| **FFI boundary / ABI** | `core-ffi/` (incl. `cbindgen.toml`), config serialization, capabilities/version, `CXPare` shim files | `cargo xtask check-abi`, `cargo xtask check-c-ffi-surface`, `cargo test -p xpare-ffi`. An intended ABI change means: bump `XP_ABI_VERSION`, run `cargo xtask gen-header`, and call it out in the PR (confirm a non-Swift shell could still consume the boundary). Adding a transform must **not** change the ABI. |
+| **Shell** | `shells/macos/` (Swift), reserved `windows/`/`linux/` | `cargo build -p xpare-ffi --release` then `swift build --package-path shells/macos`. Touching entitlements → `cargo xtask check-entitlements`; touching release signing → `cargo xtask check-release-posture`; touching the build/release shell scripts → `cargo xtask check-shell`. No transform logic belongs in a shell. |
 | **Security / privacy posture** | entitlements, logging, in-memory lifetime, data paths, anything network-adjacent | `cargo xtask check-no-network`, `cargo xtask check-no-content-logging`, `cargo xtask check-pipeline-zeroization`, `cargo xtask check-entitlements`, `cargo xtask check-release-posture`, `cargo xtask check-unsafe-forbid`. Any new entitlement, network-capable dependency, data path, or weakening of wipe-before-release zeroization is a posture change — justify it in the PR and update `SECURITY.md`. |
 | **Dependencies & CI** | crate versions, `Cargo.toml`/`Cargo.lock`, lints, `xtask`, `.github/workflows/`, shell scripts | `cargo xtask check-core-deps`, `cargo xtask check-no-network`, `cargo xtask check-supply-chain` + `cargo xtask check-unused-deps` (any dependency/lockfile change), `cargo xtask check-workflows` (any workflow change), plus `cargo test -p xtask` / `cargo clippy -p xtask --all-targets -- -D warnings` when editing `xtask`. New crates: prefer boring, audited, API-stable ones; a new core dependency must be a pure-data crate (no OS/IO/net) and added to the `xtask` allowlist with justification — and it must actually be used (`check-unused-deps`). |
 | **Docs only** | `README`, `ARCHITECTURE.md`, `DESIGN.md`, `docs/`, runbooks | `cargo fmt --all --check` (still run the formatter); if you edited Rust doc comments, `cargo xtask check-docs`. Other checks may be skipped if the PR explains why. |
@@ -278,14 +278,14 @@ cargo run -p xtask -- check-coverage   # auto-bootstraps the llvm-tools componen
 cargo run -p xtask -- check-mutants    # full tree
 
 # Scope the mutation run to the lines you changed (fast PR feedback):
-SS_DIFF_BASE=origin/main cargo run -p xtask -- check-mutants
+XP_DIFF_BASE=origin/main cargo run -p xtask -- check-mutants
 ```
 
 Both are **heavy and deterministic**, so — like Miri and Kani — they sit **outside** the
 required `cargo xtask ci` gate. Re-running them on unchanged code proves nothing new, so
 they are event-driven, not scheduled: on demand locally, and path-filtered in
 [`hygiene.yml`](.github/workflows/hygiene.yml) (a `continue-on-error` job that scopes the
-mutation run to the PR diff via `SS_DIFF_BASE`). There is **no cron** — a stable repo
+mutation run to the PR diff via `XP_DIFF_BASE`). There is **no cron** — a stable repo
 pays nothing. See [code & test hygiene](docs/guardrails/code-and-test-hygiene.md).
 
 ## macOS shell anti-slop (`check-swift`, best-effort)
@@ -300,7 +300,7 @@ cargo run -p xtask -- check-swift   # builds the FFI staticlib, then lint + test
 
 It runs, in order: `swift format lint --strict` (driven by
 [`shells/macos/.swift-format`](shells/macos/.swift-format)); a `cargo build -p
-safetystrip-ffi --release` so the package can link the staticlib over the frozen C ABI;
+xpare-ffi --release` so the package can link the staticlib over the frozen C ABI;
 `swift test`; and a **Sources-only** line-coverage floor via `llvm-cov`
 (`SWIFT_COVERAGE_FLOOR_PCT`, currently 95% — matching the Rust product floor; baseline
 ~95.8%, with the OS-facing pasteboard/hotkey layers tested headlessly and only the SwiftUI

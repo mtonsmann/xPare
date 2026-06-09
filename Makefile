@@ -1,4 +1,4 @@
-# SafetyStrip — convenience wrapper over the canonical commands.
+# xPare — convenience wrapper over the canonical commands.
 #
 # Every target DELEGATES to `cargo`, `cargo xtask`, or the shell scripts so there
 # is never a second source of truth: `make ci` is exactly `cargo xtask ci` — the
@@ -22,7 +22,7 @@ FUZZ_TARGETS ?=
 
 # Release packaging (see shells/macos/release.sh and docs/release-model.md).
 # dist/github-release are gated and need Developer ID credentials + a vX.Y.Z tag.
-# dist signs with shells/macos/SafetyStrip.entitlements by default. SIGN_ENTITLEMENTS
+# dist signs with shells/macos/xPare.entitlements by default. SIGN_ENTITLEMENTS
 # exists so CI can pass the checked file as an absolute path; other paths are rejected.
 VERSION ?=
 CERT_NAME ?=
@@ -78,7 +78,7 @@ docs: ## Build docs with -D warnings (broken intra-doc links, invalid doc HTML)
 coverage: ## Line-coverage floor (cargo-llvm-cov; best-effort, outside `ci`)
 	$(CARGO) run -p xtask -- check-coverage
 
-mutants: ## Mutation testing (cargo-mutants; SS_DIFF_BASE=<ref> scopes to a diff; best-effort)
+mutants: ## Mutation testing (cargo-mutants; XP_DIFF_BASE=<ref> scopes to a diff; best-effort)
 	$(CARGO) run -p xtask -- check-mutants
 
 swift: ## macOS shell anti-slop: swift-format lint + swift test + coverage (+ SwiftLint if present)
@@ -94,20 +94,20 @@ header: ## Regenerate the frozen C ABI header
 	$(CARGO) run -p xtask -- gen-header
 
 bench: ## Run the quick (clipboard-scale) benchmarks
-	$(CARGO) bench -p safetystrip-core --bench transform
+	$(CARGO) bench -p xpare-core --bench transform
 
 bench-large: ## Run the heavy log-file benchmarks up to 256 MB (slow)
-	$(CARGO) bench -p safetystrip-core --bench transform_large
+	$(CARGO) bench -p xpare-core --bench transform_large
 
 perf: ## Throughput baseline (PERF_MIB=128 PERF_SAMPLES=7 [PERF_MIN_MIB_PER_SEC=N])
-	SS_PERF_MIB=$(PERF_MIB) SS_PERF_SAMPLES=$(PERF_SAMPLES) SS_PERF_MIN_MIB_PER_SEC=$(PERF_MIN_MIB_PER_SEC) \
-		$(CARGO) test -p safetystrip-core --release --test throughput -- --ignored --nocapture
+	XP_PERF_MIB=$(PERF_MIB) XP_PERF_SAMPLES=$(PERF_SAMPLES) XP_PERF_MIN_MIB_PER_SEC=$(PERF_MIN_MIB_PER_SEC) \
+		$(CARGO) test -p xpare-core --release --test throughput -- --ignored --nocapture
 
 fuzz: ## Build all fuzz targets (auto-installs nightly/cargo-fuzz if needed)
 	$(CARGO) run -p xtask -- check-fuzz
 
 fuzz-smoke: ## Build and briefly run all fuzz targets (FUZZ_SMOKE_SECONDS=30)
-	SS_FUZZ_SMOKE_SECONDS=$(FUZZ_SMOKE_SECONDS) $(CARGO) run -p xtask -- check-fuzz
+	XP_FUZZ_SMOKE_SECONDS=$(FUZZ_SMOKE_SECONDS) $(CARGO) run -p xtask -- check-fuzz
 
 fuzz-overnight: ## Resource-sized local fuzz run across all targets (FUZZ_HOURS=8 [FUZZ_TARGETS=...])
 	scripts/overnight-fuzz.sh $(FUZZ_HOURS) $(FUZZ_TARGETS)
@@ -115,7 +115,7 @@ fuzz-overnight: ## Resource-sized local fuzz run across all targets (FUZZ_HOURS=
 zizmor: ## Audit GitHub Actions config via the canonical workflow lint gate
 	$(CARGO) run -p xtask -- check-workflows
 
-app: ## Build the macOS menu-bar .app bundle (dist/SafetyStrip.app)
+app: ## Build the macOS menu-bar .app bundle (dist/xPare.app)
 	cd shells/macos && ./package-app.sh
 
 run: ## Build and launch the macOS menu-bar app

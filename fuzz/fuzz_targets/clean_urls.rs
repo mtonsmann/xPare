@@ -16,7 +16,7 @@
 //!   mkdir -p corpus/clean_urls && cp ../core/tests/corpus/clean_urls/* corpus/clean_urls/
 //!   cargo +nightly fuzz run clean_urls
 use libfuzzer_sys::fuzz_target;
-use safetystrip_core::ops::urls::clean_urls;
+use xpare_core::ops::urls::clean_urls;
 
 fuzz_target!(|data: &[u8]| {
     let text = String::from_utf8_lossy(data);

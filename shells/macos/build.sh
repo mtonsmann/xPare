@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build (and optionally test) the SafetyStrip macOS shell.
+# Build (and optionally test) the xPare macOS shell.
 #
 # Usage:
 #   ./build.sh            # build the Rust core (release) + swift build
@@ -25,14 +25,14 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 CMD="${1:-build}"
 
 # --- 1. Build the Rust core staticlib (release) --------------------------------
-echo ">>> Building Rust core (safetystrip-ffi, release)…"
+echo ">>> Building Rust core (xpare-ffi, release)…"
 if [ -f "${HOME}/.cargo/env" ]; then
     # shellcheck disable=SC1091
     source "${HOME}/.cargo/env"
 fi
-( cd "${REPO_ROOT}" && cargo build -p safetystrip-ffi --release )
+( cd "${REPO_ROOT}" && cargo build -p xpare-ffi --release )
 
-STATICLIB="${REPO_ROOT}/target/release/libsafetystrip_ffi.a"
+STATICLIB="${REPO_ROOT}/target/release/libxpare_ffi.a"
 if [ ! -f "${STATICLIB}" ]; then
     echo "ERROR: expected staticlib not found at ${STATICLIB}" >&2
     exit 1

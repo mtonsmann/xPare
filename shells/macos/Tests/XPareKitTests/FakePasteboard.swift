@@ -1,5 +1,5 @@
 import Foundation
-@testable import SafetyStripKit
+@testable import XPareKit
 
 /// An in-memory `PasteboardProtocol` for deterministic tests — no NSPasteboard,
 /// no global state. Tracks reads/writes and bumps `changeCount` on every write.

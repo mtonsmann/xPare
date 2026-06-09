@@ -1,6 +1,6 @@
 # Architecture
 
-SafetyStrip is a memory-safe, plain-text clipboard utility. It strips formatting
+xPare is a memory-safe, plain-text clipboard utility. It strips formatting
 and noise out of clipboard text — coerce rich text to plain, strip HTML/Markdown,
 convert copied HTML to Markdown, normalize whitespace, change case, line
 operations, IOC cleanup, and optional email/IP masking — without the clipboard
@@ -29,7 +29,7 @@ shells/windows, shells/linux   reserved (empty) — a new platform implements th
 docs/        ARCHITECTURE/DESIGN/SECURITY, guardrails, exec plans
 ```
 
-### `core/` — `safetystrip-core`
+### `core/` — `xpare-core`
 
 The transformation engine. `String` in, `String` out, selected by a [`Config`].
 Fed arbitrary, possibly adversarial text, so it carries the load-bearing safety
@@ -53,18 +53,18 @@ invariants.
 Public API: `transform`, `parse_config`, `capabilities`/`CAPABILITIES_JSON`,
 and the `Config`, `Operation`, `CaseKind`, `ConfigError`, `CONFIG_VERSION` types.
 
-### `core-ffi/` — `safetystrip-ffi`
+### `core-ffi/` — `xpare-ffi`
 
 The only crate permitted to use `unsafe`. A deliberately tiny C ABI over `core`
 so it can be audited in one sitting. Built as `staticlib` + `cdylib` + `rlib`
-(lib name `safetystrip_ffi`). Every entry point validates pointers, lossy-decodes
+(lib name `xpare_ffi`). Every entry point validates pointers, lossy-decodes
 input UTF-8, and wraps the call to the core in `catch_unwind`, so a panic becomes
 an error code instead of undefined behavior across the boundary. Returned buffers
 are zeroized on free. Because this is the only `unsafe` in the tree, its boundary
 tests run under Miri's undefined-behavior detector (`cargo xtask check-miri`;
 nightly, best-effort). See [the FFI guardrail](docs/guardrails/ffi-boundary-and-abi-stability.md).
 
-### `cli/` — `safetystrip-cli` (binary `safetystrip`)
+### `cli/` — `xpare-cli` (binary `xpare`)
 
 A headless harness over `core` with **no** clipboard or OS integration. Reads
 stdin, lossy-decodes it (mirroring the FFI), applies a JSON config, writes the
@@ -89,7 +89,7 @@ cargo-mutants) — those last four nightly/heavy, best-effort, and outside the r
 See [the dependency guardrail](docs/guardrails/dependency-posture.md) and [the code &
 test hygiene guardrail](docs/guardrails/code-and-test-hygiene.md).
 
-### `fuzz/` — `safetystrip-fuzz`
+### `fuzz/` — `xpare-fuzz`
 
 Its **own** workspace (so libFuzzer and the nightly toolchain never leak into the
 stable build). cargo-fuzz targets prove the never-panics invariant on the
@@ -103,8 +103,8 @@ hotkey, settings, and calling the core over the C ABI. **No transform logic live
 in a shell.**
 
 - `shells/macos/` — the Swift menu-bar shell. Links the FFI staticlib through the
-  C ABI via the `CSafetyStrip` module map (`Sources/CSafetyStrip/include/`), which
-  re-includes the single source-of-truth header at `core-ffi/include/safetystrip.h`
+  C ABI via the `CXPare` module map (`Sources/CXPare/include/`), which
+  re-includes the single source-of-truth header at `core-ffi/include/xpare.h`
   rather than copying it. See [the macOS posture](docs/guardrails/macos-posture.md).
 - `shells/windows/`, `shells/linux/` — reserved, empty. Adding a platform means
   implementing [the shell contract](docs/guardrails/shell-contract.md) and linking
@@ -177,7 +177,7 @@ therefore CI). Fix the code to satisfy the check; never weaken the check.
 | No `unsafe` in the core | `#![forbid(unsafe_code)]` + `check-unsafe-forbid` | `core/src/lib.rs`, `xtask` |
 | Core has no OS/IO/network deps | `check-core-deps` (strict transitive allowlist) | `xtask` `CORE_DEP_ALLOWLIST` |
 | No network anywhere in the workspace | `check-no-network` (banlist over the whole tree) | `xtask` `NETWORK_BANLIST` |
-| Frozen C ABI | checked-in `core-ffi/include/safetystrip.h` + `check-abi` (drift fails) | `xtask` (cbindgen) |
+| Frozen C ABI | checked-in `core-ffi/include/xpare.h` + `check-abi` (drift fails) | `xtask` (cbindgen) |
 | Config is data (adding a transform ≠ ABI change) | serde round-trip + version tests | `core` tests |
 | Never panics on input | cargo-fuzz targets + property tests + adversarial corpus | `fuzz/`, `core` tests |
 | No log sink in the core | `#![deny(clippy::print_stdout, print_stderr)]` in core/core-ffi + workspace-wide `dbg_macro` deny + no logging deps | `core/src/lib.rs`, `[workspace.lints]` |

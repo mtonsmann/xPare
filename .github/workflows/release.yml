@@ -1,10 +1,10 @@
-# SafetyStrip release.
+# xPare release.
 #
 # Tag-triggered (v*). The `validate` job first requires a successful manual
 # Release Fuzz run on the exact tag SHA, then runs the full gate, builds the app
 # bundle, and uploads an explicitly UNSIGNED preview artifact — it needs no Apple
 # secrets, so it works on every tag and every fork. `publish-official` runs only
-# when the repo opts in (vars.SAFETYSTRIP_ENABLE_OFFICIAL_RELEASE == 'true') AND
+# when the repo opts in (vars.XPARE_ENABLE_OFFICIAL_RELEASE == 'true') AND
 # the Apple Developer ID / notary secrets are present; it signs with the checked
 # App Sandbox entitlements, notarizes, and publishes the GitHub Release.
 # Signing/notary credentials are NEVER required for pull-request CI (see
@@ -103,7 +103,7 @@ jobs:
 
       - name: Build the Swift shell (release)
         run: |
-          cargo build -p safetystrip-ffi --release
+          cargo build -p xpare-ffi --release
           swift build -c release --package-path shells/macos
 
       - name: Package unsigned preview
@@ -112,28 +112,28 @@ jobs:
       - name: Upload unsigned preview artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: SafetyStrip-${{ github.ref_name }}-unsigned-preview
+          name: xPare-${{ github.ref_name }}-unsigned-preview
           path: |
-            dist/release/SafetyStrip-v${{ env.RELEASE_VERSION }}-macos-*-unsigned-preview.zip
-            dist/release/SafetyStrip-v${{ env.RELEASE_VERSION }}-macos-*-unsigned-preview.zip.sha256
+            dist/release/xPare-v${{ env.RELEASE_VERSION }}-macos-*-unsigned-preview.zip
+            dist/release/xPare-v${{ env.RELEASE_VERSION }}-macos-*-unsigned-preview.zip.sha256
 
       - name: Note on official publication
-        if: ${{ vars.SAFETYSTRIP_ENABLE_OFFICIAL_RELEASE != 'true' }}
+        if: ${{ vars.XPARE_ENABLE_OFFICIAL_RELEASE != 'true' }}
         run: |
           echo "Official GitHub Release publication is disabled."
-          echo "Set repo variable SAFETYSTRIP_ENABLE_OFFICIAL_RELEASE=true and add the"
+          echo "Set repo variable XPARE_ENABLE_OFFICIAL_RELEASE=true and add the"
           echo "Apple Developer ID + notary secrets to publish signed assets."
 
   publish-official:
     name: sign, notarize, and publish
     needs: validate
-    if: ${{ vars.SAFETYSTRIP_ENABLE_OFFICIAL_RELEASE == 'true' }}
+    if: ${{ vars.XPARE_ENABLE_OFFICIAL_RELEASE == 'true' }}
     runs-on: macos-latest
     permissions:
       contents: write
     env:
       VERSION: ${{ github.ref_name }}
-      NOTARY_PROFILE: safetystrip-notary
+      NOTARY_PROFILE: xpare-notary
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -162,7 +162,7 @@ jobs:
       # paths from $RUNNER_TEMP here and export them for the later steps.
       - name: Prepare signing paths
         run: |
-          echo "KEYCHAIN_PATH=${RUNNER_TEMP}/safetystrip-signing.keychain-db" >> "${GITHUB_ENV}"
+          echo "KEYCHAIN_PATH=${RUNNER_TEMP}/xpare-signing.keychain-db" >> "${GITHUB_ENV}"
           echo "CERTIFICATE_PATH=${RUNNER_TEMP}/developer-id.p12" >> "${GITHUB_ENV}"
 
       - name: Validate required Apple secrets
@@ -216,7 +216,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          make dist VERSION="${RELEASE_VERSION}" CERT_NAME="${CERT_NAME}" NOTARY_PROFILE="${NOTARY_PROFILE}" SIGN_ENTITLEMENTS="${GITHUB_WORKSPACE}/shells/macos/SafetyStrip.entitlements"
+          make dist VERSION="${RELEASE_VERSION}" CERT_NAME="${CERT_NAME}" NOTARY_PROFILE="${NOTARY_PROFILE}" SIGN_ENTITLEMENTS="${GITHUB_WORKSPACE}/shells/macos/xPare.entitlements"
           make github-release VERSION="${RELEASE_VERSION}"
 
       - name: Clean temporary signing material

@@ -1,6 +1,6 @@
-//! Integration tests for the `safetystrip` binary.
+//! Integration tests for the `xpare` binary.
 //!
-//! These run the actual built binary (via `CARGO_BIN_EXE_safetystrip`) as a
+//! These run the actual built binary (via `CARGO_BIN_EXE_xpare`) as a
 //! subprocess, feed it stdin, and assert on stdout, stderr, and the exit code.
 //! They exercise the harness as a black box — the contract a fuzz/validation
 //! driver and manual users depend on: stdout carries only transformed text,
@@ -10,7 +10,7 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 
 /// Path to the binary under test, provided by Cargo for integration tests.
-const BIN: &str = env!("CARGO_BIN_EXE_safetystrip");
+const BIN: &str = env!("CARGO_BIN_EXE_xpare");
 
 /// Captured result of one binary invocation.
 struct Output {
@@ -33,7 +33,7 @@ fn run(args: &[&str], stdin: &[u8]) -> Output {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("failed to spawn safetystrip binary");
+        .expect("failed to spawn xpare binary");
 
     // Write and then drop stdin so the pipe closes (EOF) before we wait — otherwise
     // a child that reads to end-of-input would block forever. A child that exits
@@ -83,7 +83,7 @@ fn capabilities_prints_valid_json_to_stdout() {
         "capabilities must be a balanced JSON object: {json}"
     );
     assert!(
-        json.contains(r#""name":"safetystrip-core""#),
+        json.contains(r#""name":"xpare-core""#),
         "missing name: {json}"
     );
     assert!(
@@ -162,7 +162,7 @@ fn config_from_temp_file() {
     // Write a config file to the OS temp dir, with a PID-unique name so concurrent
     // test binaries never clash. Clean it up regardless of assertion outcome.
     let path =
-        std::env::temp_dir().join(format!("safetystrip-cli-test-{}.json", std::process::id()));
+        std::env::temp_dir().join(format!("xpare-cli-test-{}.json", std::process::id()));
     std::fs::write(&path, STRIP_HTML).expect("failed to write temp config");
 
     let out = run_str(
@@ -240,7 +240,7 @@ fn unsupported_version_is_a_config_error() {
 
 #[test]
 fn missing_config_file_is_a_config_error() {
-    let missing = std::env::temp_dir().join("safetystrip-cli-does-not-exist-xyz.json");
+    let missing = std::env::temp_dir().join("xpare-cli-does-not-exist-xyz.json");
     let out = run_str(
         &[
             "transform",

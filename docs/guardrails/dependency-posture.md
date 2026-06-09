@@ -4,7 +4,7 @@
 `Cargo.toml`/`Cargo.lock`, touching lints, the `xtask` checks, CI
 (`.github/workflows/`), or structural tests.
 
-SafetyStrip's safety and privacy guarantees are only as strong as its dependency
+xPare's safety and privacy guarantees are only as strong as its dependency
 tree. A single transitive crate with network or broad OS capability would undermine
 the whole posture. So dependencies are **boring, audited, API-stable, and
 capability-constrained**, and the constraint is enforced mechanically.
@@ -14,7 +14,7 @@ capability-constrained**, and the constraint is enforced mechanically.
 1. **Prefer boring, audited, API-stable crates.** Favor ubiquitous, well-reviewed
    libraries over novel ones. Justify every new dependency.
 2. **The core's dependency tree is a tiny allowlist of pure-data crates.** The full
-   transitive *normal* dependency closure of `safetystrip-core` must stay on
+   transitive *normal* dependency closure of `xpare-core` must stay on
    `CORE_DEP_ALLOWLIST` in `xtask/src/main.rs`. Today that is: `serde` family +
    `serde_json` (config), `pulldown-cmark` (Markdown), the proc-macro toolchain
    `serde_derive` needs (`proc-macro2`, `quote`, `syn`, `unicode-ident`,
@@ -69,7 +69,7 @@ capability-constrained**, and the constraint is enforced mechanically.
 
 ## How the checks work
 
-- `check-core-deps` runs `cargo metadata`, walks `safetystrip-core`'s transitive
+- `check-core-deps` runs `cargo metadata`, walks `xpare-core`'s transitive
   **normal** dependency closure (dev/build deps excluded), and fails if any crate is
   not on `CORE_DEP_ALLOWLIST`.
 - `check-no-network` walks the closure of **every** workspace member and fails if any

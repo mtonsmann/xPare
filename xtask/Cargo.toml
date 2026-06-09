@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish = false
-description = "Mechanical invariant enforcement for SafetyStrip (run via `cargo xtask <check>`)."
+description = "Mechanical invariant enforcement for xPare (run via `cargo xtask <check>`)."
 
 [dependencies]
 # Tooling only — never shipped, never linked into core/shell. Parses `cargo metadata`

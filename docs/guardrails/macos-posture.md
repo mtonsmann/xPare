@@ -33,10 +33,10 @@ should distrust, so the posture is deliberately minimal and is checked mechanica
      namespaced.
 
    The checked-in entitlements file lives at
-   `shells/macos/SafetyStrip.entitlements` (the path `check-entitlements` reads).
+   `shells/macos/xPare.entitlements` (the path `check-entitlements` reads).
 4. **Official Developer ID releases must use that entitlements file.** Unsigned or
    ad-hoc preview builds are not official binaries. `release.sh dist` defaults to
-   `shells/macos/SafetyStrip.entitlements`, rejects alternate resolved paths, signs
+   `shells/macos/xPare.entitlements`, rejects alternate resolved paths, signs
    the executable and bundle with it, and verifies both signed payloads with
    `codesign -d --entitlements :-`. `cargo xtask check-release-posture`
    mechanically checks that the release script still has those fail-closed guards.
@@ -68,7 +68,7 @@ should distrust, so the posture is deliberately minimal and is checked mechanica
    → *Performance & large inputs → Input size ceiling*.
 9. **Treat local pasteboard writers as a race/DoS boundary, not a confidentiality
    boundary.** Another same-user process can write the general pasteboard before a
-   read, during a transform, or after the in-place rewrite. SafetyStrip must still
+   read, during a transform, or after the in-place rewrite. xPare must still
    avoid logging/persistence/exfiltration and must bound each transform, but it does
    not claim to lock the pasteboard against local writers.
 
@@ -80,7 +80,7 @@ should distrust, so the posture is deliberately minimal and is checked mechanica
    runs when the feature is off. On-demand mode (the default) does no polling at all.
 11. **No stronger ordering is implied.** Polling is best-effort; it can miss
    intermediate values if multiple writes happen between ticks and it can race a
-   writer before the read or after the rewrite. The shell suppresses SafetyStrip
+   writer before the read or after the rewrite. The shell suppresses xPare
    self-write generations, drops stale transform completions when `changeCount`
    moved in flight, and coalesces callbacks while a strip is running. Those controls
    belong in the shell and must not change the core ABI.
@@ -103,13 +103,13 @@ should distrust, so the posture is deliberately minimal and is checked mechanica
 Every avoided permission is a permission the user never has to grant and an attack
 surface the app never has. The sandbox with no network entitlement is the OS-level
 backstop for the "no exfiltration" promise; refusing Accessibility/Input-Monitoring
-keeps SafetyStrip from being the kind of input-watching tool it is meant to protect
+keeps xPare from being the kind of input-watching tool it is meant to protect
 you from. Full rationale: [`DESIGN.md`](../../DESIGN.md) (D8, D9) and
 [`SECURITY.md`](../../SECURITY.md).
 
 ## Enforcing checks
 
-- `cargo xtask check-entitlements` — reads `shells/macos/SafetyStrip.entitlements`,
+- `cargo xtask check-entitlements` — reads `shells/macos/xPare.entitlements`,
   **requires** `app-sandbox = true`, and **fails** on any extra key. A missing file
   is a failure (the entitlements file is a required deliverable). The check is a
   portable XML scan (no `plutil`), so it runs on the Linux CI gate too.

@@ -1,4 +1,4 @@
-//! Thin, language-neutral C ABI over `safetystrip-core`.
+//! Thin, language-neutral C ABI over `xpare-core`.
 //!
 //! This is the **only** crate permitted to use `unsafe`, and the surface is kept
 //! deliberately tiny so it can be audited in one sitting:
@@ -10,7 +10,7 @@
 //!
 //! Adding or changing a *transform* never changes this ABI: feature selection
 //! crosses as the `config_json` string. Any change to the signatures or the enum
-//! below is a compatibility event — bump [`SS_ABI_VERSION`], regenerate the header
+//! below is a compatibility event — bump [`XP_ABI_VERSION`], regenerate the header
 //! (`cargo xtask gen-header`), and call it out in the PR.
 //!
 //! Safety model: every entry point validates its pointers, decodes input UTF-8
@@ -38,11 +38,11 @@ use zeroize::{Zeroize, Zeroizing};
 /// struct/enum layouts, or memory-ownership contract below. Adding a transform is
 /// NOT an ABI change and must NOT bump this.
 ///
-/// History: v1 → v2 added [`SS_MAX_INPUT_BYTES`] and a new trailing status,
+/// History: v1 → v2 added [`XP_MAX_INPUT_BYTES`] and a new trailing status,
 /// [`SsStatus::ErrInputTooLarge`]. Existing status values are unchanged, so a v1
 /// caller still interprets `Ok`/`ErrNullArg`/`ErrInvalidConfig`/`ErrInternal`
 /// correctly; only the new size ceiling is added.
-pub const SS_ABI_VERSION: u32 = 2;
+pub const XP_ABI_VERSION: u32 = 2;
 
 /// Hard upper bound, in bytes, on the input [`ss_transform`] will accept. A larger
 /// input returns [`SsStatus::ErrInputTooLarge`] *before* anything is read or
@@ -60,7 +60,7 @@ pub const SS_ABI_VERSION: u32 = 2;
 /// cbindgen-generated `#define` is a single 64-bit-typed C constant: the expression
 /// form would be evaluated in 32-bit `int` by a C compiler and overflow (2^31 >
 /// INT_MAX), corrupting the value for C/C++ consumers and the Swift macro importer.
-pub const SS_MAX_INPUT_BYTES: usize = 2_147_483_648; // 2 GiB (2 * 1024^3)
+pub const XP_MAX_INPUT_BYTES: usize = 2_147_483_648; // 2 GiB (2 * 1024^3)
 
 /// Result status for [`ss_transform`]. `repr(C)` so it is a plain C enum.
 #[repr(C)]
@@ -74,15 +74,15 @@ pub enum SsStatus {
     ErrInvalidConfig = 2,
     /// An unexpected internal error (e.g. a caught panic). Should never happen.
     ErrInternal = 3,
-    /// `input_len` exceeded [`SS_MAX_INPUT_BYTES`]; nothing was read, allocated, or
+    /// `input_len` exceeded [`XP_MAX_INPUT_BYTES`]; nothing was read, allocated, or
     /// transformed. (Added in ABI v2.)
     ErrInputTooLarge = 4,
 }
 
-/// Returns the integer ABI version. See [`SS_ABI_VERSION`].
+/// Returns the integer ABI version. See [`XP_ABI_VERSION`].
 #[no_mangle]
 pub extern "C" fn ss_abi_version() -> u32 {
-    SS_ABI_VERSION
+    XP_ABI_VERSION
 }
 
 /// Returns a pointer to a static, NUL-terminated UTF-8 JSON string describing this
@@ -95,7 +95,7 @@ pub extern "C" fn ss_capabilities_json() -> *const c_char {
     static CAPS: OnceLock<CString> = OnceLock::new();
     // The capabilities JSON is ASCII and contains no interior NUL, so `CString::new`
     // cannot fail in practice; `unwrap_or_default` keeps this panic-free regardless.
-    CAPS.get_or_init(|| CString::new(safetystrip_core::capabilities()).unwrap_or_default())
+    CAPS.get_or_init(|| CString::new(xpare_core::capabilities()).unwrap_or_default())
         .as_ptr()
 }
 
@@ -109,7 +109,7 @@ pub extern "C" fn ss_capabilities_json() -> *const c_char {
 ///   bytes (not NUL-terminated) that the caller must release with [`ss_buffer_free`].
 ///   On any error, `*out` is set to null and `*out_len` to 0. Both must not be null.
 ///
-/// Inputs larger than [`SS_MAX_INPUT_BYTES`] return [`SsStatus::ErrInputTooLarge`]
+/// Inputs larger than [`XP_MAX_INPUT_BYTES`] return [`SsStatus::ErrInputTooLarge`]
 /// without reading `input` or allocating.
 ///
 /// # Safety
@@ -141,7 +141,7 @@ pub unsafe extern "C" fn ss_transform(
 
     // Reject pathologically large inputs BEFORE reading `input` or allocating, so an
     // absurd size cannot trigger an out-of-memory abort or an allocation overflow.
-    if input_len > SS_MAX_INPUT_BYTES {
+    if input_len > XP_MAX_INPUT_BYTES {
         return SsStatus::ErrInputTooLarge;
     }
 
@@ -161,7 +161,7 @@ pub unsafe extern "C" fn ss_transform(
         Ok(s) => s,
         Err(_) => return SsStatus::ErrInvalidConfig,
     };
-    let config = match safetystrip_core::parse_config(config_str) {
+    let config = match xpare_core::parse_config(config_str) {
         Ok(c) => c,
         Err(_) => return SsStatus::ErrInvalidConfig,
     };
@@ -169,7 +169,7 @@ pub unsafe extern "C" fn ss_transform(
     // Defense in depth: the core is fuzzed to never panic, but a panic must never
     // unwind across the FFI boundary. Convert any panic to ErrInternal.
     let output = match catch_unwind(AssertUnwindSafe(|| {
-        safetystrip_core::transform(input_text.as_str(), &config)
+        xpare_core::transform(input_text.as_str(), &config)
     })) {
         Ok(text) => text,
         Err(_) => return SsStatus::ErrInternal,

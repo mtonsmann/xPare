@@ -1,14 +1,14 @@
 [package]
-name = "safetystrip-core"
+name = "xpare-core"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Pure, deterministic, memory-safe text transformation core for SafetyStrip. No OS, I/O, or network."
+description = "Pure, deterministic, memory-safe text transformation core for xPare. No OS, I/O, or network."
 
 [lib]
-name = "safetystrip_core"
+name = "xpare_core"
 
 # Inherit the workspace lint policy (unreachable_pub, dbg/todo/unimplemented bans, and
 # the `cfg(kani)` expected-cfg declaration). Core also carries `#![forbid(unsafe_code)]`
@@ -33,7 +33,7 @@ name = "transform"
 harness = false
 
 # Heavy "log file" benchmarks up to 256 MB. Separate target so the quick `transform`
-# bench stays fast; run with `cargo bench -p safetystrip-core --bench transform_large`.
+# bench stays fast; run with `cargo bench -p xpare-core --bench transform_large`.
 [[bench]]
 name = "transform_large"
 harness = false

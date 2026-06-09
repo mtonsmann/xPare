@@ -1,7 +1,7 @@
 import Testing
 import Foundation
-@testable import SafetyStripKit
-@testable import SafetyStripCore
+@testable import XPareKit
+@testable import XPareCore
 
 @Suite struct SettingsTests {
 

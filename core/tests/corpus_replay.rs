@@ -4,9 +4,9 @@
 //! to a `String` (so invalid-UTF-8 fixtures are handled exactly like the FFI
 //! boundary handles untrusted clipboard bytes), and runs each through:
 //!
-//! * [`safetystrip_core::ops::html::strip_html`],
-//! * [`safetystrip_core::ops::markdown::strip_markdown`], and
-//! * a representative full pipeline via [`safetystrip_core::transform`].
+//! * [`xpare_core::ops::html::strip_html`],
+//! * [`xpare_core::ops::markdown::strip_markdown`], and
+//! * a representative full pipeline via [`xpare_core::transform`].
 //!
 //! The assertion is twofold: **no panic** on any fixture (a panic fails the test
 //! process), and a **wall-clock sanity bound** per file to catch accidental
@@ -19,8 +19,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use safetystrip_core::ops::{html::strip_html, markdown::strip_markdown};
-use safetystrip_core::{transform, CaseKind, Config, Operation};
+use xpare_core::ops::{html::strip_html, markdown::strip_markdown};
+use xpare_core::{transform, CaseKind, Config, Operation};
 
 /// Per-file wall-clock budget. Generous (CI machines vary), but any genuinely
 /// quadratic/exponential regression on the multi-MB fixtures blows past it.

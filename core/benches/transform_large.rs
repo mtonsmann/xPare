@@ -4,7 +4,7 @@
 //! allocate hundreds of MB and take minutes. Run explicitly:
 //!
 //! ```sh
-//! cargo bench -p safetystrip-core --bench transform_large    # or: make bench-large
+//! cargo bench -p xpare-core --bench transform_large    # or: make bench-large
 //! ```
 //!
 //! They report throughput (MB/s) for the line-oriented ops a log workflow leans on
@@ -16,8 +16,8 @@ use std::fmt::Write as _;
 use std::time::Duration;
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use safetystrip_core::ops::html::strip_html;
-use safetystrip_core::{transform, Config, Operation};
+use xpare_core::ops::html::strip_html;
+use xpare_core::{transform, Config, Operation};
 
 const MB: usize = 1024 * 1024;
 

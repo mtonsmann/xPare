@@ -1,5 +1,5 @@
 import Foundation
-import SafetyStripCore
+import XPareCore
 
 /// The reason a strip was triggered, used only for control flow — never logged
 /// with any clipboard content attached.
@@ -94,7 +94,7 @@ public final class StripController {
     }
 
     /// Default input ceiling: the smaller of the core's hard backstop
-    /// (`SS_MAX_INPUT_BYTES`) and a RAM-proportional bound (~1/10 of physical memory).
+    /// (`XP_MAX_INPUT_BYTES`) and a RAM-proportional bound (~1/10 of physical memory).
     /// A transform's peak working set is several times its input, so this keeps a
     /// worst-case strip well under half of physical RAM, refusing larger clipboards
     /// gracefully rather than risking an out-of-memory abort. It scales with the
@@ -173,7 +173,7 @@ public final class StripController {
     /// the exception: it consumes the raw HTML representation directly.
     @discardableResult
     public func runOnce(
-        operations: [SafetyStripCore.Operation],
+        operations: [XPareCore.Operation],
         trigger: StripTrigger = .manual
     ) async -> StripOutcome {
         await perform(trigger: trigger) { snapshot in
@@ -339,7 +339,7 @@ public final class StripController {
     /// through `strip_html` first (the shell contract prefers `public.html` and
     /// hands it to the core's stripper), even if the user listed it later.
     func effectiveConfig(for snapshot: PasteboardSnapshot) -> TransformConfig {
-        var ops: [SafetyStripCore.Operation] = settings.operations
+        var ops: [XPareCore.Operation] = settings.operations
         if snapshot.kind == .html {
             ops.removeAll { $0 == .stripHtml }
             ops.insert(.stripHtml, at: 0)

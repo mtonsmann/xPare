@@ -1,8 +1,8 @@
 import SwiftUI
-import SafetyStripCore
-import SafetyStripKit
+import XPareCore
+import XPareKit
 
-/// The SafetyStrip menu-bar app.
+/// The xPare menu-bar app.
 ///
 /// This is a `MenuBarExtra` app with a `Settings` scene. To run it as a true
 /// accessory (no Dock icon, no main window) it must be packaged as a bundle with
@@ -10,11 +10,11 @@ import SafetyStripKit
 /// environment it compiles and links, which is what we verify; producing the
 /// signed `.app` requires full Xcode.
 @main
-struct SafetyStripApp: App {
+struct XPareApp: App {
     @StateObject private var model = AppModel()
 
     var body: some Scene {
-        MenuBarExtra("SafetyStrip", systemImage: "scissors") {
+        MenuBarExtra("xPare", systemImage: "scissors") {
             MenuContent(model: model)
         }
         .menuBarExtraStyle(.menu)
@@ -33,7 +33,7 @@ struct SafetyStripApp: App {
 @MainActor
 final class AppModel: ObservableObject {
     // Qualified to disambiguate from SwiftUI's `Settings` scene type.
-    @Published var settings: SafetyStripKit.Settings
+    @Published var settings: XPareKit.Settings
     /// A short, content-free status line for the menu (never clipboard text).
     @Published var lastStatus: String = "Ready"
     /// True while a strip runs long enough to be worth showing — drives the
@@ -59,7 +59,7 @@ final class AppModel: ObservableObject {
     // MARK: - Persistent pipeline (Clean toggles)
 
     /// Enable/disable a **zero-parameter** baseline operation, preserving order.
-    func setOperation(_ op: SafetyStripCore.Operation, enabled: Bool) {
+    func setOperation(_ op: XPareCore.Operation, enabled: Bool) {
         var ops = settings.operations
         if enabled {
             if !ops.contains(op) { ops.append(op) }
@@ -69,7 +69,7 @@ final class AppModel: ObservableObject {
         commit(ops)
     }
 
-    func isEnabled(_ op: SafetyStripCore.Operation) -> Bool {
+    func isEnabled(_ op: XPareCore.Operation) -> Bool {
         settings.operations.contains(op)
     }
 
@@ -136,7 +136,7 @@ final class AppModel: ObservableObject {
             commit(ops)
             return
         }
-        let newOp = SafetyStripCore.Operation.sortLines(
+        let newOp = XPareCore.Operation.sortLines(
             descending: flags.descending,
             caseInsensitive: flags.caseInsensitive)
         // Update in place when present (preserves pipeline position in manual order);
@@ -205,7 +205,7 @@ final class AppModel: ObservableObject {
         }
         // Update in place when present (preserves pipeline position in manual
         // order); otherwise append.
-        let newOp = SafetyStripCore.Operation.changeCase(case: kind)
+        let newOp = XPareCore.Operation.changeCase(case: kind)
         if let idx = ops.firstIndex(where: isChangeCase) {
             ops[idx] = newOp
         } else {
@@ -442,7 +442,7 @@ final class AppModel: ObservableObject {
     /// Run a transient single-op command against the clipboard (never persisted).
     /// Reductions/conversions and refang are surfaced this way per D12.
     func runCommand(
-        _ op: SafetyStripCore.Operation,
+        _ op: XPareCore.Operation,
         label: String,
         notApplicableStatus: String? = nil
     ) {
@@ -496,22 +496,22 @@ final class AppModel: ObservableObject {
 
     // MARK: - Private helpers
 
-    private func commit(_ ops: [SafetyStripCore.Operation]) {
+    private func commit(_ ops: [XPareCore.Operation]) {
         settings.operations = ops
         controller.update(settings)
     }
 
-    private func isSort(_ op: SafetyStripCore.Operation) -> Bool {
+    private func isSort(_ op: XPareCore.Operation) -> Bool {
         if case .sortLines = op { return true }
         return false
     }
 
-    private func isDefang(_ op: SafetyStripCore.Operation) -> Bool {
+    private func isDefang(_ op: XPareCore.Operation) -> Bool {
         if case .defang = op { return true }
         return false
     }
 
-    private func isChangeCase(_ op: SafetyStripCore.Operation) -> Bool {
+    private func isChangeCase(_ op: XPareCore.Operation) -> Bool {
         if case .changeCase = op { return true }
         return false
     }
@@ -528,7 +528,7 @@ final class AppModel: ObservableObject {
     private func setMaskFlags(_ flags: (emails: Bool, ipv4: Bool, ipv6: Bool)) {
         var ops = settings.operations
         if flags.emails || flags.ipv4 || flags.ipv6 {
-            let newOp = SafetyStripCore.Operation.maskIdentifiers(
+            let newOp = XPareCore.Operation.maskIdentifiers(
                 emails: flags.emails,
                 ipv4: flags.ipv4,
                 ipv6: flags.ipv6
@@ -544,12 +544,12 @@ final class AppModel: ObservableObject {
         commit(ops)
     }
 
-    private func isMask(_ op: SafetyStripCore.Operation) -> Bool {
+    private func isMask(_ op: XPareCore.Operation) -> Bool {
         if case .maskIdentifiers = op { return true }
         return false
     }
 
-    private func matches(_ kind: ParamOp, _ op: SafetyStripCore.Operation) -> Bool {
+    private func matches(_ kind: ParamOp, _ op: XPareCore.Operation) -> Bool {
         switch (kind, op) {
         case (.prefix, .prefixLines), (.suffix, .suffixLines),
             (.join, .joinWith), (.split, .splitOn):
@@ -559,7 +559,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func makeParamOp(_ kind: ParamOp, _ value: String) -> SafetyStripCore.Operation {
+    private func makeParamOp(_ kind: ParamOp, _ value: String) -> XPareCore.Operation {
         switch kind {
         case .prefix: return .prefixLines(prefix: value)
         case .suffix: return .suffixLines(suffix: value)
@@ -721,7 +721,7 @@ private struct MenuContent: View {
         }
         .keyboardShortcut(",", modifiers: [.command])
 
-        Button("Quit SafetyStrip") {
+        Button("Quit xPare") {
             model.quit()
         }
         .keyboardShortcut("q")
@@ -729,7 +729,7 @@ private struct MenuContent: View {
 
     /// One on/off row for a zero-parameter rewrite in the *Clean* section.
     private func cleanToggle(
-        _ op: SafetyStripCore.Operation,
+        _ op: XPareCore.Operation,
         _ label: String
     ) -> some View {
         Toggle(

@@ -1,6 +1,6 @@
 import Testing
 import Foundation
-@testable import SafetyStripKit
+@testable import XPareKit
 
 /// Monitor lifecycle tests. `@MainActor` because ClipboardMonitor is main-actor
 /// bound and these drive the run loop; `.serialized` so the run-loop pumping in

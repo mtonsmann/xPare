@@ -11,7 +11,7 @@
 //!
 //! ## Why a local mirror enum
 //!
-//! `safetystrip_core::Operation` / `CaseKind` deliberately do not derive
+//! `xpare_core::Operation` / `CaseKind` deliberately do not derive
 //! `arbitrary::Arbitrary` (the core has no fuzz/test-only deps), and this target
 //! may not edit the core. So we define [`LocalOp`] / [`LocalCase`] here — structural
 //! mirrors that *do* derive `Arbitrary` — and a total `From` mapping into the real
@@ -30,7 +30,7 @@
 //!   cargo +nightly fuzz run transform_pipeline
 use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
-use safetystrip_core::{
+use xpare_core::{
     transform, BracketStyle, CaseKind, Config, Operation, MAX_CONFIG_OPERATIONS,
     MAX_CONFIG_TEXT_PARAM_BYTES,
 };
@@ -39,7 +39,7 @@ use safetystrip_core::{
 /// product config envelope enforced by `parse_config`.
 const MAX_OPS: usize = MAX_CONFIG_OPERATIONS;
 
-/// Mirror of [`safetystrip_core::CaseKind`] that derives `Arbitrary`.
+/// Mirror of [`xpare_core::CaseKind`] that derives `Arbitrary`.
 #[derive(Arbitrary, Debug)]
 enum LocalCase {
     Upper,
@@ -59,7 +59,7 @@ impl From<LocalCase> for CaseKind {
     }
 }
 
-/// Mirror of [`safetystrip_core::BracketStyle`] that derives `Arbitrary`.
+/// Mirror of [`xpare_core::BracketStyle`] that derives `Arbitrary`.
 #[derive(Arbitrary, Debug)]
 enum LocalBracketStyle {
     Square,
@@ -75,7 +75,7 @@ impl From<LocalBracketStyle> for BracketStyle {
     }
 }
 
-/// Mirror of [`safetystrip_core::Operation`] that derives `Arbitrary`.
+/// Mirror of [`xpare_core::Operation`] that derives `Arbitrary`.
 ///
 /// Structurally identical to the real enum (same variants, same payload shapes) so
 /// the `From` below is a mechanical 1:1 map. Keep this in lockstep with the core

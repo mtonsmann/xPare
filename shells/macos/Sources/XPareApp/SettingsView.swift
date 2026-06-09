@@ -1,5 +1,5 @@
 import SwiftUI
-import SafetyStripCore
+import XPareCore
 
 /// The Settings window (DESIGN.md D12, "Route A").
 ///
@@ -111,7 +111,7 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(width: 440, height: 520)
-        .navigationTitle("SafetyStrip Settings")
+        .navigationTitle("xPare Settings")
     }
 }
 
@@ -145,7 +145,7 @@ private struct ParamRow: View {
 }
 
 /// A short human label for an operation, used in the manual-order reorder list.
-private func opLabel(_ op: SafetyStripCore.Operation) -> String {
+private func opLabel(_ op: XPareCore.Operation) -> String {
     switch op {
     case .stripHtml: return "Strip HTML"
     case .stripMarkdown: return "Strip Markdown"
