@@ -340,11 +340,14 @@ impl MarkdownOut {
                 }
             }
         } else if eq_ignore_ascii_case(name, "pre") {
+            // Only flush when a <pre> was actually open and is now closing; an unmatched
+            // </pre> is a no-op (mirrors the <code> handling above). Flushing on a
+            // never-opened buffer would emit a spurious empty ``` fence.
             if self.pre_depth > 0 {
                 self.pre_depth -= 1;
-            }
-            if self.pre_depth == 0 {
-                self.flush_pre_block();
+                if self.pre_depth == 0 {
+                    self.flush_pre_block();
+                }
             }
         } else if eq_ignore_ascii_case(name, "blockquote") || eq_ignore_ascii_case(name, "table") {
             self.ensure_blank_line();

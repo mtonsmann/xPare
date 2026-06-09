@@ -15,13 +15,18 @@
 //!   check-pipeline-zeroization assert fused core scratch storage is wiped before release
 //!   check-agent-workflow      assert the AI-native workflow docs exist with required headings
 //!   check-c-ffi-surface       assert C/SwiftPM interop stays header-only and tiny
+//!   check-test-hygiene        assert every ignored test has a reason and the count is ratcheted
 //!   check-release-posture     assert official signing cannot broaden entitlements
 //!   check-supply-chain  cargo-deny: advisories + licenses + bans + sources
+//!   check-unused-deps   cargo-machete: fail on a declared-but-unused dependency
+//!   check-docs          build docs with -D warnings (broken intra-doc links, bad HTML)
 //!   check-workflows     lint GitHub Actions workflows (actionlint + zizmor)
 //!   check-shell         shellcheck the shell scripts
 //!   check-fuzz          build cargo-fuzz targets; optionally smoke-run all targets
 //!   check-miri          run the core-ffi boundary tests under Miri (UB detection)
 //!   check-kani          run the bounded Kani proofs over the resource-envelope arithmetic
+//!   check-coverage      line-coverage floor (best-effort; heavy; outside `ci`)
+//!   check-mutants       cargo-mutants; `SS_DIFF_BASE` scopes to a diff (best-effort; outside `ci`)
 //!   ci                  run fmt --check, clippy -D warnings, test, and all the above
 //!
 //! Every check exits nonzero on violation with a remediation-oriented message so a
@@ -45,13 +50,18 @@ fn main() -> ExitCode {
         Some("check-pipeline-zeroization") => report(check_pipeline_zeroization()),
         Some("check-agent-workflow") => report(check_agent_workflow()),
         Some("check-c-ffi-surface") => report(check_c_ffi_surface()),
+        Some("check-test-hygiene") => report(check_test_hygiene()),
         Some("check-release-posture") => report(check_release_posture()),
         Some("check-supply-chain") => report(check_supply_chain()),
+        Some("check-unused-deps") => report(check_unused_deps()),
+        Some("check-docs") => report(check_docs()),
         Some("check-workflows") => report(check_workflows()),
         Some("check-shell") => report(check_shell()),
         Some("check-fuzz") => report(check_fuzz()),
         Some("check-miri") => report(check_miri()),
         Some("check-kani") => report(check_kani()),
+        Some("check-coverage") => report(check_coverage()),
+        Some("check-mutants") => report(check_mutants()),
         Some("ci") => run_ci(),
         Some(other) => {
             eprintln!("xtask: unknown subcommand '{other}'");
@@ -80,13 +90,18 @@ fn usage() {
          \x20 check-pipeline-zeroization assert fused core scratch storage is wiped before release\n\
          \x20 check-agent-workflow       assert the AI-native workflow docs exist with required headings\n\
          \x20 check-c-ffi-surface        assert C/SwiftPM interop stays header-only and tiny\n\
+         \x20 check-test-hygiene         assert every #[ignore] has a reason and the count is ratcheted\n\
          \x20 check-release-posture      assert official signing cannot broaden entitlements\n\
          \x20 check-supply-chain   cargo-deny: advisories + licenses + bans + sources\n\
+         \x20 check-unused-deps    cargo-machete: fail on a declared-but-unused dependency\n\
+         \x20 check-docs           build docs with -D warnings (broken intra-doc links, bad HTML)\n\
          \x20 check-workflows      lint GitHub Actions workflows (actionlint + zizmor)\n\
          \x20 check-shell          shellcheck the shell scripts\n\
          \x20 check-fuzz           build fuzz targets; set SS_FUZZ_SMOKE_SECONDS=N to run them\n\
          \x20 check-miri           run core-ffi boundary tests under Miri (UB detection in the unsafe shim)\n\
          \x20 check-kani           run the bounded Kani proofs over the resource-envelope arithmetic\n\
+         \x20 check-coverage       line-coverage floor (best-effort; heavy; outside `ci`)\n\
+         \x20 check-mutants        cargo-mutants; SS_DIFF_BASE=<ref> scopes to a diff (best-effort; outside `ci`)\n\
          \x20 ci                   fmt + clippy + test + every structural & external check"
     );
 }
@@ -1108,6 +1123,99 @@ fn flags_content_logging(line: &str) -> bool {
     line_logs_or_persists(line) && line_names_content(&line.to_ascii_lowercase())
 }
 
+// ---------------------------------------------------------------------------
+// check-test-hygiene
+// ---------------------------------------------------------------------------
+
+/// Ceiling on `#[ignore]`d tests across the workspace. An ignored test is a
+/// *disabled* test — a quiet way for the suite to look green while coverage rots —
+/// so the count is ratcheted. Raising it is a deliberate, reviewed edit to this
+/// constant (with the reason in the PR), exactly like the `core` dependency
+/// allowlist: the ratchet lives in code, not in a blessable side file.
+const MAX_IGNORED_TESTS: usize = 2;
+
+/// check-test-hygiene: a deterministic guard on *test slop*. Every `#[ignore]`
+/// attribute must carry a reason (`#[ignore = "why"]`), and the total number of
+/// ignored tests must not exceed [`MAX_IGNORED_TESTS`]. A bare `#[ignore]` hides
+/// *why* a test is off; unbounded growth lets disabled tests accumulate behind a
+/// green suite. (Assertion *quality* — tests that execute code but assert nothing —
+/// is the other half of test slop, caught separately by `cargo xtask check-mutants`.)
+/// Classify an already-`trim_start`ed source line as a test `#[ignore]` attribute.
+///
+/// * `None` — not an `#[ignore]` attribute: a different attribute that merely starts
+///   with `ignore` (e.g. `#[ignored_x]`), or a doc-comment / prose / string mention.
+/// * `Some(true)` — carries a reason: `#[ignore = "..."]` (spacing-insensitive).
+/// * `Some(false)` — a bare `#[ignore]` (a silent skip).
+///
+/// Scope: a `cfg_attr`-gated ignore (`#[cfg_attr(<cond>, ignore)]`) is intentionally NOT
+/// matched — it cannot carry a `= "reason"`, and none exist in the tree. Pure (no I/O) so
+/// it is unit-tested directly.
+fn classify_ignore_line(trimmed: &str) -> Option<bool> {
+    let rest = trimmed.strip_prefix("#[ignore")?.trim_start();
+    // The next char must be `]` (bare) or `=` (reason); anything else means the token was
+    // a longer identifier (e.g. `ignored`), not the std `#[ignore]` attribute.
+    match rest.as_bytes().first() {
+        Some(b'=') => Some(true),
+        Some(b']') => Some(false),
+        _ => None,
+    }
+}
+
+fn check_test_hygiene() -> Result<(), String> {
+    let root = workspace_root();
+    let mut files: Vec<PathBuf> = Vec::new();
+    collect_source_files(&root, &["rs"], &mut files);
+    files.sort();
+
+    let mut bare: Vec<String> = Vec::new();
+    let mut ignored = 0usize;
+    for path in &files {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        for (i, line) in text.lines().enumerate() {
+            let trimmed = line.trim_start();
+            match classify_ignore_line(trimmed) {
+                None => continue,
+                Some(has_reason) => {
+                    ignored += 1;
+                    if !has_reason {
+                        let shown = path.strip_prefix(&root).unwrap_or(path.as_path());
+                        bare.push(format!("{}:{}: {}", shown.display(), i + 1, trimmed));
+                    }
+                }
+            }
+        }
+    }
+
+    if !bare.is_empty() {
+        return Err(format!(
+            "check-test-hygiene: FAIL — {} `#[ignore]` attribute(s) without a reason:\n  {}\n\
+             \n\
+             A disabled test must say WHY. Use `#[ignore = \"...\"]` so the next reader\n\
+             knows whether it is a slow opt-in, an environment gap, or a known failure —\n\
+             never a silent skip. Add a reason; do not delete the test.",
+            bare.len(),
+            bare.join("\n  ")
+        ));
+    }
+    if ignored > MAX_IGNORED_TESTS {
+        return Err(format!(
+            "check-test-hygiene: FAIL — {ignored} ignored test(s), but the ceiling is \
+             MAX_IGNORED_TESTS = {MAX_IGNORED_TESTS}.\n\
+             \n\
+             Ignored tests are disabled tests; letting them accumulate rots coverage behind\n\
+             a green suite. Re-enable a test (preferred), or — if a new opt-in is genuinely\n\
+             warranted — raise MAX_IGNORED_TESTS in xtask/src/main.rs in THIS PR with the\n\
+             reason. The ratchet only moves with a deliberate, reviewed edit."
+        ));
+    }
+    println!(
+        "check-test-hygiene: {ignored} ignored test(s) (≤ {MAX_IGNORED_TESTS}), each with a reason."
+    );
+    Ok(())
+}
+
 /// Recursively collect files under `root` with one of `exts`, skipping build/VCS dirs.
 fn collect_source_files(root: &std::path::Path, exts: &[&str], out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(root) else {
@@ -1336,6 +1444,9 @@ const CARGO_DENY_VERSION: &str = "0.19.8";
 const ZIZMOR_VERSION: &str = "1.25.2";
 const CARGO_FUZZ_VERSION: &str = "0.13.1";
 const KANI_VERSION: &str = "0.67.0";
+const CARGO_MACHETE_VERSION: &str = "0.9.2";
+const CARGO_MUTANTS_VERSION: &str = "27.1.0";
+const CARGO_LLVM_COV_VERSION: &str = "0.8.7";
 
 const SHELLCHECK_INSTALL_HINT: &str = "\x20 macOS:  brew install shellcheck\n\
      \x20 Debian: sudo apt-get install -y shellcheck\n\
@@ -1516,6 +1627,59 @@ fn check_supply_chain() -> Result<(), String> {
              reason) in deny.toml — do not broaden the policy to make the check pass."
         )
     })
+}
+
+/// check-unused-deps: cargo-machete over the whole workspace. Orthogonal to
+/// `check-core-deps` (which constrains *what* the core may pull in) and
+/// `check-supply-chain` (advisories/licenses) — this asks the anti-slop question:
+/// is every *declared* dependency actually *used*? AI-authored edits routinely
+/// leave a dependency behind after the code that needed it is deleted. machete
+/// inspects each crate's source (`--with-metadata` resolves renamed crates so it
+/// does not false-positive on them) and fails if a manifest declares a crate
+/// nothing references.
+fn check_unused_deps() -> Result<(), String> {
+    let machete = ensure_cargo_tool("cargo-machete", "cargo-machete", CARGO_MACHETE_VERSION)?;
+    run_tool("cargo-machete", &machete, &["--with-metadata"]).map_err(|e| {
+        format!(
+            "{e}\n\
+             \n\
+             cargo-machete found a dependency that is declared but never used. Remove the\n\
+             unused entry from the offending Cargo.toml. If it is a genuine false positive\n\
+             (used only behind a cfg or via a macro machete cannot see), add it to that\n\
+             crate's `[package.metadata.cargo-machete] ignored = [...]` with a reason —\n\
+             do not delete a dependency the build actually needs."
+        )
+    })
+}
+
+/// check-docs: build the workspace docs with `RUSTDOCFLAGS=-D warnings` so a broken
+/// intra-doc link, an unresolved `[item]` reference, or invalid inline HTML in a doc
+/// comment fails the gate. AI-authored docs routinely leave dangling `[Foo]` links and
+/// stale references behind; this makes "the docs still build" a mechanical fact rather
+/// than a hope. Deterministic and offline (rustdoc on the pinned stable toolchain) —
+/// no nightly — so it stays in the required `ci` gate, unlike the heavy best-effort tools.
+fn check_docs() -> Result<(), String> {
+    println!(r#"check-docs: $ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps"#);
+    let status = Command::new("cargo")
+        .args(["doc", "--workspace", "--no-deps"])
+        .env("RUSTDOCFLAGS", "-D warnings")
+        .current_dir(workspace_root())
+        .status()
+        .map_err(|e| format!("check-docs: FAIL — could not launch `cargo doc`: {e}"))?;
+    if status.success() {
+        println!("check-docs: workspace docs build clean (no broken links, no invalid doc HTML).");
+        Ok(())
+    } else {
+        Err(format!(
+            "check-docs: FAIL — `cargo doc` reported problems (exited {status}).\n\
+             \n\
+             A doc comment has a broken intra-doc link (a `[Item]` that does not resolve, or a\n\
+             public doc linking to a private item), or invalid inline HTML (e.g. an unescaped\n\
+             angle-bracket placeholder read as a tag). Fix the reference: make the link resolve,\n\
+             drop the brackets so it is plain inline code, or wrap a usage snippet in a fenced\n\
+             code block. Do not silence it with a blanket #[allow(...)]."
+        ))
+    }
 }
 
 fn fuzz_dir() -> PathBuf {
@@ -1856,6 +2020,195 @@ fn check_kani() -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
+// check-coverage / check-mutants (best-effort, event-driven — NOT in the `ci` gate)
+// ---------------------------------------------------------------------------
+//
+// These are the deepest anti-slop signal but, like check-fuzz/miri/kani, they are HEAVY
+// and DETERMINISTIC: re-running them on unchanged code proves nothing new, so they are
+// outside the required gate and are NEVER scheduled — they run on demand, locally, and
+// event-driven (path-filtered) in .github/workflows/hygiene.yml. See
+// docs/guardrails/code-and-test-hygiene.md.
+//
+//   * check-coverage: a line-coverage FLOOR (ratchet). Catches whole swaths of new code
+//     that no test exercises. Coverage is necessary but not sufficient — a test can run
+//     a line without asserting on it — which is why check-mutants exists.
+//   * check-mutants: mutates each line; a SURVIVING mutant means a test ran the line but
+//     nothing constrained its behavior (dead code or an under-asserted "slop" test). The
+//     fix is to strengthen a test — and that new assertion becomes a permanent regression.
+
+/// Line-coverage floor for `check-coverage`, as a whole-number percent. A ratchet: raise
+/// it (never lower it) in a deliberate, reviewed edit as coverage improves — exactly like
+/// `MAX_IGNORED_TESTS`. Set from the measured full-tree baseline with a small margin so a
+/// flaky run never trips it. Measured product-code baseline at introduction was ~95.6%
+/// lines (the `xtask` tooling is excluded — it is the enforcement harness, not product
+/// logic, and is verified by being run in CI). Note coverage jitters slightly run-to-run
+/// because proptest explores fresh inputs each run, so keep a margin above the floor.
+const COVERAGE_FLOOR_PCT: u32 = 95;
+
+/// Ensure the `llvm-tools` rustup component (the instrumentation runtime cargo-llvm-cov
+/// needs) is installed, adding it on demand the same way `check-miri` bootstraps `miri`.
+fn ensure_llvm_tools() -> Result<(), String> {
+    if let Ok(out) = Command::new("rustup")
+        .args(["component", "list", "--installed"])
+        .output()
+    {
+        if out.status.success()
+            && String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .any(|l| l.starts_with("llvm-tools"))
+        {
+            return Ok(());
+        }
+    }
+    println!("check-coverage: installing the `llvm-tools-preview` component via rustup…");
+    let ok = Command::new("rustup")
+        .args(["component", "add", "llvm-tools-preview"])
+        .status()
+        .map_err(|e| format!("check-coverage: FAIL — could not launch `rustup`: {e}"))?
+        .success();
+    if ok {
+        Ok(())
+    } else {
+        Err(
+            "check-coverage: FAIL — could not install `llvm-tools-preview`. Install it manually:\n\
+             \x20 rustup component add llvm-tools-preview"
+                .to_string(),
+        )
+    }
+}
+
+/// check-coverage: fail if workspace line coverage falls below [`COVERAGE_FLOOR_PCT`].
+/// Best-effort and heavy (an instrumented build + full test run), so — like check-mutants
+/// — it is outside the required `ci` gate.
+fn check_coverage() -> Result<(), String> {
+    let tool = ensure_cargo_tool("cargo-llvm-cov", "cargo-llvm-cov", CARGO_LLVM_COV_VERSION)?;
+    ensure_llvm_tools()?;
+    let path_env = path_with_tool_dir(&tool);
+    let floor = COVERAGE_FLOOR_PCT.to_string();
+
+    // Exclude the xtask tooling from the measurement: it is the enforcement harness, not
+    // product logic, and dragging it in would make the floor meaningless (and match the
+    // `.cargo/mutants.toml` exclusion). `--summary-only` keeps the output to the table + verdict.
+    let ignore_xtask = "(^|/)xtask/";
+    println!(
+        "check-coverage: $ cargo llvm-cov --workspace --summary-only \
+         --ignore-filename-regex '{ignore_xtask}' --fail-under-lines {floor}"
+    );
+    let mut cmd = Command::new("cargo");
+    cmd.args([
+        "llvm-cov",
+        "--workspace",
+        "--summary-only",
+        "--ignore-filename-regex",
+        ignore_xtask,
+        "--fail-under-lines",
+        &floor,
+    ])
+    .current_dir(workspace_root());
+    if let Some(p) = &path_env {
+        cmd.env("PATH", p);
+    }
+    let status = cmd
+        .status()
+        .map_err(|e| format!("check-coverage: FAIL — could not launch `cargo llvm-cov`: {e}"))?;
+    if status.success() {
+        println!("check-coverage: workspace line coverage is at or above the {floor}% floor.");
+        Ok(())
+    } else {
+        Err(format!(
+            "check-coverage: FAIL — workspace line coverage dropped below the {floor}% floor.\n\
+             \n\
+             New code landed without tests exercising it. Add tests for the uncovered lines\n\
+             (a reference-interpreter clause + property beats a lone example). Only raise\n\
+             COVERAGE_FLOOR_PCT in xtask/src/main.rs when coverage genuinely improves — the\n\
+             floor is a ratchet that moves up, never down."
+        ))
+    }
+}
+
+/// check-mutants: run cargo-mutants over the product logic (see `.cargo/mutants.toml`). A
+/// surviving mutant is dead code or an under-asserted test. `SS_DIFF_BASE=<ref>` scopes
+/// the run to lines changed vs `<ref>` (fast PR feedback via `--in-diff`); unset = full
+/// tree. Best-effort and heavy, so it stays out of the required `ci` gate.
+fn check_mutants() -> Result<(), String> {
+    let tool = ensure_cargo_tool("cargo-mutants", "cargo-mutants", CARGO_MUTANTS_VERSION)?;
+    let path_env = path_with_tool_dir(&tool);
+    let root = workspace_root();
+
+    // An empty SS_DIFF_BASE (CI passes "" on non-PR events) means full-tree, same as unset.
+    let diff_base = std::env::var("SS_DIFF_BASE")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    let mut args: Vec<String> = vec!["mutants".to_string()];
+    if let Some(base) = diff_base {
+        println!("check-mutants: scoping to the diff vs `{base}` (SS_DIFF_BASE)");
+        let diff = Command::new("git")
+            .args(["diff", &base])
+            .current_dir(&root)
+            .output()
+            .map_err(|e| format!("check-mutants: FAIL — could not run `git diff {base}`: {e}"))?;
+        if !diff.status.success() {
+            return Err(format!(
+                "check-mutants: FAIL — `git diff {base}` failed; is SS_DIFF_BASE a valid ref?"
+            ));
+        }
+        let diff_path = root.join("target").join("ss-mutants-in.diff");
+        if let Some(parent) = diff_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("check-mutants: FAIL — could not create target dir: {e}"))?;
+        }
+        std::fs::write(&diff_path, &diff.stdout)
+            .map_err(|e| format!("check-mutants: FAIL — could not write the diff file: {e}"))?;
+        args.push("--in-diff".to_string());
+        args.push(diff_path.to_string_lossy().into_owned());
+    } else {
+        println!("check-mutants: full-tree run (set SS_DIFF_BASE=<ref> to scope to a diff)");
+    }
+
+    // Parallelism: CI stays SERIAL for predictable memory on shared runners; a LOCAL run
+    // hammers the box across all cores (cargo-mutants gives each job its own build dir).
+    // GitHub Actions sets `CI`, so key off that.
+    if std::env::var_os("CI").is_none() {
+        let jobs = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
+        if jobs > 1 {
+            println!(
+                "check-mutants: local run — parallelizing across {jobs} jobs (CI stays serial)"
+            );
+            args.push("--jobs".to_string());
+            args.push(jobs.to_string());
+        }
+    }
+
+    println!("check-mutants: $ cargo {}", args.join(" "));
+    let mut cmd = Command::new("cargo");
+    cmd.args(args.iter().map(String::as_str)).current_dir(&root);
+    if let Some(p) = &path_env {
+        cmd.env("PATH", p);
+    }
+    let status = cmd
+        .status()
+        .map_err(|e| format!("check-mutants: FAIL — could not launch `cargo mutants`: {e}"))?;
+    if status.success() {
+        println!("check-mutants: no surviving mutants — every mutated line is caught by a test.");
+        Ok(())
+    } else {
+        Err(
+            "check-mutants: FAIL — surviving (or timed-out/unviable) mutant(s); see mutants.out/.\n\
+             \n\
+             A SURVIVING mutant means a line was changed and the whole test suite still passed:\n\
+             either the line is dead (delete it) or a test runs it without asserting on its\n\
+             behavior (strengthen the assertion — that becomes a permanent regression). Only\n\
+             skip a genuinely equivalent mutant via `.cargo/mutants.toml` with a documented reason."
+                .to_string(),
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
 // check-agent-workflow
 // ---------------------------------------------------------------------------
 //
@@ -2035,6 +2388,14 @@ fn run_ci() -> ExitCode {
         eprintln!("{msg}");
         return ExitCode::FAILURE;
     }
+    if let Err(msg) = check_test_hygiene() {
+        eprintln!("{msg}");
+        return ExitCode::FAILURE;
+    }
+    if let Err(msg) = check_docs() {
+        eprintln!("{msg}");
+        return ExitCode::FAILURE;
+    }
 
     // check-abi reuses the existing gen-header(check_only=true) path.
     if gen_header(true) != ExitCode::SUCCESS {
@@ -2074,6 +2435,10 @@ fn run_ci() -> ExitCode {
         eprintln!("{msg}");
         return ExitCode::FAILURE;
     }
+    if let Err(msg) = check_unused_deps() {
+        eprintln!("{msg}");
+        return ExitCode::FAILURE;
+    }
     if let Err(msg) = check_supply_chain() {
         eprintln!("{msg}");
         return ExitCode::FAILURE;
@@ -2090,6 +2455,25 @@ fn run_ci() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn classify_ignore_line_distinguishes_bare_reason_and_non_ignores() {
+        // Bare ignore (a silent skip) vs a reasoned ignore (spacing-insensitive).
+        assert_eq!(classify_ignore_line("#[ignore]"), Some(false));
+        assert_eq!(
+            classify_ignore_line("#[ignore = \"slow: 256 MB\"]"),
+            Some(true)
+        );
+        assert_eq!(classify_ignore_line("#[ignore=\"slow\"]"), Some(true));
+        // Not the std attribute: a longer identifier, prose/doc mentions, code strings.
+        assert_eq!(classify_ignore_line("#[ignored_helper]"), None);
+        assert_eq!(
+            classify_ignore_line("//!   ... `#[ignore]` is honored ..."),
+            None
+        );
+        assert_eq!(classify_ignore_line("let s = \"#[ignore]\";"), None);
+        assert_eq!(classify_ignore_line("// #[ignore] in a comment"), None);
+    }
 
     #[test]
     fn shell_scripts_finds_release_plumbing_and_skips_build_dirs() {

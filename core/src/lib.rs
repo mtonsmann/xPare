@@ -15,7 +15,10 @@
 //! Determinism: the same `(input, config)` always yields the same output.
 #![forbid(unsafe_code)]
 // Mechanical "no log sink in the core": these are compile errors, not warnings.
-#![deny(clippy::print_stdout, clippy::print_stderr, clippy::dbg_macro)]
+// (`clippy::dbg_macro` is denied workspace-wide; `print_*` stay core-specific here.)
+#![deny(clippy::print_stdout, clippy::print_stderr)]
+// The public API is the FFI's data contract; every exported item must be documented.
+#![deny(missing_docs)]
 
 mod config;
 pub mod ops;

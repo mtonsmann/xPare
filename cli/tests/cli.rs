@@ -289,6 +289,16 @@ fn missing_flag_value_is_a_usage_error() {
 }
 
 #[test]
+fn flag_shaped_config_value_is_a_usage_error() {
+    // `--config` immediately followed by another flag must NOT swallow that flag as the
+    // value: parse_config_source rejects a flag-shaped value as a usage error (exit 2),
+    // not as a config error (exit 3, which is what happens if the guard is weakened to &&).
+    let out = run_str(&["transform", "--config", "--config-json"], "x");
+    assert_eq!(out.code, Some(2), "stderr: {}", out.stderr);
+    assert!(!out.stderr.is_empty());
+}
+
+#[test]
 fn duplicate_config_flag_is_a_usage_error() {
     let out = run_str(
         &["transform", "--config-json", "{}", "--config-json", "{}"],

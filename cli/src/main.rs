@@ -6,8 +6,11 @@
 //! a JSON config, and writes the result to stdout.
 //!
 //! Usage:
-//!   safetystrip capabilities
-//!   safetystrip transform [--config <file> | --config-json <json>]   < input > output
+//!
+//! ```text
+//! safetystrip capabilities
+//! safetystrip transform [--config <file> | --config-json <json>]   < input > output
+//! ```
 //!
 //! With no config, `transform` applies the identity pipeline. Errors go to stderr;
 //! transformed text only ever reaches stdout. Exit codes:

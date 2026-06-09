@@ -219,6 +219,57 @@ mod html_regression {
             "link"
         );
     }
+
+    // Mutation-survivor regressions: each input pins behavior an existing test missed.
+    #[test]
+    fn close_tag_requires_a_real_lt() {
+        // A bare "/script>" inside the body must NOT close the element; only a real
+        // "</script>" does (advance_to_byte / find_byte / matches_close_tag).
+        assert_eq!(strip_html("<script>x/script>y</script>z"), "z");
+    }
+
+    #[test]
+    fn entity_name_scan_stops_at_lt() {
+        // The entity-name scan must stop at '<' instead of swallowing the next tag.
+        assert_eq!(strip_html("&a<b>c"), "&ac");
+    }
+
+    #[test]
+    fn max_scalar_numeric_entity_is_decoded() {
+        // U+10FFFF is the maximum valid scalar: decoded, not mapped to U+FFFD — via both
+        // the hex and the decimal parse paths (the decimal one accumulates to the same
+        // boundary value through a different branch).
+        assert_eq!(strip_html("&#x10FFFF;"), "\u{10FFFF}");
+        assert_eq!(strip_html("&#1114111;"), "\u{10FFFF}"); // 0x10FFFF in decimal
+    }
+
+    #[test]
+    fn self_close_detection_boundaries() {
+        // skip_tag_rest_detect_self_close: whitespace handling and the quote arm decide
+        // whether a tag self-closes (and thus whether a raw-text body is consumed).
+        assert_eq!(strip_html("<script/z>body</script>tail"), "tail");
+        assert_eq!(strip_html("a<script / >b</script>c"), "abc");
+        assert_eq!(strip_html(r#"x<script s="/>y"#), "x");
+        assert_eq!(strip_html(r#"<script x="a">EVIL</script>safe"#), "safe");
+    }
+
+    #[test]
+    fn inner_tag_in_raw_text_does_not_close_script() {
+        // matches_close_tag L429 must return false for a non-`/` tag like <b>; mutating
+        // it to always-true would treat the first inner '<' as the close tag, ending the
+        // raw-text region early and leaking the script body text ("c").
+        assert_eq!(strip_html("<script>a<b>c</script>keep"), "keep");
+    }
+
+    #[test]
+    fn entity_after_plain_prefix_is_decoded() {
+        // strip_html fast-path guard L92: the `!bytes.contains(&b'&')` term must stay
+        // negated. An input that does NOT start with `<`/`&`, has no `<`, but contains a
+        // decodable entity must take the full decoding path (not the verbatim fast path).
+        // Mutating the term to `bytes.contains(&b'&')` would emit `x&amp;y` undecoded.
+        assert_eq!(strip_html("x&amp;y"), "x&y");
+        assert_eq!(strip_html("a&lt;b"), "a<b");
+    }
 }
 
 mod markdown_regression {
@@ -393,6 +444,71 @@ mod markdown_regression {
             !sanitized.contains("evil"),
             "StripHtml -> StripMarkdown must drop the body, got {sanitized:?}"
         );
+    }
+
+    // Mutation-survivor regressions for the plain-log fast path + ordered-list / heading
+    // / normalize logic. (Expected outputs verified against the real parser.)
+    #[test]
+    fn all_dash_line_is_a_thematic_break() {
+        // plain_log_line_kind: an all-dash line is rejected from the fast path and the
+        // parser renders it as a thematic break (dropped), not literal content.
+        assert_eq!(strip_markdown("---"), "");
+    }
+
+    #[test]
+    fn trailing_underscore_does_not_overrun() {
+        // is_intraword_ascii_underscore must not index past the last byte for a trailing '_'.
+        assert_eq!(strip_markdown("x_"), "x_");
+    }
+
+    #[test]
+    fn ordered_list_marker_is_detected() {
+        // starts_ordered_list_marker: "1. item" is a list item (marker dropped), not content.
+        assert_eq!(strip_markdown("1. item"), "item");
+    }
+
+    #[test]
+    fn blank_line_between_blocks_after_code_fence() {
+        // observe_str_suffix: a trailing newline in a Text chunk must not suppress the
+        // structural blank line between blocks.
+        assert_eq!(strip_markdown("```\ncode\n```\n\nafter"), "code\n\nafter");
+    }
+
+    #[test]
+    fn inline_code_leading_whitespace_normalized() {
+        // normalize: leading buffer whitespace (start > 0) is drained.
+        assert_eq!(strip_markdown("`\tx`"), "x");
+    }
+
+    #[test]
+    fn setext_heading_underline_is_not_plain_content() {
+        // plain_log_line_kind L231 `b'=' => { all_blank=false; all_dash=false }` keeps
+        // `all_equals` true so an all-`=` line is rejected from the fast path and the
+        // parser renders `abc\n===` as a setext heading (the `===` underline dropped).
+        // Deleting the arm makes the `=` line ordinary content, so the fast path would
+        // join it as `abc ===`.
+        assert_eq!(strip_markdown("abc\n==="), "abc");
+        assert_eq!(strip_markdown("abc\n===\ndef"), "abc\n\ndef");
+    }
+
+    #[test]
+    fn fenced_code_block_internal_blank_lines_are_preserved() {
+        // observe_str_suffix L362/L376: the trailing-whitespace handling and the
+        // `(trailing + suffix).min(2)` accumulation control how code-block content
+        // newlines (pushed as literal text, bypassing the structural collapser) survive.
+        // These pin the exact newline counts so a counter perturbation is observable.
+        assert_eq!(strip_markdown("a\n\n```\n\n```\n\nb"), "a\n\n\nb");
+        assert_eq!(strip_markdown("a\n\n```\n   \n```\n\nb"), "a\n\n   \nb");
+        assert_eq!(strip_markdown("p\n\n```\n \n \n```\n\nq"), "p\n\n \n \nq");
+    }
+
+    #[test]
+    fn html_block_whitespace_does_not_add_blank_lines() {
+        // observe_str_suffix L376 with a whitespace-only / empty push_str value: the
+        // `+`->`*` mutant would reset the trailing-newline count to 0, letting the
+        // following block boundary emit extra newlines around the (empty) HTML block.
+        assert_eq!(strip_markdown("x\n\n<pre> </pre>\n\ny"), "x\n\ny");
+        assert_eq!(strip_markdown("a\n\n<div> </div>\n\nb"), "a\n\nb");
     }
 }
 

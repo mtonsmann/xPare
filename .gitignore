@@ -3,6 +3,10 @@
 **/target
 Cargo.lock.bak
 
+# cargo-mutants (best-effort hygiene; output is never committed)
+/mutants.out
+/mutants.out.old
+
 # cargo-fuzz
 /fuzz/target
 /fuzz/corpus

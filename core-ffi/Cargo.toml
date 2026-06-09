@@ -16,6 +16,11 @@ name = "safetystrip_ffi"
 # staticlib for static-linking into the native shells; cdylib for dynamic consumers.
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# Inherit the workspace lint policy. core-ffi also carries `#![deny(unsafe_op_in_unsafe_fn)]`
+# and the `print_*` denies as source attributes (the unsafe boundary is FFI-specific).
+[lints]
+workspace = true
+
 [dependencies]
 safetystrip-core = { path = "../core" }
 zeroize = { workspace = true }

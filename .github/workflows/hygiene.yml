@@ -1,0 +1,119 @@
+# Code & test hygiene (coverage + mutation testing).
+#
+# These are the deepest anti-slop signal — coverage catches untested code; mutation
+# testing catches code that runs but is not asserted on (dead code or "slop" tests). But
+# both are HEAVY and DETERMINISTIC: like the Kani proofs (proofs.yml), re-running them on
+# unchanged code with pinned tool versions proves nothing new, so a *time* cadence (cron)
+# would be pure waste. The trigger is EVENT-driven, not time-driven — it runs only when
+# something that could change the result changes (the product code, the lockfile/toolchain,
+# the mutants config, or this workflow) plus on demand. On a stable repo it never fires.
+#
+# Run locally any time: `cargo run -p xtask -- check-coverage` / `check-mutants`
+# (`SS_DIFF_BASE=origin/main cargo run -p xtask -- check-mutants` scopes to your diff).
+# Both stay OUTSIDE the required `cargo xtask ci` gate (continue-on-error): the everyday
+# signal is the stable gate plus the property/reference/corpus tests. See
+# docs/guardrails/code-and-test-hygiene.md.
+name: Hygiene
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    # Event-driven: only the things that can change the result. (Kept in sync with the
+    # pull_request paths below — inlined rather than a YAML anchor so zizmor can analyze it.)
+    paths:
+      - "core/**"
+      - "core-ffi/**"
+      - "cli/**"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".cargo/mutants.toml"
+      - ".github/workflows/hygiene.yml"
+  pull_request:
+    paths:
+      - "core/**"
+      - "core-ffi/**"
+      - "cli/**"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".cargo/mutants.toml"
+      - ".github/workflows/hygiene.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # --------------------------------------------------------------------------
+  # Coverage floor (ratchet). Fails if product-code line coverage drops below
+  # COVERAGE_FLOOR_PCT (xtask owns the floor + the xtask-tooling exclusion).
+  # --------------------------------------------------------------------------
+  coverage:
+    name: coverage (line-coverage floor, best-effort)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Install Rust (pinned stable + llvm-tools)
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          components: llvm-tools-preview
+
+      # Pinned, prebuilt binary — keep the version in lockstep with
+      # CARGO_LLVM_COV_VERSION in xtask/src/main.rs.
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@59012be0884e296ca2da49b530610e72c49039ad # v2.81.6
+        with:
+          tool: cargo-llvm-cov@0.8.7
+
+      - name: Check coverage floor
+        run: cargo run -p xtask -- check-coverage
+
+  # --------------------------------------------------------------------------
+  # Mutation testing. On a PR, scope to the diff (fast feedback) via SS_DIFF_BASE;
+  # on push-to-main / manual dispatch, run the full tree. A surviving mutant means
+  # dead code or an under-asserted test.
+  # --------------------------------------------------------------------------
+  mutants:
+    name: mutants (cargo-mutants, best-effort)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      # Full history so a PR run can diff against its base branch.
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Install Rust (pinned stable)
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      # Pinned, prebuilt binary — keep the version in lockstep with
+      # CARGO_MUTANTS_VERSION in xtask/src/main.rs.
+      - name: Install cargo-mutants
+        uses: taiki-e/install-action@59012be0884e296ca2da49b530610e72c49039ad # v2.81.6
+        with:
+          tool: cargo-mutants@27.1.0
+
+      # Make the PR's base branch available for the diff. Passed via env (not inlined
+      # into the script) so there is no template-injection surface.
+      - name: Fetch PR base
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: git fetch --no-tags --depth=1 origin "$BASE_REF"
+
+      # SS_DIFF_BASE scopes the run to the PR diff; empty on push/dispatch = full tree
+      # (xtask treats an empty value as unset). Set via env, never inlined into a script.
+      - name: Run mutation testing
+        env:
+          SS_DIFF_BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
+        run: cargo run -p xtask -- check-mutants

@@ -1,0 +1,41 @@
+# Configuration for `cargo xtask check-mutants` (cargo-mutants).
+#
+# IMPORTANT: cargo-mutants reads its config from `.cargo/mutants.toml` (NOT a root-level
+# `mutants.toml`). Keep this file here or the exclusions/timeouts below are silently ignored.
+#
+# This is a BEST-EFFORT, event-driven gate (see .github/workflows/hygiene.yml), NOT part
+# of the required `cargo xtask ci` — like Miri and Kani, it is heavy and deterministic, so
+# re-running it on unchanged code proves nothing new and it is never scheduled.
+#
+# A *surviving* mutant means a line was changed and NO test failed — i.e. dead code or an
+# under-asserted test. SafetyStrip's oracles (the reference interpreter in
+# tests/reference_transform.rs, proptest, the corpus, golden tests) make the score
+# high-signal: most product logic should be load-bearing.
+
+# Mutate the product logic only. The xtask tooling is not the product; benches are not
+# correctness-bearing. (The `fuzz/` crate is a separate workspace, so it is never seen.)
+exclude_globs = [
+    "xtask/**",
+    "**/benches/**",
+]
+
+# Exclude the `#[cfg(kani)]` proof harnesses (the `kani_proofs` module in core/src/config.rs):
+# they are compiled/run only under `cargo kani`, so `cargo test` can never cover them and
+# every mutation to them "survives" spuriously. The real proof is `cargo xtask check-kani`.
+exclude_re = [
+    "kani_proofs",
+    # Confirmed-equivalent helpers (mutants survive because the mutation cannot change
+    # observable output — verified by re-mutation + analysis, not assumed). Excluded so
+    # they stop recurring as noise; see exec plan 0013 for the per-function reasoning.
+    #   defang::has_indicator_byte — pure perf pre-filter; the classifiers re-reject any
+    #     token it would wrongly admit, so its result never changes output.
+    #   defang::already_defanged   — redundant idempotence guard; bracketed/`hxxp` tokens
+    #     are already rejected by every classifier, so its result never changes output.
+    "has_indicator_byte",
+    "already_defanged",
+]
+
+# Property and corpus tests run longer than a trivial unit test. Give a generous timeout
+# so a slow-but-passing test is never misread as a mutant-induced hang (a false survivor).
+timeout_multiplier = 5.0
+minimum_test_timeout = 60

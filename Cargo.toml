@@ -19,6 +19,33 @@ rust-version = "1.80"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/safetystrip/safetystrip"
 
+# Workspace-wide lint policy — one source of truth for the anti-slop posture. Members
+# opt in with `[lints] workspace = true`. Crate-SPECIFIC lints stay as source
+# attributes on purpose because they are NOT workspace-wide: `core`'s
+# `#![forbid(unsafe_code)]` (core-ffi must use unsafe), and the `print_stdout` /
+# `print_stderr` denies on `core` + `core-ffi` (xtask and cli legitimately print).
+[workspace.lints.rust]
+# Kani proof harnesses in core/src/config.rs are gated behind `#[cfg(kani)]` (set only
+# by `cargo kani`; normal builds never see it). Declare the cfg as expected so
+# `unexpected_cfgs` (escalated to an error by `-D warnings` in CI) never flags it.
+# Declaring it workspace-wide is harmless for the non-core crates.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+# Anti-slop, dead-`pub` lever: force any `pub` item not reachable outside its crate
+# down to `pub(crate)`. The (already-on) `dead_code` lint then flags whatever is left
+# truly unused — closing the gap where rustc's dead_code ignores `pub` items.
+unreachable_pub = "deny"
+
+[workspace.lints.clippy]
+# Debug / scaffolding macros must never ship in any crate — common AI-slop residue.
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+# Cap tangled control flow before it accretes. The whole tree passes today with
+# headroom; the threshold lives in clippy.toml. (`too_many_lines` is deliberately NOT
+# enabled — it only flags long table-driven *tests*, which are not the slop we target;
+# assertion quality is covered by `cargo xtask check-mutants`.)
+cognitive_complexity = "deny"
+
 [workspace.dependencies]
 # Config (de)serialization — the load-bearing part of the FFI boundary. Boring, ubiquitous, audited.
 serde = { version = "1", features = ["derive"] }

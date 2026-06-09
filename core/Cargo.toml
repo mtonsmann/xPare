@@ -10,13 +10,11 @@ description = "Pure, deterministic, memory-safe text transformation core for Saf
 [lib]
 name = "safetystrip_core"
 
-[lints.rust]
-# The Kani proof harnesses in src/config.rs are gated behind `#[cfg(kani)]`. Kani
-# sets that cfg when running `cargo kani`; normal builds never see it. Declare it as
-# an expected cfg so the `unexpected_cfgs` lint (escalated by `-D warnings` in CI)
-# does not flag it on the stable toolchain. This neither enables nor compiles the
-# harnesses outside Kani — it only teaches the compiler the name is intentional.
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+# Inherit the workspace lint policy (unreachable_pub, dbg/todo/unimplemented bans, and
+# the `cfg(kani)` expected-cfg declaration). Core also carries `#![forbid(unsafe_code)]`
+# and the `print_*` denies as source attributes — those are core-specific, not workspace.
+[lints]
+workspace = true
 
 [dependencies]
 serde = { workspace = true }

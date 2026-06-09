@@ -362,6 +362,23 @@ fn case_sentence_does_not_split_on_intraword_dot() {
 }
 
 #[test]
+fn case_sentence_unicode_capital_clears_expectation() {
+    // A single-char non-ASCII uppercase mapping (é -> É) must clear `expect_capital`, so
+    // the following letter is lowercased rather than also capitalized. Guards the
+    // `has_mapping = first != ch` flag in push_unicode_upper (mutation survivor: != -> ==,
+    // which would leave expectation set and yield "ÉA. Next").
+    assert_eq!(
+        run(
+            Operation::ChangeCase {
+                case: CaseKind::Sentence
+            },
+            "éa. next"
+        ),
+        "Éa. Next"
+    );
+}
+
+#[test]
 fn case_sentence_capital_after_terminator_with_leading_punct() {
     // "!!! " is a terminator immediately followed by whitespace, so a new sentence
     // begins and "now" is capitalized.

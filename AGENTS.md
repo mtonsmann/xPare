@@ -79,6 +79,7 @@ Consult:
 
 - `docs/guardrails/transform-correctness-and-adversarial-input.md`
 - `docs/guardrails/memory-safety.md`
+- `docs/guardrails/code-and-test-hygiene.md` (dead code, test/doc hygiene, mutation testing)
 
 The core stays `#![forbid(unsafe_code)]`, never panics on input, and has no OS,
 I/O, network, or global mutable state. Every behavior change gets regression and
@@ -142,6 +143,7 @@ Use for crate/dependency ranges, lints, CI, structural tests, and automation.
 Consult:
 
 - `docs/guardrails/dependency-posture.md`
+- `docs/guardrails/code-and-test-hygiene.md` (unused-dependency, lint, and doc gates)
 
 Favor boring, API-stable, well-audited crates; justify any new dependency,
 especially anything pulling in `unsafe` or network capability. Keep mechanical
@@ -193,6 +195,10 @@ If the docs-only change captures a review lesson, also consult
   boundary move.
 - For any fixed review finding class, state the mechanical regression protection
   and the docs lesson added.
+- Automated review: a subscription cloud reviewer (Codex / Claude Code cloud) reviews PRs
+  against [`docs/guardrails/code-and-test-hygiene.md`](docs/guardrails/code-and-test-hygiene.md)
+  ("Tier-2 review") — anti-slop on every code PR, security focus on the security-relevant
+  surface listed there. Advisory only; the required gate is `cargo xtask ci`.
 - GitHub integration: prefer the Codex GitHub connector for PR metadata/creation
   now that it has repo scope for `mtonsmann/SafetyStrip`. Use escalated local
   `gh` as the fallback; sandboxed, non-escalated `gh` auth/network results are

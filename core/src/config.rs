@@ -35,7 +35,7 @@ pub const MAX_CONFIG_TEXT_PARAM_BYTES: usize = 256;
 ///
 /// [`Config::validate`] rejects any config whose operations could, in the worst
 /// case, multiply the input byte length by more than this. Each operation has a
-/// conservative per-op growth bound ([`Operation::max_growth_factor`]); because
+/// conservative per-op growth bound (`Operation::max_growth_factor`); because
 /// `transform` folds the operations in sequence (`out_i <= in_i * factor_i`), the
 /// *product* of those bounds is a sound upper bound on the whole pipeline's growth.
 ///
@@ -177,26 +177,43 @@ pub enum Operation {
     /// (Exact rule documented on `ops::lines::unwrap_lines`.)
     UnwrapLines,
     /// Recase the whole text.
-    ChangeCase { case: CaseKind },
+    ChangeCase {
+        /// Which case transformation to apply.
+        case: CaseKind,
+    },
 
     // --- Stretch (implemented; see capabilities()) ---
     /// Sort lines.
     SortLines {
+        /// Sort descending (Z→A) instead of the default ascending (A→Z).
         #[serde(default)]
         descending: bool,
+        /// Compare lines case-insensitively when ordering.
         #[serde(default)]
         case_insensitive: bool,
     },
     /// Remove duplicate lines, keeping first occurrence and original order.
     DedupeLines,
     /// Prefix every (non-empty) line with `prefix`.
-    PrefixLines { prefix: String },
+    PrefixLines {
+        /// Text prepended to each non-empty line.
+        prefix: String,
+    },
     /// Suffix every (non-empty) line with `suffix`.
-    SuffixLines { suffix: String },
+    SuffixLines {
+        /// Text appended to each non-empty line.
+        suffix: String,
+    },
     /// Join all lines into one, separated by `separator`.
-    JoinWith { separator: String },
+    JoinWith {
+        /// String inserted between joined lines.
+        separator: String,
+    },
     /// Split on a custom delimiter: replace each `delimiter` with a newline.
-    SplitOn { delimiter: String },
+    SplitOn {
+        /// Delimiter that is replaced by a newline.
+        delimiter: String,
+    },
     /// Extract email-like tokens, one per line (best-effort, documented heuristic).
     ExtractEmails,
     /// Extract URL-like tokens, one per line (best-effort, documented heuristic).
@@ -206,6 +223,7 @@ pub enum Operation {
     /// Defang network indicators (URLs, hosts, IPv4/IPv6, emails) so they are inert
     /// but human-readable and reversible. Idempotent. (Rule on `ops::defang::defang`.)
     Defang {
+        /// Bracket style used for the defang substitutions.
         #[serde(default)]
         style: BracketStyle,
     },
@@ -219,10 +237,13 @@ pub enum Operation {
     /// Replace selected email/IP tokens with fixed placeholders. Heuristic,
     /// token-oriented, and idempotent. (Rule on `ops::mask::mask_identifiers`.)
     MaskIdentifiers {
+        /// Mask email tokens.
         #[serde(default)]
         emails: bool,
+        /// Mask IPv4 address tokens.
         #[serde(default)]
         ipv4: bool,
+        /// Mask IPv6 address tokens.
         #[serde(default)]
         ipv6: bool,
     },
@@ -398,19 +419,35 @@ pub enum ConfigError {
     /// The JSON was malformed or did not match the schema.
     Json(String),
     /// The `version` field is not [`CONFIG_VERSION`].
-    UnsupportedVersion { found: u32, supported: u32 },
+    UnsupportedVersion {
+        /// The version found in the config.
+        found: u32,
+        /// The version this core supports ([`CONFIG_VERSION`]).
+        supported: u32,
+    },
     /// The config listed too many operations.
-    TooManyOperations { found: usize, max: usize },
+    TooManyOperations {
+        /// The number of operations the config listed.
+        found: usize,
+        /// The maximum allowed ([`MAX_CONFIG_OPERATIONS`]).
+        max: usize,
+    },
     /// A free-text operation parameter exceeded [`MAX_CONFIG_TEXT_PARAM_BYTES`].
     TextParamTooLong {
+        /// The operation whose parameter was too long.
         op: &'static str,
+        /// The offending parameter's name.
         param: &'static str,
+        /// The parameter's byte length.
         found: usize,
+        /// The maximum allowed byte length ([`MAX_CONFIG_TEXT_PARAM_BYTES`]).
         max: usize,
     },
     /// A free-text operation parameter contained `\r` or `\n`.
     TextParamContainsLineBreak {
+        /// The operation whose parameter contained a line break.
         op: &'static str,
+        /// The offending parameter's name.
         param: &'static str,
     },
     /// The pipeline's worst-case output-growth factor (the product of the operations'
@@ -418,7 +455,12 @@ pub enum ConfigError {
     /// could turn a small input into an unbounded-size transform — a resource-
     /// exhaustion (DoS) vector — so it is rejected before the infallible transform.
     /// `factor` saturates at [`u64::MAX`] for pipelines whose product overflows.
-    PipelineMayAmplify { factor: u64, max: u64 },
+    PipelineMayAmplify {
+        /// The pipeline's worst-case output-growth factor (saturating).
+        factor: u64,
+        /// The maximum allowed factor ([`MAX_PIPELINE_GROWTH_FACTOR`]).
+        max: u64,
+    },
 }
 
 impl std::fmt::Display for ConfigError {
@@ -659,6 +701,57 @@ mod tests {
                 "{op:?} reports a growth factor below 1"
             );
         }
+    }
+
+    #[test]
+    fn empty_affix_growth_factor_is_one() {
+        // An empty prefix/suffix must still report factor 1, via `1 + len` (never `1 * len`,
+        // which would be 0 for an empty affix and collapse the saturating product).
+        assert_eq!(
+            Operation::PrefixLines {
+                prefix: String::new()
+            }
+            .max_growth_factor(),
+            1
+        );
+        assert_eq!(
+            Operation::SuffixLines {
+                suffix: String::new()
+            }
+            .max_growth_factor(),
+            1
+        );
+    }
+
+    #[test]
+    fn pipeline_growth_exactly_at_the_cap_is_accepted() {
+        // The growth cap is inclusive: `growth > MAX` rejects, so a pipeline whose product
+        // is exactly MAX_PIPELINE_GROWTH_FACTOR must validate. 9 suffix ops of factor 4
+        // give 4^9 = 2^18 = MAX_PIPELINE_GROWTH_FACTOR.
+        let ops = vec![
+            Operation::SuffixLines {
+                suffix: "aaa".to_string()
+            };
+            9
+        ];
+        assert!(Config::as_given(ops).validate().is_ok());
+    }
+
+    #[test]
+    fn config_error_display_is_populated() {
+        // The Display impl is the user-facing error text (surfaced by the CLI). A mutant
+        // that replaces the whole body with `Ok(())` formats to the empty string.
+        assert_eq!(
+            ConfigError::UnsupportedVersion {
+                found: 99,
+                supported: 2
+            }
+            .to_string(),
+            "unsupported config version 99 (this core supports 2)"
+        );
+        assert!(ConfigError::Json("boom".to_string())
+            .to_string()
+            .contains("invalid config json"));
     }
 
     #[test]

@@ -60,7 +60,7 @@
 //!   (`0xD800..=0xDFFF`) decodes to **U+FFFD** (the replacement character) rather
 //!   than being rejected, so adversarial numeric escapes can never panic and never
 //!   leak the raw digits.
-//! * Named: a curated table (see [`named_entity`]) covering the common set. An
+//! * Named: a curated table (see `named_entity`) covering the common set. An
 //!   unknown name is left **verbatim** (the literal `&name;` text is emitted).
 //! * Malformed entities (`&`, `&;`, `&#;`, `&#x;`, `&#xZZ;`, an unterminated
 //!   `&amp` with no `;`) are emitted **literally**, never panicking. Decoding is
