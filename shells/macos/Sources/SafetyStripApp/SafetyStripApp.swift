@@ -132,12 +132,13 @@ final class AppModel: ObservableObject {
     func setSortMode(_ mode: SortMode) {
         var ops = settings.operations
         guard let flags = mode.flags else {
-            ops.removeAll(where: isSort) // .off → drop the sort op
+            ops.removeAll(where: isSort)  // .off → drop the sort op
             commit(ops)
             return
         }
-        let newOp = SafetyStripCore.Operation.sortLines(descending: flags.descending,
-                                                        caseInsensitive: flags.caseInsensitive)
+        let newOp = SafetyStripCore.Operation.sortLines(
+            descending: flags.descending,
+            caseInsensitive: flags.caseInsensitive)
         // Update in place when present (preserves pipeline position in manual order);
         // otherwise append.
         if let idx = ops.firstIndex(where: isSort) {
@@ -303,9 +304,11 @@ final class AppModel: ObservableObject {
 
     /// Run a transient single-op command against the clipboard (never persisted).
     /// Reductions/conversions and refang are surfaced this way per D12.
-    func runCommand(_ op: SafetyStripCore.Operation,
-                    label: String,
-                    notApplicableStatus: String? = nil) {
+    func runCommand(
+        _ op: SafetyStripCore.Operation,
+        label: String,
+        notApplicableStatus: String? = nil
+    ) {
         Task { @MainActor in
             switch await controller.runOnce(operations: [op]) {
             case .stripped(let changed):
@@ -394,7 +397,7 @@ final class AppModel: ObservableObject {
     private func matches(_ kind: ParamOp, _ op: SafetyStripCore.Operation) -> Bool {
         switch (kind, op) {
         case (.prefix, .prefixLines), (.suffix, .suffixLines),
-             (.join, .joinWith), (.split, .splitOn):
+            (.join, .joinWith), (.split, .splitOn):
             return true
         default:
             return false
@@ -446,10 +449,12 @@ private struct MenuContent: View {
         Divider()
 
         // Mode toggle: continuous monitoring is opt-in.
-        Toggle("Continuous monitoring", isOn: Binding(
-            get: { model.settings.mode == .continuous },
-            set: { model.setMode($0 ? .continuous : .onDemand) }
-        ))
+        Toggle(
+            "Continuous monitoring",
+            isOn: Binding(
+                get: { model.settings.mode == .continuous },
+                set: { model.setMode($0 ? .continuous : .onDemand) }
+            ))
 
         Divider()
 
@@ -457,37 +462,46 @@ private struct MenuContent: View {
         Text("Clean")
         ForEach(Array(Self.cleanToggles.enumerated()), id: \.offset) { _, entry in
             let (op, label) = entry
-            Toggle(label, isOn: Binding(
-                get: { model.isEnabled(op) },
-                set: { model.setOperation(op, enabled: $0) }
-            ))
+            Toggle(
+                label,
+                isOn: Binding(
+                    get: { model.isEnabled(op) },
+                    set: { model.setOperation(op, enabled: $0) }
+                ))
         }
         // Sort is a SINGLE entry: a submenu whose title shows the active mode, with the
         // modes as an inline Picker so the active one gets the system ✓ — the same
         // native checkmark the sibling toggles use, just on the child (Finder "Sort By"
         // idiom). One menu line; state visible in the title; no glyph-alignment hacks.
         Menu("Sort lines: \(model.sortMode.shortLabel)") {
-            Picker("Sort lines", selection: Binding(
-                get: { model.sortMode },
-                set: { model.setSortMode($0) }
-            )) {
+            Picker(
+                "Sort lines",
+                selection: Binding(
+                    get: { model.sortMode },
+                    set: { model.setSortMode($0) }
+                )
+            ) {
                 ForEach(AppModel.SortMode.allCases) { mode in
                     Text(mode.label).tag(mode)
                 }
             }
             .pickerStyle(.inline)
         }
-        Toggle("Defang IOCs", isOn: Binding(
-            get: { model.isDefangEnabled },
-            set: { model.setDefang(enabled: $0) }
-        ))
+        Toggle(
+            "Defang IOCs",
+            isOn: Binding(
+                get: { model.isDefangEnabled },
+                set: { model.setDefang(enabled: $0) }
+            ))
         // (Defang's bracket style is a parameter, so it lives in the Settings window.)
         Menu("Mask identifiers: \(model.maskSummaryLabel)") {
             ForEach(AppModel.MaskTarget.allCases) { target in
-                Toggle(target.label, isOn: Binding(
-                    get: { model.maskEnabled(target) },
-                    set: { model.setMask(target, enabled: $0) }
-                ))
+                Toggle(
+                    target.label,
+                    isOn: Binding(
+                        get: { model.maskEnabled(target) },
+                        set: { model.setMask(target, enabled: $0) }
+                    ))
             }
         }
 
@@ -504,9 +518,10 @@ private struct MenuContent: View {
         }
         .disabled(model.isStripping)
         Button("Convert HTML to Markdown") {
-            model.runCommand(.htmlToMarkdown,
-                             label: "Converted to Markdown",
-                             notApplicableStatus: "No HTML content")
+            model.runCommand(
+                .htmlToMarkdown,
+                label: "Converted to Markdown",
+                notApplicableStatus: "No HTML content")
         }
         .disabled(model.isStripping)
         Button("Refang clipboard") {

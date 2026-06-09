@@ -20,7 +20,8 @@ final class FakePasteboard: PasteboardProtocol {
         readBestCalls += 1
         let generation = changeCount
         if let rawRepresentationBytes,
-           rawRepresentationBytes > maxRepresentationBytes {
+            rawRepresentationBytes > maxRepresentationBytes
+        {
             return .tooLarge(bytes: rawRepresentationBytes, changeCount: generation)
         }
 

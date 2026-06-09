@@ -79,19 +79,28 @@ Nothing here is committed scope; it's a memory aid for the next maintainer.
   branches where a false-green hides. The highest-risk parser (`classify_ignore_line`) now
   has a unit test; the broader gap remains. Consider a scoped mutation/coverage pass over
   `xtask` (or at least unit tests for each check's failure branch). (0013 → D-6 review finding)
-- **Anti-slop parity for the Swift macOS shell.** Exec plan 0013's new gates are
-  Rust/cargo-specific (`[workspace.lints]`/`clippy.toml`, `check-unused-deps`,
-  `check-test-hygiene` (scans `.rs` only), `check-docs`/`missing_docs`, `check-coverage`,
-  `check-mutants`), so the ~3.2k-LOC Swift shell (`shells/macos/`) has no linter, dead-code,
-  complexity, coverage, mutation, or test-hygiene gate, and `swift test` runs only locally
-  (`build.sh`), never in CI — CI does a best-effort `swift build` compile smoke only. (The
-  security posture *is* enforced cross-language: `check-no-content-logging` and
-  `check-clipboard-safety` already scan `shells/macos/Sources` `.swift` files, alongside
-  `check-c-ffi-surface` and the entitlements checks.) To close it in-doctrine, add a
-  **best-effort** tier (like the existing `macos-shell` job, `continue-on-error` since CI
-  runners may lack full Xcode): `swift format lint` + SwiftLint (style/complexity),
-  `periphery` (dead code), Swift coverage via llvm-cov, and run `swift test` in CI — fronted
-  by an `xtask` check so local == CI. Deferred because the shell is comparatively thin
-  OS-glue (the security-critical transform logic lives in the gated Rust core) and the repo
-  defers tooling expansion until growth; revisit when a second platform shell lands or the
-  Swift surface grows. (0013 → cross-language follow-up)
+- ~~**Anti-slop parity for the Swift macOS shell.**~~ Largely delivered via
+  `cargo xtask check-swift` (`make swift`): a **best-effort, macOS-only** tier that fronts
+  `swift format lint --strict` (config in `shells/macos/.swift-format`), a `cargo build -p
+  safetystrip-ffi --release` + `swift test`, and a Sources-only line-coverage floor via
+  `llvm-cov` (`SWIFT_COVERAGE_FLOOR_PCT`, 95% — matching the Rust product floor; measured
+  baseline ~96.0%). It runs in the `continue-on-error` `macos-shell` CI job (replacing the
+  old `swift build` smoke), so the shell's tests now run in CI rather than only locally, and
+  skips cleanly where the Swift toolchain is absent. The Swift sources were normalized once
+  with `swift format` so the strict lint passes; the coverage floor is a ratchet (raise,
+  never lower). The OS-facing layers are tested headlessly — `SystemPasteboard` against an
+  app-private `NSPasteboard(name:)`, the Carbon hot-key trampoline via a synthesized
+  `kEventHotKeyPressed` event — leaving only the `SafetyStripApp` SwiftUI executable
+  unmeasured (it isn't linked into the test bundle; the analog of the Rust binary crates the
+  workspace floor doesn't gate).
+  SwiftLint (style/complexity, config in `shells/macos/.swiftlint.yml`) is wired as a
+  **run-if-present** phase (non-`--strict`: warnings advise, `error`-severity fails) and CI
+  installs it **SHA-pinned + checksum-verified** (the `portable_swiftlint.zip` release asset,
+  hashed exactly like actionlint), so it runs in CI too — not just locally. **Still
+  deferred:** `periphery` (dead code) — its binary is equally pinnable, but `periphery scan`
+  needs a compiler **index store** (it drives a `swift build` first) and a curated retain-list
+  config to avoid false positives on the SwiftUI/`@main` surface, neither of which is worth
+  wiring until the Swift surface grows; add it (also run-if-present) then. The cross-language
+  *security* posture was already enforced (`check-no-content-logging` /
+  `check-clipboard-safety` scan `.swift`; `check-c-ffi-surface`; entitlements).
+  (0013 → cross-language follow-up)

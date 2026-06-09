@@ -177,7 +177,8 @@ public final class StripController {
         makeConfig: (PasteboardSnapshot) -> TransformConfig?
     ) async -> StripOutcome {
         if trigger == .clipboardChanged,
-           pasteboard.changeCount == lastSelfWriteChangeCount {
+            pasteboard.changeCount == lastSelfWriteChangeCount
+        {
             return .stripped(changed: false)
         }
 
@@ -218,7 +219,7 @@ public final class StripController {
             do {
                 try await Task.sleep(for: threshold)
             } catch {
-                return false // cancelled before the threshold elapsed → never signaled
+                return false  // cancelled before the threshold elapsed → never signaled
             }
             self?.onStrippingChange?(true)
             return true

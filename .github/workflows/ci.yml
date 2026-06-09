@@ -105,13 +105,16 @@ jobs:
         run: cargo run -p xtask -- ci
 
   # ----------------------------------------------------------------------------
-  # Best-effort macOS shell build: compile the FFI staticlib and `swift build`
-  # the macOS shell. continue-on-error because the CI image may lack full Xcode
-  # (the repo ships on Command-Line-Tools-only environments); this job is a
-  # smoke signal, not a required gate.
+  # Best-effort macOS shell anti-slop tier: `cargo xtask check-swift` builds the FFI
+  # staticlib, then runs swift-format lint, `swift test`, and the Sources coverage
+  # floor (and SwiftLint if a runner happens to have it). continue-on-error because
+  # the CI image may lack full Xcode (the repo ships on Command-Line-Tools-only
+  # environments) and the Swift tier is cross-language parity for the §13 Rust gates,
+  # not a required gate — the required suite is the Linux `xtask ci` above. check-swift
+  # skips cleanly when the Swift toolchain or sources are absent.
   # ----------------------------------------------------------------------------
   macos-shell:
-    name: macOS shell smoke (FFI staticlib + swift build)
+    name: macOS shell anti-slop (swift-format + test + coverage)
     runs-on: macos-latest
     continue-on-error: true
     steps:
@@ -135,20 +138,30 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      # The Swift shell links this staticlib over the frozen C ABI.
-      - name: Build FFI staticlib (release)
-        run: cargo build -p safetystrip-ffi --release
-
-      # Compile the Swift shell sources. `swift build` works under
-      # Command-Line-Tools; producing a signed .app needs full Xcode and is out
-      # of scope for CI. Skipped gracefully if the shell sources are not present.
-      - name: swift build (macOS shell)
+      # Pinned + sha256-verified SwiftLint (the style/complexity phase of check-swift),
+      # installed like actionlint: a release asset from a pinned tag, checksum-checked.
+      # `portable_swiftlint.zip` is a universal macOS binary that needs no Xcode to run.
+      # Bump VER and SHA together (sha256 of the asset; verify by re-downloading). check-swift
+      # runs SwiftLint only if it's on PATH, so this step is what turns that phase on in CI.
+      - name: Install SwiftLint (pinned + checksum-verified)
         run: |
-          if [ -f shells/macos/Package.swift ]; then
-            swift build --package-path shells/macos
-          else
-            echo "shells/macos/Package.swift not present yet — skipping swift build."
-          fi
+          ver=0.63.3
+          sha=fb045e85e7cb3374f42a4840b6b85a0106302afa69035c0c6f29af4a44c810b6
+          tmp="$(mktemp -d)"
+          curl --fail --silent --show-error --location \
+            --output "${tmp}/swiftlint.zip" \
+            "https://github.com/realm/SwiftLint/releases/download/${ver}/portable_swiftlint.zip"
+          echo "${sha}  ${tmp}/swiftlint.zip" | shasum -a 256 --check --strict -
+          unzip -o -q "${tmp}/swiftlint.zip" -d "${tmp}/swiftlint"
+          sudo install -m 0755 "${tmp}/swiftlint/swiftlint" /usr/local/bin/swiftlint
+          swiftlint version
+
+      # Same command an engineer runs locally (`make swift`), so local == CI for the
+      # Swift tier too. It builds the staticlib the package links over the frozen C
+      # ABI, lints formatting, runs the tests, enforces the Sources coverage floor, and
+      # (now that the step above put it on PATH) runs the SwiftLint style/complexity pass.
+      - name: cargo xtask check-swift
+        run: cargo run -p xtask -- check-swift
 
   # ----------------------------------------------------------------------------
   # Nightly fuzz smoke: run each cargo-fuzz target for a few seconds to catch

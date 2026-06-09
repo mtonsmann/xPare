@@ -93,8 +93,8 @@ public struct Transformer: Sendable {
     public func transform(_ input: String, configJSON: String) throws -> String {
         let inputBytes = Array(input.utf8)
 
-        var outPtr: UnsafeMutablePointer<UInt8>? = nil
-        var outLen: Int = 0
+        var outPtr: UnsafeMutablePointer<UInt8>?
+        var outLen = 0
 
         let status: SsStatus = configJSON.withCString { configCStr in
             inputBytes.withUnsafeBufferPointer { inBuf in

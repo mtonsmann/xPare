@@ -34,8 +34,8 @@ import Foundation
         let json = try config.encodedJSON()
 
         let expected = """
-        {"version":2,"operations":[{"op":"strip_html"},{"op":"change_case","case":"title"},{"op":"collapse_whitespace"}],"ordering":"canonical"}
-        """
+            {"version":2,"operations":[{"op":"strip_html"},{"op":"change_case","case":"title"},{"op":"collapse_whitespace"}],"ordering":"canonical"}
+            """
 
         // Compare structurally (key order within objects is not significant to
         // the core, which uses serde), but assert the full shape matches.
@@ -44,12 +44,12 @@ import Foundation
 
     @Test func noPayloadOpsEncodeAsBareTag() throws {
         let config = TransformConfig(operations: [
-            .htmlToMarkdown, .dedupeLines, .extractEmails, .extractUrls
+            .htmlToMarkdown, .dedupeLines, .extractEmails, .extractUrls,
         ])
         let json = try config.encodedJSON()
         let expected = """
-        {"version":2,"operations":[{"op":"html_to_markdown"},{"op":"dedupe_lines"},{"op":"extract_emails"},{"op":"extract_urls"}],"ordering":"canonical"}
-        """
+            {"version":2,"operations":[{"op":"html_to_markdown"},{"op":"dedupe_lines"},{"op":"extract_emails"},{"op":"extract_urls"}],"ordering":"canonical"}
+            """
         #expect(try jsonObject(json) == jsonObject(expected))
     }
 
@@ -75,12 +75,12 @@ import Foundation
         ])
         let json = try config.encodedJSON()
         let expected = """
-        {"version":2,"operations":[\
-        {"op":"prefix_lines","prefix":"> "},\
-        {"op":"suffix_lines","suffix":";"},\
-        {"op":"join_with","separator":", "},\
-        {"op":"split_on","delimiter":"|"}],"ordering":"canonical"}
-        """
+            {"version":2,"operations":[\
+            {"op":"prefix_lines","prefix":"> "},\
+            {"op":"suffix_lines","suffix":";"},\
+            {"op":"join_with","separator":", "},\
+            {"op":"split_on","delimiter":"|"}],"ordering":"canonical"}
+            """
         #expect(try jsonObject(json) == jsonObject(expected))
     }
 
@@ -94,12 +94,12 @@ import Foundation
         ])
         let json = try config.encodedJSON()
         let expected = """
-        {"version":2,"operations":[\
-        {"op":"defang","style":"square"},\
-        {"op":"refang"},\
-        {"op":"clean_urls"},\
-        {"op":"mask_identifiers","emails":true,"ipv4":true,"ipv6":false}],"ordering":"canonical"}
-        """
+            {"version":2,"operations":[\
+            {"op":"defang","style":"square"},\
+            {"op":"refang"},\
+            {"op":"clean_urls"},\
+            {"op":"mask_identifiers","emails":true,"ipv4":true,"ipv6":false}],"ordering":"canonical"}
+            """
         #expect(try jsonObject(json) == jsonObject(expected))
     }
 
@@ -133,9 +133,11 @@ import Foundation
     @Test func maskIdentifiersDecodesWithDefaultFalseFlags() throws {
         let json = #"{"version":2,"operations":[{"op":"mask_identifiers","emails":true}]}"#
         let decoded = try JSONDecoder().decode(TransformConfig.self, from: Data(json.utf8))
-        #expect(decoded == TransformConfig(operations: [
-            .maskIdentifiers(emails: true, ipv4: false, ipv6: false)
-        ]))
+        #expect(
+            decoded
+                == TransformConfig(operations: [
+                    .maskIdentifiers(emails: true, ipv4: false, ipv6: false)
+                ]))
     }
 
     @Test func allBracketStylesRawValues() {
@@ -189,5 +191,36 @@ import Foundation
         let json = try original.encodedJSON()
         let decoded = try JSONDecoder().decode(TransformConfig.self, from: Data(json.utf8))
         #expect(decoded == original)
+    }
+
+    /// Every `Operation` case must survive a full encode→decode round trip — this locks
+    /// the wire form (tag + payload) for the whole enum, exercising every `encode`/`init`
+    /// arm including the no-payload ops that the other tests don't name.
+    @Test func everyOperationRoundTrips() throws {
+        let all: [SafetyStripCore.Operation] = [
+            .stripHtml, .stripMarkdown, .htmlToMarkdown, .collapseWhitespace,
+            .trimTrailingWhitespace, .removeBlankLines, .unwrapLines, .dedupeLines,
+            .extractEmails, .extractUrls, .refang, .cleanUrls,
+            .defang(style: .square), .defang(style: .round),
+            .changeCase(case: .upper), .changeCase(case: .lower),
+            .changeCase(case: .title), .changeCase(case: .sentence),
+            .sortLines(descending: true, caseInsensitive: false),
+            .prefixLines(prefix: "> "), .suffixLines(suffix: " ;"),
+            .joinWith(separator: ", "), .splitOn(delimiter: "|"),
+            .maskIdentifiers(emails: true, ipv4: false, ipv6: true),
+        ]
+        let config = TransformConfig(operations: all)
+        let decoded = try JSONDecoder().decode(
+            TransformConfig.self, from: Data(try config.encodedJSON().utf8))
+        #expect(decoded.operations == all)
+    }
+
+    /// An unknown `op` tag is a hard decode error (the `default:` arm) — the shell must
+    /// reject a wire form it doesn't understand rather than silently dropping the op.
+    @Test func unknownOperationTagFailsToDecode() {
+        let blob = Data(#"{"op":"teleport"}"#.utf8)
+        #expect(throws: (any Error).self) {
+            try JSONDecoder().decode(SafetyStripCore.Operation.self, from: blob)
+        }
     }
 }
