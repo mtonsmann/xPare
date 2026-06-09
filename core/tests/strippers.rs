@@ -236,8 +236,11 @@ mod html_regression {
 
     #[test]
     fn max_scalar_numeric_entity_is_decoded() {
-        // U+10FFFF is the maximum valid scalar: decoded, not mapped to U+FFFD.
+        // U+10FFFF is the maximum valid scalar: decoded, not mapped to U+FFFD — via both
+        // the hex and the decimal parse paths (the decimal one accumulates to the same
+        // boundary value through a different branch).
         assert_eq!(strip_html("&#x10FFFF;"), "\u{10FFFF}");
+        assert_eq!(strip_html("&#1114111;"), "\u{10FFFF}"); // 0x10FFFF in decimal
     }
 
     #[test]
