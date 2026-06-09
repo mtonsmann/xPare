@@ -2157,7 +2157,9 @@ fn check_mutants() -> Result<(), String> {
             .map(|n| n.get())
             .unwrap_or(1);
         if jobs > 1 {
-            println!("check-mutants: local run — parallelizing across {jobs} jobs (CI stays serial)");
+            println!(
+                "check-mutants: local run — parallelizing across {jobs} jobs (CI stays serial)"
+            );
             args.push("--jobs".to_string());
             args.push(jobs.to_string());
         }

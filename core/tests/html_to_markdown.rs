@@ -214,7 +214,10 @@ fn nested_pre_keeps_outer_buffer() {
 fn blockquote_and_table_close_blank_line() {
     // end_tag L349 `blockquote || table` close emits a blank line. Mutating `||`->`&&`
     // makes the condition unreachable, so the trailing block separation disappears.
-    assert_eq!(html_to_markdown("<blockquote>q</blockquote>after"), "> q\n\nafter");
+    assert_eq!(
+        html_to_markdown("<blockquote>q</blockquote>after"),
+        "> q\n\nafter"
+    );
     assert_eq!(
         html_to_markdown("<table><tr><td>a</td></tr></table>after"),
         "a\n\nafter"
@@ -225,7 +228,10 @@ fn blockquote_and_table_close_blank_line() {
 fn ordered_list_items_are_numbered() {
     // start_list_item L364 `Some(ListKind::Ordered { next })` arm: deleting it falls
     // through to the unordered "- " marker, so the numbers would vanish.
-    assert_eq!(html_to_markdown("<ol><li>a</li><li>b</li></ol>"), "1. a\n2. b");
+    assert_eq!(
+        html_to_markdown("<ol><li>a</li><li>b</li></ol>"),
+        "1. a\n2. b"
+    );
 }
 
 #[test]
@@ -267,7 +273,10 @@ fn unquoted_attr_value_stops_at_whitespace() {
     // terminator. Mutating `||`->`&&` would swallow following attributes into the href;
     // mutating the `+=` underflows/loops. The href must stop at the space before `bar`.
     assert_eq!(html_to_markdown("<a href=foo bar=baz>t</a>"), "[t](<foo>)");
-    assert_eq!(html_to_markdown("<a href=mailto:a@b.com>t</a>"), "[t](<mailto:a@b.com>)");
+    assert_eq!(
+        html_to_markdown("<a href=mailto:a@b.com>t</a>"),
+        "[t](<mailto:a@b.com>)"
+    );
 }
 
 #[test]
@@ -289,6 +298,8 @@ fn no_space_inserted_after_open_bracket() {
     // needs_space_before L629: returns false after '[' (and '\n',' ','\t','>','('), so a
     // pending space at the start of link text is dropped. Mutating the body to always
     // `true` would inject a leading space inside the `[...]`.
-    assert_eq!(html_to_markdown("<a href=http://e.com> x</a>"), "[x](<http:>)");
+    assert_eq!(
+        html_to_markdown("<a href=http://e.com> x</a>"),
+        "[x](<http:>)"
+    );
 }
-

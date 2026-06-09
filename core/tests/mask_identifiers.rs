@@ -41,7 +41,10 @@ fn masks_indicator_classifier_boundaries() {
     // is_email: a leading-dot domain ("a@.com", dot at index 0) is rejected. (L40 &&->||, >->>=)
     assert_eq!(mask_identifiers("a@.com", true, false, false), "a@.com");
     // is_ipv4: an octet of exactly 255 is valid (the bound is `> 255`, not `>= 255`). (L80 >->>=)
-    assert_eq!(mask_identifiers("255.255.255.255", false, true, false), "[ipv4]");
+    assert_eq!(
+        mask_identifiers("255.255.255.255", false, true, false),
+        "[ipv4]"
+    );
     // is_ipv6: a single colon is not enough to be IPv6 -> left verbatim. (L93 ==->!=)
     assert_eq!(mask_identifiers("1:2", false, false, true), "1:2");
     // is_ipv6: two colons with no "::" compression IS a valid IPv6. (L95 &&->||, <->==)
