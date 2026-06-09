@@ -86,17 +86,26 @@ a bug as "correct", and security reasoning a rule cannot express — gets a tier
 review** of the PR diff, never a cron: same convergence logic as the heavy gates, a quiet
 repo pays nothing.
 
-This is automated, not best-effort-by-memory, in [`.github/workflows/review.yml`](../../.github/workflows/review.yml):
+It runs as a connected **subscription cloud reviewer** (OpenAI Codex on a ChatGPT plan, or
+Claude Code's cloud review) — deliberately NOT a pay-per-token CI action — so a side project
+pays nothing beyond its existing subscription. The reviewer reads this repo's agent docs
+([`AGENTS.md`](../../AGENTS.md) + these guardrails) as its rubric; the intended scope:
 
-- **Anti-slop / repo-standards** review runs on **every code PR** (Claude reviews against
-  this guardrail).
-- **Security** review runs **only when the PR touches security-relevant surface** — the
-  unsafe FFI boundary, the untrusted-input parsers / IOC-PII transforms, config/pipeline
-  validation, dependencies/`deny.toml`, macOS entitlements & signing, or CI workflows (a
-  `detect` job decides from the changed files).
-- Both are **advisory** (`continue-on-error`): the required signal stays `cargo xtask ci`.
-  The agent is a *discovery* mechanism, not a merge gate — never block on a nondeterministic
-  reviewer, and never let "the bot approved it" substitute for the deterministic invariants.
+- **Anti-slop / repo-standards** on **every code PR**, reviewed against this guardrail.
+- **Security** focus when the PR touches security-relevant surface — the unsafe FFI boundary
+  (`core-ffi/`), the untrusted-input parsers / IOC-PII transforms
+  (`core/src/ops/{html,markdown,html_to_markdown,defang,mask,indicators,urls}.rs`),
+  config/pipeline validation, dependencies / `deny.toml`, macOS entitlements & signing, or
+  CI workflows.
+- **Advisory only**: the required signal stays `cargo xtask ci`. The reviewer is a
+  *discovery* mechanism, not a merge gate — never block on a nondeterministic reviewer, and
+  never let "the bot approved it" substitute for the deterministic invariants.
+
+(Why a cloud reviewer, not a CI action? An API-keyed action bills per token; the
+subscription OAuth token for CI currently expires ~daily with no refresh, and the dedicated
+security-review action is API-only — so a connected cloud reviewer is the subscription-friendly
+fit. One-time setup in CONTRIBUTING. If you ever want it in-repo and API-billed instead, a
+two-track GitHub workflow is straightforward to add.)
 
 Rules of the review:
 

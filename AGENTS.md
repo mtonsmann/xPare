@@ -195,6 +195,10 @@ If the docs-only change captures a review lesson, also consult
   boundary move.
 - For any fixed review finding class, state the mechanical regression protection
   and the docs lesson added.
+- Automated review: a subscription cloud reviewer (Codex / Claude Code cloud) reviews PRs
+  against [`docs/guardrails/code-and-test-hygiene.md`](docs/guardrails/code-and-test-hygiene.md)
+  ("Tier-2 review") — anti-slop on every code PR, security focus on the security-relevant
+  surface listed there. Advisory only; the required gate is `cargo xtask ci`.
 - GitHub integration: prefer the Codex GitHub connector for PR metadata/creation
   now that it has repo scope for `mtonsmann/SafetyStrip`. Use escalated local
   `gh` as the fallback; sandboxed, non-escalated `gh` auth/network results are

@@ -90,15 +90,24 @@ the PR.
 
 ## Automated PR review (advisory)
 
-[`.github/workflows/review.yml`](.github/workflows/review.yml) runs Claude agent reviews on
-PRs — **anti-slop / repo-standards on every code PR**, and a **security review only when the
-PR touches security-relevant surface** (the FFI boundary, untrusted-input parsers, IOC/PII
-transforms, config/pipeline validation, dependencies, entitlements/signing, or CI). Both are
-**advisory** (`continue-on-error`) — they post inline findings but never block; the required
-signal stays `cargo xtask ci`. A recurring finding should graduate into a deterministic
-`xtask` check (see [the hygiene guardrail](docs/guardrails/code-and-test-hygiene.md) §
-"Tier-2 review"). Setup is one-time: install the Claude GitHub App and add an
-`ANTHROPIC_API_KEY` repo secret; fork PRs run without secrets and the jobs no-op there.
+The tier-2 agent review (anti-slop on every code PR; security focus when the PR touches
+security-relevant surface) runs through a **subscription cloud reviewer**, not a pay-per-token
+CI action — see [the hygiene guardrail](docs/guardrails/code-and-test-hygiene.md) §
+"Tier-2 review". It is **advisory**: it posts findings but never blocks; the required signal
+stays `cargo xtask ci`, and a recurring finding should graduate into a deterministic `xtask`
+check.
+
+One-time setup (pick one; both bill to an existing subscription, not API credits):
+
+- **OpenAI Codex** (ChatGPT Plus/Pro): connect this repo in ChatGPT → Codex's GitHub
+  integration and enable code review. Codex reads [`AGENTS.md`](AGENTS.md) (which routes to
+  `docs/guardrails/`) as its instructions — so it reviews against this repo's standards.
+- **Claude Code cloud review** (where available on your plan): connect via the Claude GitHub
+  app and point it at the same guardrails.
+
+Follow each product's current setup docs for the exact steps; the repo side is already done
+(the rubric lives in `AGENTS.md` + the guardrails). For an in-repo, API-billed GitHub
+workflow instead, see the rationale + revert note in the hygiene guardrail.
 
 ## Closing review findings
 
