@@ -149,8 +149,9 @@ fn emphasis_close_tag_emits_marker() {
 fn unbalanced_close_tags_do_not_underflow() {
     // end_tag depth guards must use `>` not `>=` (a `>= 0` check underflows usize -> panic).
     assert_eq!(html_to_markdown("</code>x"), "x");
-    // A stray </pre> (no open <pre>) emits an empty fence rather than underflowing pre_depth.
-    assert_eq!(html_to_markdown("</pre>y"), "```\n\n```\n\ny");
+    // A stray </pre> (no open <pre>) is a no-op, exactly like a stray </code> — it must
+    // NOT emit a spurious empty ``` fence (regression for the end_tag pre-flush guard).
+    assert_eq!(html_to_markdown("</pre>y"), "y");
 }
 
 #[test]
@@ -243,9 +244,11 @@ fn newline_in_inline_code_becomes_space() {
 }
 
 #[test]
-fn trailing_space_trimmed_before_inline_close() {
-    // trim_trailing_inline L441 pops trailing spaces before emitting a closing marker.
-    // Mutating it to a no-op leaves the space inside the emphasis/strong markers.
+fn inline_emphasis_close_spacing() {
+    // Emphasis/strong close emits its marker with the content's trailing space kept
+    // outside the markers. (Note: this pins the observable em/strong output, not the
+    // `trim_trailing_inline` mutant — whitespace is buffered as `pending_space`, so `text`
+    // does not end in a space here; that mutant is documented-equivalent in exec plan 0013.)
     assert_eq!(html_to_markdown("<em>x </em>y"), "_x_ y");
     assert_eq!(html_to_markdown("<strong>x </strong>y"), "**x** y");
 }
@@ -297,9 +300,10 @@ fn link_destination_escapes_gt_and_backslash() {
 fn no_space_inserted_after_open_bracket() {
     // needs_space_before L629: returns false after '[' (and '\n',' ','\t','>','('), so a
     // pending space at the start of link text is dropped. Mutating the body to always
-    // `true` would inject a leading space inside the `[...]`.
+    // `true` would inject a leading space inside the `[...]`. (Quoted href so this pins
+    // the spacing rule without also freezing the unquoted-value `/`-truncation heuristic.)
     assert_eq!(
-        html_to_markdown("<a href=http://e.com> x</a>"),
-        "[x](<http:>)"
+        html_to_markdown(r#"<a href="http://e.com"> x</a>"#),
+        "[x](<http://e.com>)"
     );
 }

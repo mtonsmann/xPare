@@ -72,3 +72,10 @@ Nothing here is committed scope; it's a memory aid for the next maintainer.
   `.cargo/mutants.toml` (subsequent `-j 6` runs were clean). If `-j <cores>` ever
   spurious-times-out again, cap per-job test threads (so jobs × test-threads ≈ cores)
   rather than lowering `-j`. (0013 → D-5)
+- **Hold the enforcement code (`xtask`) to the product's test bar.** The tier-2 review
+  (D-6) found that the `xtask` checks ship with far less test coverage than the product —
+  `xtask/**` is excluded from both `check-coverage` and `check-mutants` ("verified by being
+  run in CI"), but "run in CI" exercises only the happy path, not the failure/parsing
+  branches where a false-green hides. The highest-risk parser (`classify_ignore_line`) now
+  has a unit test; the broader gap remains. Consider a scoped mutation/coverage pass over
+  `xtask` (or at least unit tests for each check's failure branch). (0013 → D-6 review finding)

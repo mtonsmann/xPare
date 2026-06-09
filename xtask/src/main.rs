@@ -1140,6 +1140,27 @@ const MAX_IGNORED_TESTS: usize = 2;
 /// *why* a test is off; unbounded growth lets disabled tests accumulate behind a
 /// green suite. (Assertion *quality* — tests that execute code but assert nothing —
 /// is the other half of test slop, caught separately by `cargo xtask check-mutants`.)
+/// Classify an already-`trim_start`ed source line as a test `#[ignore]` attribute.
+///
+/// * `None` — not an `#[ignore]` attribute: a different attribute that merely starts
+///   with `ignore` (e.g. `#[ignored_x]`), or a doc-comment / prose / string mention.
+/// * `Some(true)` — carries a reason: `#[ignore = "..."]` (spacing-insensitive).
+/// * `Some(false)` — a bare `#[ignore]` (a silent skip).
+///
+/// Scope: a `cfg_attr`-gated ignore (`#[cfg_attr(<cond>, ignore)]`) is intentionally NOT
+/// matched — it cannot carry a `= "reason"`, and none exist in the tree. Pure (no I/O) so
+/// it is unit-tested directly.
+fn classify_ignore_line(trimmed: &str) -> Option<bool> {
+    let rest = trimmed.strip_prefix("#[ignore")?.trim_start();
+    // The next char must be `]` (bare) or `=` (reason); anything else means the token was
+    // a longer identifier (e.g. `ignored`), not the std `#[ignore]` attribute.
+    match rest.as_bytes().first() {
+        Some(b'=') => Some(true),
+        Some(b']') => Some(false),
+        _ => None,
+    }
+}
+
 fn check_test_hygiene() -> Result<(), String> {
     let root = workspace_root();
     let mut files: Vec<PathBuf> = Vec::new();
@@ -1154,18 +1175,15 @@ fn check_test_hygiene() -> Result<(), String> {
         };
         for (i, line) in text.lines().enumerate() {
             let trimmed = line.trim_start();
-            // Only real attributes: a trimmed line that *starts* with `#[ignore`. This
-            // skips doc-comment / prose mentions of `#[ignore]` (e.g. in module docs).
-            if !trimmed.starts_with("#[ignore") {
-                continue;
-            }
-            ignored += 1;
-            // A reason takes the form `#[ignore = "..."]` (spacing-insensitive). Anything
-            // else — bare `#[ignore]` — is a silent skip.
-            let rest = trimmed["#[ignore".len()..].trim_start();
-            if !rest.starts_with('=') {
-                let shown = path.strip_prefix(&root).unwrap_or(path.as_path());
-                bare.push(format!("{}:{}: {}", shown.display(), i + 1, trimmed));
+            match classify_ignore_line(trimmed) {
+                None => continue,
+                Some(has_reason) => {
+                    ignored += 1;
+                    if !has_reason {
+                        let shown = path.strip_prefix(&root).unwrap_or(path.as_path());
+                        bare.push(format!("{}:{}: {}", shown.display(), i + 1, trimmed));
+                    }
+                }
             }
         }
     }
@@ -2437,6 +2455,25 @@ fn run_ci() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn classify_ignore_line_distinguishes_bare_reason_and_non_ignores() {
+        // Bare ignore (a silent skip) vs a reasoned ignore (spacing-insensitive).
+        assert_eq!(classify_ignore_line("#[ignore]"), Some(false));
+        assert_eq!(
+            classify_ignore_line("#[ignore = \"slow: 256 MB\"]"),
+            Some(true)
+        );
+        assert_eq!(classify_ignore_line("#[ignore=\"slow\"]"), Some(true));
+        // Not the std attribute: a longer identifier, prose/doc mentions, code strings.
+        assert_eq!(classify_ignore_line("#[ignored_helper]"), None);
+        assert_eq!(
+            classify_ignore_line("//!   ... `#[ignore]` is honored ..."),
+            None
+        );
+        assert_eq!(classify_ignore_line("let s = \"#[ignore]\";"), None);
+        assert_eq!(classify_ignore_line("// #[ignore] in a comment"), None);
+    }
 
     #[test]
     fn shell_scripts_finds_release_plumbing_and_skips_build_dirs() {

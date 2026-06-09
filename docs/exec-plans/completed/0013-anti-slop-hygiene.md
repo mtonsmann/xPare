@@ -197,3 +197,24 @@ log). Still deferred (low value / poor fit; tracked here until 0013 is archived)
     fully-equivalent helpers (`has_indicator_byte`, `already_defanged`) + `kani_proofs`; all
     other equivalents are mixed-function and stay visible (documented here). D-5 full-tree
     sweep + survivor triage: **complete.**
+- 2026-06-09: **D-6 actually exercised** (not just documented). Ran the tier-2 agent review
+  on the session diff (`origin/main..HEAD`), two independent lenses (enforcement code; tests
+  + core changes), per the guardrail doctrine. It earned its keep — it found a real bug the
+  mechanical gates passed (because the buggy output was self-consistent):
+  - **Bug (fixed):** `html_to_markdown("</pre>y")` emitted a spurious empty ``` fence — an
+    unmatched `</pre>` ran `flush_pre_block()` on a never-opened buffer (the `<code>` sibling
+    correctly no-ops). Fixed `end_tag` to flush only inside the `pre_depth > 0` branch; the
+    regression test (which had *frozen the defect as golden*) now pins the corrected `"y"`.
+  - **Hardening (done):** extracted `check_test_hygiene`'s `#[ignore]` parser into a pure,
+    unit-tested `classify_ignore_line` (closing the recurring "enforcement code is untested"
+    finding for the highest-risk logic, and fixing a latent over-match of `#[ignored_*]`);
+    documented the `cfg_attr`-gated-ignore scope caveat; added a nursery-lint fragility note
+    to `clippy.toml`; corrected a mis-named test that did not actually kill its mutant; and
+    re-pointed a test off an incidentally-frozen unquoted-`href` `/`-truncation quirk.
+  - **Accepted / deferred:** the unquoted-value `/`-break is a deliberate self-closing-tag
+    heuristic (not a bug); minor polish (one duplicate assertion, a hardcoded `supported: 2`
+    in a Display test, "offline" wording on `check-docs`) left as-is. The recurring
+    meta-finding — *the enforcement code is held to a lower bar than the product* — is
+    tracked in `deferred-work.md` (run coverage/mutants over `xtask` itself).
+  Lesson recorded: mechanical gates verify *self-consistency*; only a review asking "is this
+  output **right**?" catches a frozen defect — which is exactly the residue D-6 exists for.
