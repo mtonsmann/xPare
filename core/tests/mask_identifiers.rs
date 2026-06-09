@@ -32,6 +32,22 @@ fn masks_ipv4_tokens() {
     );
 }
 
+// Indicator-classifier boundary coverage (is_email / is_ipv4 / is_ipv6 mutation
+// survivors). Each pins a comparison that otherwise flips silently.
+#[test]
+fn masks_indicator_classifier_boundaries() {
+    // is_email: an empty local part ("@a.test") is rejected -> left verbatim. (L36 ||->&&)
+    assert_eq!(mask_identifiers("@a.test", true, false, false), "@a.test");
+    // is_email: a leading-dot domain ("a@.com", dot at index 0) is rejected. (L40 &&->||, >->>=)
+    assert_eq!(mask_identifiers("a@.com", true, false, false), "a@.com");
+    // is_ipv4: an octet of exactly 255 is valid (the bound is `> 255`, not `>= 255`). (L80 >->>=)
+    assert_eq!(mask_identifiers("255.255.255.255", false, true, false), "[ipv4]");
+    // is_ipv6: a single colon is not enough to be IPv6 -> left verbatim. (L93 ==->!=)
+    assert_eq!(mask_identifiers("1:2", false, false, true), "1:2");
+    // is_ipv6: two colons with no "::" compression IS a valid IPv6. (L95 &&->||, <->==)
+    assert_eq!(mask_identifiers("1:2:3", false, false, true), "[ipv6]");
+}
+
 #[test]
 fn masks_ipv6_tokens() {
     assert_eq!(

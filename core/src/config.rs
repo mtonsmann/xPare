@@ -662,6 +662,57 @@ mod tests {
     }
 
     #[test]
+    fn empty_affix_growth_factor_is_one() {
+        // An empty prefix/suffix must still report factor 1, via `1 + len` (never `1 * len`,
+        // which would be 0 for an empty affix and collapse the saturating product).
+        assert_eq!(
+            Operation::PrefixLines {
+                prefix: String::new()
+            }
+            .max_growth_factor(),
+            1
+        );
+        assert_eq!(
+            Operation::SuffixLines {
+                suffix: String::new()
+            }
+            .max_growth_factor(),
+            1
+        );
+    }
+
+    #[test]
+    fn pipeline_growth_exactly_at_the_cap_is_accepted() {
+        // The growth cap is inclusive: `growth > MAX` rejects, so a pipeline whose product
+        // is exactly MAX_PIPELINE_GROWTH_FACTOR must validate. 9 suffix ops of factor 4
+        // give 4^9 = 2^18 = MAX_PIPELINE_GROWTH_FACTOR.
+        let ops = vec![
+            Operation::SuffixLines {
+                suffix: "aaa".to_string()
+            };
+            9
+        ];
+        assert!(Config::as_given(ops).validate().is_ok());
+    }
+
+    #[test]
+    fn config_error_display_is_populated() {
+        // The Display impl is the user-facing error text (surfaced by the CLI). A mutant
+        // that replaces the whole body with `Ok(())` formats to the empty string.
+        assert_eq!(
+            ConfigError::UnsupportedVersion {
+                found: 99,
+                supported: 2
+            }
+            .to_string(),
+            "unsupported config version 99 (this core supports 2)"
+        );
+        assert!(ConfigError::Json("boom".to_string())
+            .to_string()
+            .contains("invalid config json"));
+    }
+
+    #[test]
     fn max_growth_factor_never_exceeds_the_kani_proof_bound() {
         // The Kani harness constrains symbolic factors to `1..=1+MAX_CONFIG_TEXT_PARAM_BYTES`.
         // Keep that bound honest: no real operation may report a wider factor, or the
