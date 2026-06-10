@@ -1,0 +1,71 @@
+name: Bug report
+description: Report a defect in xPare.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. **Never paste sensitive clipboard content**
+        (passwords, tokens, personal data, confidential text) into this issue.
+        xPare itself never logs or persists clipboard content — please keep it
+        out of the bug tracker too. Describe the input's *shape* instead
+        ("HTML with nested tables, ~50 KB") or build a minimal synthetic
+        example that reproduces the problem.
+  - type: input
+    id: xpare-version
+    attributes:
+      label: xPare version
+      description: From the About panel, or the release tag you downloaded.
+      placeholder: "1.0.0-rc.1"
+    validations:
+      required: true
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS version
+      placeholder: "macOS 15.5 (arm64)"
+    validations:
+      required: true
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: Install method
+      options:
+        - GitHub Release download
+        - Built from source
+        - Other (describe in the repro steps)
+    validations:
+      required: true
+  - type: dropdown
+    id: cleaning-mode
+    attributes:
+      label: Cleaning mode in use
+      description: Was xPare cleaning continuously, or did you trigger it with the hotkey?
+      options:
+        - Continuous mode
+        - Hotkey
+        - Both / not sure
+    validations:
+      required: true
+  - type: textarea
+    id: repro-steps
+    attributes:
+      label: Steps to reproduce
+      description: Use a synthetic, non-sensitive example input.
+      placeholder: |
+        1. Copy "..." from ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
