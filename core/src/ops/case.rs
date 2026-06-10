@@ -9,7 +9,14 @@
 //! upper/lower have an ASCII byte fast path and fall back to the Unicode path as soon
 //! as non-ASCII appears. The implementations are panic-free (no indexing, no
 //! `unwrap`) and linear in the number of bytes/chars.
+//!
+//! Because Unicode case mapping can expand bytes (e.g. `İ` → `i̇`, 2 → 3 bytes),
+//! the output can outgrow the `input.len()` starting capacity. Appends therefore
+//! go through `ops::wipe`, which wipes a superseded allocation before growth
+//! frees it, so no clipboard-derived bytes linger in allocator-owned memory.
+//! (The ASCII fast paths map 1:1 and allocate exactly once.)
 
+use crate::ops::wipe::push_char_wiping;
 use crate::CaseKind;
 
 /// Recase the whole text according to `kind`.
@@ -31,7 +38,9 @@ fn to_upper(input: &str) -> String {
     }
     let mut out = String::with_capacity(input.len());
     for ch in input.chars() {
-        out.extend(ch.to_uppercase());
+        for mapped in ch.to_uppercase() {
+            push_char_wiping(&mut out, mapped);
+        }
     }
     out
 }
@@ -43,7 +52,9 @@ fn to_lower(input: &str) -> String {
     }
     let mut out = String::with_capacity(input.len());
     for ch in input.chars() {
-        out.extend(ch.to_lowercase());
+        for mapped in ch.to_lowercase() {
+            push_char_wiping(&mut out, mapped);
+        }
     }
     out
 }
@@ -67,13 +78,17 @@ fn to_title(input: &str) -> String {
     let mut at_word_start = true;
     for ch in input.chars() {
         if ch.is_whitespace() {
-            out.push(ch);
+            push_char_wiping(&mut out, ch);
             at_word_start = true;
         } else if at_word_start {
-            out.extend(ch.to_uppercase());
+            for mapped in ch.to_uppercase() {
+                push_char_wiping(&mut out, mapped);
+            }
             at_word_start = false;
         } else {
-            out.extend(ch.to_lowercase());
+            for mapped in ch.to_lowercase() {
+                push_char_wiping(&mut out, mapped);
+            }
         }
     }
     out
@@ -136,7 +151,7 @@ fn push_sentence_lowered_char(
 
     if *expect_capital {
         if ch.is_ascii() {
-            out.push(ch.to_ascii_uppercase());
+            push_char_wiping(out, ch.to_ascii_uppercase());
             if ch.is_ascii_alphabetic() {
                 *expect_capital = false;
             }
@@ -144,7 +159,7 @@ fn push_sentence_lowered_char(
             push_unicode_upper(ch, out, expect_capital);
         }
     } else {
-        out.push(ch);
+        push_char_wiping(out, ch);
     }
 
     *prev_terminator = matches!(ch, '.' | '!' | '?');
@@ -154,10 +169,10 @@ fn push_unicode_upper(ch: char, out: &mut String, expect_capital: &mut bool) {
     let mut upper = ch.to_uppercase();
     let first = upper.next().unwrap_or(ch);
     let mut has_mapping = first != ch;
-    out.push(first);
+    push_char_wiping(out, first);
     for mapped in upper {
         has_mapping = true;
-        out.push(mapped);
+        push_char_wiping(out, mapped);
     }
     if has_mapping {
         *expect_capital = false;

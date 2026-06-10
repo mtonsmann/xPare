@@ -12,7 +12,12 @@
 //! * Panic-free on arbitrary input: all input-derived offsets are checked and tag
 //!   names are ASCII-only slices.
 //! * Linear in the input size. The scanner moves forward, and raw-text skipping
-//!   searches for the next close tag without backtracking.
+//!   searches for the next close tag without backtracking. Rendered list
+//!   indentation is clamped at `MAX_RENDERED_LIST_INDENT_DEPTH` levels: the
+//!   list stack still tracks structure and ordered numbering at any depth, but
+//!   two indent spaces per unbounded level would let deeply nested adversarial
+//!   lists (thousands of open `<ul>`) grow the output quadratically, past the
+//!   `Operation::max_growth_factor` envelope that `Config::validate` relies on.
 //! * `<script>` / `<style>` raw-text bodies, comments, declarations, and processing
 //!   instructions are dropped.
 //! * Link destinations are emitted only for inert schemes (`http`, `https`,
@@ -23,11 +28,18 @@
 //! * Entity-decoded Markdown text escapes raw HTML delimiters, and code/pre
 //!   delimiters are chosen longer than any copied backtick run, so inert copied
 //!   content cannot break out as active Markdown HTML.
+//! * Clipboard-derived working buffers — the output accumulator, the pre/code
+//!   side buffers, decoded entity/attribute copies, and link destinations — live
+//!   in `Zeroizing` storage, and accumulator appends go through `ops::wipe` so a
+//!   capacity-growing reallocation wipes the superseded block first. Only the
+//!   returned (trimmed) result leaves unwiped: it is the op's output, which the
+//!   pipeline/FFI wipe after use.
 //!
 //! The output is Markdown plain text. It is intentionally suitable for a one-shot
 //! "convert clipboard to Markdown" command, not a persistent cleanup toggle.
 
 use super::html;
+use super::wipe::{push_char_wiping, push_str_wiping};
 use zeroize::Zeroizing;
 
 /// Convert a common copied-web HTML fragment to Markdown plain text.
@@ -212,22 +224,37 @@ enum ListKind {
     Ordered { next: usize },
 }
 
+/// Deepest list nesting that still adds rendered indentation; items nested
+/// deeper render at this depth. The clamp bounds each item's indent at a small
+/// constant, which keeps the op inside its documented
+/// `Operation::max_growth_factor` envelope — two spaces per unbounded level is
+/// quadratic in the number of open lists. Structure tracking and ordered-list
+/// numbering use the unbounded `list_stack` and are unaffected.
+const MAX_RENDERED_LIST_INDENT_DEPTH: usize = 4;
+
 struct MarkdownOut {
-    text: String,
+    // The accumulator (and the pre/code side buffers) hold clipboard-derived
+    // bytes, so all three live in `Zeroizing` storage — wiped on drop — and every
+    // append goes through the `wipe` helpers because Markdown output can outgrow
+    // the input (escaping, fences, list markers), and a plain reallocation would
+    // free the old block unwiped.
+    text: Zeroizing<String>,
     pending_space: bool,
     pre_depth: usize,
     code_depth: usize,
     pre_buffer: Zeroizing<String>,
     code_buffer: Zeroizing<String>,
     list_stack: Vec<ListKind>,
-    link_stack: Vec<Option<String>>,
+    // Link destinations come from `href` attribute values (clipboard-derived),
+    // so they are wiped once popped/dropped.
+    link_stack: Vec<Option<Zeroizing<String>>>,
     first_cell_in_row: bool,
 }
 
 impl MarkdownOut {
     fn with_capacity(capacity: usize) -> Self {
         Self {
-            text: String::with_capacity(capacity),
+            text: Zeroizing::new(String::with_capacity(capacity)),
             pending_space: false,
             pre_depth: 0,
             code_depth: 0,
@@ -244,9 +271,9 @@ impl MarkdownOut {
             self.ensure_blank_line();
             let level = heading_level(name).unwrap_or(1);
             for _ in 0..level {
-                self.text.push('#');
+                push_char_wiping(&mut self.text, '#');
             }
-            self.text.push(' ');
+            push_char_wiping(&mut self.text, ' ');
             return;
         }
 
@@ -259,7 +286,7 @@ impl MarkdownOut {
             self.ensure_newline();
         } else if eq_ignore_ascii_case(name, "hr") {
             self.ensure_blank_line();
-            self.text.push_str("---");
+            push_str_wiping(&mut self.text, "---");
             self.ensure_blank_line();
         } else if eq_ignore_ascii_case(name, "ul") {
             self.ensure_blank_line();
@@ -273,10 +300,10 @@ impl MarkdownOut {
             self.start_link(attrs);
         } else if eq_ignore_ascii_case(name, "strong") || eq_ignore_ascii_case(name, "b") {
             self.flush_pending_space();
-            self.text.push_str("**");
+            push_str_wiping(&mut self.text, "**");
         } else if eq_ignore_ascii_case(name, "em") || eq_ignore_ascii_case(name, "i") {
             self.flush_pending_space();
-            self.text.push('_');
+            push_char_wiping(&mut self.text, '_');
         } else if eq_ignore_ascii_case(name, "code") {
             if self.pre_depth == 0 {
                 self.flush_pending_space();
@@ -293,7 +320,7 @@ impl MarkdownOut {
             self.pre_depth += 1;
         } else if eq_ignore_ascii_case(name, "blockquote") {
             self.ensure_blank_line();
-            self.text.push_str("> ");
+            push_str_wiping(&mut self.text, "> ");
         } else if eq_ignore_ascii_case(name, "table") {
             self.ensure_blank_line();
         } else if eq_ignore_ascii_case(name, "tr") {
@@ -301,11 +328,12 @@ impl MarkdownOut {
             self.first_cell_in_row = true;
         } else if eq_ignore_ascii_case(name, "td") || eq_ignore_ascii_case(name, "th") {
             if !self.first_cell_in_row {
-                self.text.push('\t');
+                push_char_wiping(&mut self.text, '\t');
             }
             self.first_cell_in_row = false;
         } else if eq_ignore_ascii_case(name, "img") {
-            if let Some(alt) = attr_value(attrs, "alt") {
+            // The alt text is clipboard-derived; wipe the transient copy on drop.
+            if let Some(alt) = attr_value(attrs, "alt").map(Zeroizing::new) {
                 self.push_text(&alt);
             }
         }
@@ -322,16 +350,16 @@ impl MarkdownOut {
         } else if eq_ignore_ascii_case(name, "a") {
             if let Some(Some(dest)) = self.link_stack.pop() {
                 self.trim_trailing_inline();
-                self.text.push_str("](");
-                self.text.push_str(&dest);
-                self.text.push(')');
+                push_str_wiping(&mut self.text, "](");
+                push_str_wiping(&mut self.text, &dest);
+                push_char_wiping(&mut self.text, ')');
             }
         } else if eq_ignore_ascii_case(name, "strong") || eq_ignore_ascii_case(name, "b") {
             self.trim_trailing_inline();
-            self.text.push_str("**");
+            push_str_wiping(&mut self.text, "**");
         } else if eq_ignore_ascii_case(name, "em") || eq_ignore_ascii_case(name, "i") {
             self.trim_trailing_inline();
-            self.text.push('_');
+            push_char_wiping(&mut self.text, '_');
         } else if eq_ignore_ascii_case(name, "code") {
             if self.pre_depth == 0 && self.code_depth > 0 {
                 self.code_depth -= 1;
@@ -359,26 +387,37 @@ impl MarkdownOut {
 
     fn start_list_item(&mut self) {
         self.ensure_newline();
-        let depth = self.list_stack.len().saturating_sub(1);
+        // The rendered indent depth is clamped; the stack length is not. See
+        // `MAX_RENDERED_LIST_INDENT_DEPTH` for the growth-envelope constraint.
+        let depth = self
+            .list_stack
+            .len()
+            .saturating_sub(1)
+            .min(MAX_RENDERED_LIST_INDENT_DEPTH);
         for _ in 0..depth {
-            self.text.push_str("  ");
+            push_str_wiping(&mut self.text, "  ");
         }
         match self.list_stack.last_mut() {
             Some(ListKind::Ordered { next }) => {
                 let value = *next;
                 *next = (*next).saturating_add(1);
-                self.text.push_str(&value.to_string());
-                self.text.push_str(". ");
+                push_str_wiping(&mut self.text, &value.to_string());
+                push_str_wiping(&mut self.text, ". ");
             }
-            _ => self.text.push_str("- "),
+            _ => push_str_wiping(&mut self.text, "- "),
         }
     }
 
     fn start_link(&mut self, attrs: &str) {
-        let dest = attr_value(attrs, "href").and_then(|href| safe_link_destination(&href));
+        // The raw `href` copy is clipboard-derived: wipe it once the escaped
+        // destination (itself wiped via the stack) has been derived from it.
+        let dest = attr_value(attrs, "href")
+            .map(Zeroizing::new)
+            .and_then(|href| safe_link_destination(&href))
+            .map(Zeroizing::new);
         if dest.is_some() {
             self.flush_pending_space();
-            self.text.push('[');
+            push_char_wiping(&mut self.text, '[');
         }
         self.link_stack.push(dest);
     }
@@ -387,18 +426,21 @@ impl MarkdownOut {
         if raw.is_empty() {
             return;
         }
-        let decoded = html::decode_entities(raw);
+        // The decoded copy is a clipboard-derived intermediate; `decode_entities`
+        // pre-sizes it exactly (decoding is shrink-or-equal), so wrapping the
+        // returned buffer wipes every byte it ever held.
+        let decoded = Zeroizing::new(html::decode_entities(raw));
         if self.pre_depth > 0 {
-            self.pre_buffer.push_str(&decoded);
+            push_str_wiping(&mut self.pre_buffer, &decoded);
             self.pending_space = false;
             return;
         }
         if self.code_depth > 0 {
             for c in decoded.chars() {
                 if c == '\n' || c == '\r' {
-                    self.code_buffer.push(' ');
+                    push_char_wiping(&mut self.code_buffer, ' ');
                 } else {
-                    self.code_buffer.push(c);
+                    push_char_wiping(&mut self.code_buffer, c);
                 }
             }
             return;
@@ -415,7 +457,7 @@ impl MarkdownOut {
 
     fn flush_pending_space(&mut self) {
         if self.pending_space && needs_space_before(&self.text) {
-            self.text.push(' ');
+            push_char_wiping(&mut self.text, ' ');
         }
         self.pending_space = false;
     }
@@ -424,7 +466,7 @@ impl MarkdownOut {
         self.pending_space = false;
         self.trim_trailing_inline();
         if !self.text.is_empty() && !self.text.ends_with('\n') {
-            self.text.push('\n');
+            push_char_wiping(&mut self.text, '\n');
         }
     }
 
@@ -436,7 +478,7 @@ impl MarkdownOut {
         }
         let newlines = trailing_newlines(&self.text);
         for _ in newlines..2 {
-            self.text.push('\n');
+            push_char_wiping(&mut self.text, '\n');
         }
     }
 
@@ -448,50 +490,52 @@ impl MarkdownOut {
 
     fn flush_inline_code(&mut self) {
         let delimiter = backtick_delimiter(&self.code_buffer, 1);
-        self.text.push_str(&delimiter);
+        push_str_wiping(&mut self.text, &delimiter);
         let needs_edge_space = self.code_buffer.starts_with('`') || self.code_buffer.ends_with('`');
         if needs_edge_space {
-            self.text.push(' ');
+            push_char_wiping(&mut self.text, ' ');
         }
-        self.text.push_str(&self.code_buffer);
+        push_str_wiping(&mut self.text, &self.code_buffer);
         if needs_edge_space {
-            self.text.push(' ');
+            push_char_wiping(&mut self.text, ' ');
         }
-        self.text.push_str(&delimiter);
+        push_str_wiping(&mut self.text, &delimiter);
+        // `clear` keeps the allocation owned by this op; the surrounding
+        // `Zeroizing` still wipes its full capacity on drop.
         self.code_buffer.clear();
         self.pending_space = false;
     }
 
     fn flush_pre_block(&mut self) {
         let delimiter = backtick_delimiter(&self.pre_buffer, 3);
-        self.text.push_str(&delimiter);
-        self.text.push('\n');
-        self.text.push_str(&self.pre_buffer);
+        push_str_wiping(&mut self.text, &delimiter);
+        push_char_wiping(&mut self.text, '\n');
+        push_str_wiping(&mut self.text, &self.pre_buffer);
         if !self.pre_buffer.ends_with('\n') {
-            self.text.push('\n');
+            push_char_wiping(&mut self.text, '\n');
         }
-        self.text.push_str(&delimiter);
-        self.text.push_str("\n\n");
+        push_str_wiping(&mut self.text, &delimiter);
+        push_str_wiping(&mut self.text, "\n\n");
         self.pre_buffer.clear();
         self.pending_space = false;
     }
 
-    fn finish(mut self) -> String {
-        self.pending_space = false;
+    fn finish(self) -> String {
+        // The trimmed copy is the op's return value (the pipeline wraps it in
+        // `Zeroizing` if it feeds another pass; the FFI wipes the final output on
+        // free). The accumulator itself — `self.text`, plus the pre/code/link
+        // buffers — is `Zeroizing` storage and is wiped when `self` drops here.
         self.text
             .trim_matches(|c| matches!(c, ' ' | '\t' | '\n' | '\r'))
             .to_string()
     }
 }
 
+/// `h1`..`h6` (ASCII-case-insensitive) to its level. Byte-wise so no lowercased
+/// copy of the (input-derived) tag name is ever allocated.
 fn heading_level(name: &str) -> Option<usize> {
-    match name.to_ascii_lowercase().as_str() {
-        "h1" => Some(1),
-        "h2" => Some(2),
-        "h3" => Some(3),
-        "h4" => Some(4),
-        "h5" => Some(5),
-        "h6" => Some(6),
+    match name.as_bytes() {
+        [b'h' | b'H', digit @ b'1'..=b'6'] => Some(usize::from(digit - b'0')),
         _ => None,
     }
 }
@@ -538,7 +582,9 @@ fn attr_value(attrs: &str, wanted: &str) -> Option<String> {
         let (value, next) = read_attr_value(attrs, pos);
         pos = next;
         if eq_ignore_ascii_case(name, wanted) {
-            let decoded = html::decode_entities(value);
+            // Wipe the full decoded copy; the trimmed copy we hand back is the
+            // caller's to wipe (both call sites wrap it in `Zeroizing`).
+            let decoded = Zeroizing::new(html::decode_entities(value));
             return Some(decoded.trim().to_string());
         }
     }
@@ -579,12 +625,19 @@ fn safe_link_destination(href: &str) -> Option<String> {
         return None;
     }
     if let Some(colon) = trimmed.find(':') {
-        let scheme = slice(trimmed, 0, colon).to_ascii_lowercase();
-        if !matches!(scheme.as_str(), "http" | "https" | "mailto") {
+        // Compare in place: no lowercased copy of the (clipboard-derived) scheme.
+        let scheme = slice(trimmed, 0, colon);
+        if !(scheme.eq_ignore_ascii_case("http")
+            || scheme.eq_ignore_ascii_case("https")
+            || scheme.eq_ignore_ascii_case("mailto"))
+        {
             return None;
         }
     }
-    let mut out = String::with_capacity(trimmed.len() + 2);
+    // Exact capacity — wrapper brackets plus one escape byte per `>`/`\` — so the
+    // clipboard-derived destination never reallocates while it is built.
+    let escapes = trimmed.chars().filter(|c| matches!(c, '>' | '\\')).count();
+    let mut out = String::with_capacity(trimmed.len() + 2 + escapes);
     out.push('<');
     for c in trimmed.chars() {
         match c {
@@ -602,10 +655,10 @@ fn safe_link_destination(href: &str) -> Option<String> {
 fn push_escaped_text_char(out: &mut String, c: char) {
     match c {
         '\\' | '*' | '_' | '[' | ']' | '`' | '|' | '<' | '>' => {
-            out.push('\\');
-            out.push(c);
+            push_char_wiping(out, '\\');
+            push_char_wiping(out, c);
         }
-        _ => out.push(c),
+        _ => push_char_wiping(out, c),
     }
 }
 

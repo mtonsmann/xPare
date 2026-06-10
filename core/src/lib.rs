@@ -32,7 +32,7 @@ pub use pipeline::transform;
 
 /// Static JSON describing this core build: name, version, the config schema
 /// version, and every supported operation. A shell queries this (via the FFI
-/// `ss_capabilities_json`) to discover what the core can do without hardcoding it.
+/// `xp_capabilities_json`) to discover what the core can do without hardcoding it.
 ///
 /// It is a compile-time constant: returning it across the FFI needs no allocation
 /// and no matching free. `config_version` is asserted against [`CONFIG_VERSION`]

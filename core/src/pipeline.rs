@@ -13,10 +13,18 @@
 //! the next pass supersedes it, rather than lingering in freed memory until the
 //! allocator happens to reuse it. Transform-local scratch buffers are wiped on drop
 //! and before capacity growth could release old storage; they are not wiped on every
-//! reuse while the allocation remains owned by the transform. The final result is
-//! returned directly (the caller owns it, so no extra copy is made); the `core-ffi`
-//! shim zeroizes that output buffer when the caller frees it. So every
-//! xPare-owned buffer except the caller-owned result is wiped after use. The
+//! reuse while the allocation remains owned by the transform. Operation
+//! implementations follow the same posture for the buffers they build their output
+//! in: each output is either pre-sized to a provably sufficient capacity (so its
+//! allocation never moves) or appended through `ops::wipe`, which zeroizes a
+//! superseded allocation before growth frees it (see `core/src/ops/mod.rs`). The
+//! final result is returned directly (the caller owns it, so no extra copy is
+//! made); the `core-ffi` shim zeroizes that output buffer when the caller frees it.
+//!
+//! Two op-internal allocations remain best-effort gaps, wiped only by eventual
+//! allocator reuse: `sort_lines`' case-insensitive comparison keys (one folded copy
+//! per line) and the third-party Markdown parser's internal event buffers inside
+//! `strip_markdown`. Everything else xPare owns is wiped after use. The
 //! measurable cost is the per-intermediate wipe — tens of percent of throughput on
 //! 100+ MiB inputs, but negligible at clipboard scale (sub-MiB), where the absolute
 //! time is microseconds either way. Quantified in `docs/performance.md`.
@@ -51,23 +59,21 @@ pub fn transform(input: &str, config: &Config) -> String {
     // feed another pass become xPare-owned intermediates and need `Zeroizing`.
     let (first, consumed) = apply_next(input, &ordered);
     let mut i = consumed;
-    if i == ordered.len() {
-        return first;
-    }
 
-    // Each intermediate output lives in a Zeroizing buffer, wiped when the next pass
-    // replaces it. The FINAL output is returned directly — no extra copy — and the
-    // core-ffi shim wipes it on free.
-    let mut current = Zeroizing::new(first);
+    // Each output that feeds another pass is moved into a Zeroizing intermediate,
+    // wiped when that iteration ends. The FINAL output never enters the loop body
+    // and is returned directly — no extra copy — and the core-ffi shim wipes it on
+    // free. The loop condition alone decides termination (`apply_next` always
+    // consumes at least one operation), so this path needs no panic-family macro:
+    // the core's "never panics" contract holds by construction, not by assertion.
+    let mut current = first;
     while i < ordered.len() {
-        let (out, consumed) = apply_next(&current, &ordered[i..]);
+        let intermediate = Zeroizing::new(current);
+        let (out, consumed) = apply_next(&intermediate, &ordered[i..]);
         i += consumed;
-        if i == ordered.len() {
-            return out;
-        }
-        current = Zeroizing::new(out);
+        current = out;
     }
-    unreachable!("operations is non-empty, so the loop returns after the final op")
+    current
 }
 
 /// Dispatch one pipeline step, optionally fusing adjacent operations whose combined
@@ -368,4 +374,72 @@ fn needs_ascii_collapse(line: &str) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `needs_ascii_collapse` gates the borrowed fast path in [`collapse_line`] and
+    /// the zero-copy branch of [`collapse_trim_remove_blank_then_dedupe_lines`].
+    /// Both branches emit identical bytes, so the predicate's result — not output —
+    /// is the observable contract and is pinned directly: a wrong `true` silently
+    /// retires the zero-copy path, a wrong `false` skips collapsing entirely.
+    #[test]
+    fn needs_ascii_collapse_truth_table() {
+        // No tab and no two-space run: collapsing would be the identity. The last
+        // two cases are non-ASCII whitespace (NBSP), which collapse never touches.
+        for line in [
+            "",
+            "a",
+            "lone",
+            "a b c",
+            " a",
+            "a ",
+            "caf\u{e9} x",
+            "\u{a0}\u{a0}",
+        ] {
+            assert!(!needs_ascii_collapse(line), "{line:?} needs no collapse");
+        }
+        // Any tab, or any run of two-plus spaces, requires the collapsing path.
+        for line in ["\t", "a\tb", "a  b", "  ", "x  ", "a \t"] {
+            assert!(needs_ascii_collapse(line), "{line:?} requires collapse");
+        }
+    }
+
+    /// The fast path's zero-copy contract: a line needing no collapse comes back as
+    /// the input slice itself (no clipboard-derived copy exists to wipe), and the
+    /// scratch buffer is left untouched.
+    #[test]
+    fn collapse_line_fast_path_returns_the_input_slice() {
+        let mut scratch: Vec<u8> = Vec::new();
+        let line = "a b c";
+        let out = collapse_line(line, &mut scratch);
+        assert_eq!(out, line);
+        assert_eq!(
+            out.as_ptr(),
+            line.as_ptr(),
+            "fast path must borrow the input, not copy it"
+        );
+        assert!(scratch.is_empty(), "fast path must not touch the scratch");
+    }
+
+    /// Scratch reuse across lines: every call must observe an empty buffer
+    /// (`prepare_collapse_scratch` clears or wipes it first), whether the next
+    /// line's `needed` is equal to, above, or below the current capacity. Which
+    /// branch ran (wipe vs. clear) is invisible through output — safe code cannot
+    /// read freed or spare-capacity bytes — so the wipe-before-growth comparison
+    /// itself is pinned verbatim by `validate_pipeline_zeroization` in xtask, whose
+    /// marker tests run as part of the workspace suite.
+    #[test]
+    fn collapse_scratch_reuse_is_clean_across_lines() {
+        let mut scratch: Vec<u8> = Vec::new();
+        assert_eq!(collapse_line("a  b", &mut scratch), "a b");
+        // Same `needed` as the previous line (the equality boundary).
+        assert_eq!(collapse_line("c\t\td", &mut scratch), "c d");
+        // Longer line: the wipe-then-grow branch.
+        assert_eq!(collapse_line("ee  ff  gg", &mut scratch), "ee ff gg");
+        // Shorter line: in-place reuse of the larger allocation.
+        assert_eq!(collapse_line("h\ti", &mut scratch), "h i");
+    }
 }

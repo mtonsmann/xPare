@@ -66,6 +66,9 @@
 //! regression test in `core/tests/strippers.rs`.
 
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
+use zeroize::Zeroizing;
+
+use crate::ops::wipe::{push_char_wiping, push_str_wiping};
 
 /// Strip Markdown formatting, producing plain text.
 ///
@@ -94,8 +97,11 @@ fn strip_markdown_parser(input: &str) -> String {
                 out.push_str(&text);
             }
             Event::Html(html) | Event::InlineHtml(html) => {
-                // Reuse the HTML stripper to extract text from embedded markup.
-                let extracted = super::html::strip_html(&html);
+                // Reuse the HTML stripper to extract text from embedded markup. The
+                // extracted copy is a clipboard-derived intermediate; `strip_html`
+                // pre-sizes it (stripping is shrink-or-equal), so wrapping the
+                // returned buffer wipes every byte it ever held.
+                let extracted = Zeroizing::new(super::html::strip_html(&html));
                 out.push_str(&extracted);
             }
             Event::SoftBreak => out.push_char(' '),
@@ -327,13 +333,18 @@ impl MarkdownOutput {
         }
     }
 
+    // All appends go through `ops::wipe`. Stripping is shrink-or-equal (growth
+    // factor 1 in `Operation::max_growth_factor`), so the `input.len()` starting
+    // capacity should make these wipes unreachable — routing through the helpers
+    // keeps the no-unwiped-reallocation property structural rather than dependent
+    // on that bound holding for every parser event sequence.
     fn push_str(&mut self, value: &str) {
-        self.text.push_str(value);
+        push_str_wiping(&mut self.text, value);
         self.observe_str_suffix(value);
     }
 
     fn push_char(&mut self, value: char) {
-        self.text.push(value);
+        push_char_wiping(&mut self.text, value);
         match value {
             '\n' => self.observe_newline(),
             ' ' | '\t' => {}
@@ -346,7 +357,7 @@ impl MarkdownOutput {
             return;
         }
         if self.trailing_newlines < 2 {
-            self.text.push('\n');
+            push_char_wiping(&mut self.text, '\n');
             self.observe_newline();
         }
     }

@@ -62,6 +62,18 @@ pub const MAX_PIPELINE_GROWTH_FACTOR: u64 = 1 << 18;
 /// the result is correct and efficient regardless of the order a UI assembled them.
 /// [`Ordering::AsGiven`] runs them in the exact order provided — the explicit,
 /// byte-for-byte contract.
+///
+/// ## Compatibility posture (deliberate: fail closed)
+///
+/// Unknown fields are rejected (`deny_unknown_fields`) and [`parse_config`] rejects
+/// any `version` other than [`CONFIG_VERSION`] — by design, not as an oversight. For
+/// a sanitization tool the safe failure mode is "refuse a config we do not fully
+/// understand": silently ignoring an unrecognized field or honoring a
+/// different-version config could weaken a pipeline the user believes is active,
+/// with no signal. Schema evolution happens **only** via an explicit
+/// [`CONFIG_VERSION`] bump; a shell detects the mismatch through
+/// [`ConfigError::UnsupportedVersion`], which stays a distinct, publicly matchable
+/// variant so the FFI can surface it as its own status code.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -304,13 +316,27 @@ impl Operation {
             // JoinWith replaces every '\n' (at most `input.len()` of them) with the
             // separator; worst case every byte is a newline -> max(1, separator_len).
             Operation::JoinWith { separator } => (separator.len() as u64).max(1),
+            // HtmlToMarkdown's dominant amplifier is ordered-list numbering at the
+            // rendered-indent clamp (`MAX_RENDERED_LIST_INDENT_DEPTH`). Each `<li>`
+            // (4 input bytes) nets at most 1 newline + 8 indent bytes + the item
+            // number + "." (the marker's trailing space is always trimmed), so the
+            // per-item ratio is (10 + d)/4 with d the number's digit count, and
+            // every other construct stays at or below 3x (escaping 2x, code-fence
+            // sizing < 3x). Numbering always starts at 1, so d is bounded by the
+            // digit count of the item count, input_len/4: (10 + d)/4 <= 5 holds up
+            // to d == 10, i.e. for any input to this op below 4 * 10^10 B (~40 GB)
+            // — far above `XP_MAX_INPUT_BYTES` (2 GiB, the `core-ffi` input
+            // ceiling), where d <= 9 puts the true worst case near 4.7x. Growth is
+            // O(n log n), so the previous constant 3 was insufficient: '<ol>'*5 +
+            // '<li>'*1000 (4,020 B in) already yields 12,884 B (~3.2x). The
+            // `ordered_list_numbering_worst_case_stays_inside_the_declared_factor`
+            // regression test in `core/tests/html_to_markdown.rs` pins both sides.
+            Operation::HtmlToMarkdown => 5,
             // Bounded-constant expanders (max single-token expansion, verified against
             // the `ops/` sources; rounded up):
-            //   HtmlToMarkdown — code-fence backtick sizing + special-char escaping.
             //   ChangeCase     — Unicode case mapping (e.g. `İ` -> `i̇`, 2 -> 3 bytes).
             //   Defang         — `.` -> `[.]`, `@` -> `[@]`, `:` -> `[:]` (1 -> 3 bytes).
             //   MaskIdentifiers— shortest token -> fixed placeholder (e.g. `[ipv6]`).
-            Operation::HtmlToMarkdown => 3,
             Operation::ChangeCase { .. } => 3,
             Operation::Defang { .. } => 3,
             Operation::MaskIdentifiers { .. } => 2,
@@ -495,8 +521,12 @@ impl std::error::Error for ConfigError {}
 
 /// Parse and validate a JSON config string.
 ///
-/// Returns [`ConfigError::UnsupportedVersion`] if the version does not match this
-/// build, so a shell can detect a capability mismatch deterministically.
+/// Strict by design (see [`Config`]'s compatibility-posture note): unknown fields
+/// and any `version != CONFIG_VERSION` are rejected — fail closed rather than
+/// guess at a config this build does not fully understand. Returns
+/// [`ConfigError::UnsupportedVersion`] on a version mismatch, so a shell can
+/// detect a capability mismatch deterministically; schema evolution happens only
+/// via explicit [`CONFIG_VERSION`] bumps.
 pub fn parse_config(json: &str) -> Result<Config, ConfigError> {
     let config: Config =
         serde_json::from_str(json).map_err(|e| ConfigError::Json(e.to_string()))?;

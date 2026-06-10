@@ -30,7 +30,19 @@ pub fn mask_identifiers(input: &str, emails: bool, ipv4: bool, ipv6: bool) -> St
         return input.to_string();
     }
 
-    let mut out = String::with_capacity(input.len());
+    // Provably sufficient output capacity, so the clipboard-derived accumulator
+    // never reallocates (a reallocation frees the old block unwiped). Only two
+    // placeholder classes can be longer than the core they replace:
+    // * email — `[email]` (7 bytes) over a core of >= 5 bytes (`a@b.c` is the
+    //   shortest the classifier accepts) containing exactly one `@`: growth <= 2
+    //   per `@` byte;
+    // * IPv6 — `[ipv6]` (6 bytes) over a core of >= 4 bytes (`a::b`) containing
+    //   >= 2 `:` bytes: growth <= 2 <= 1 per `:` byte.
+    // IPv4 cores are >= 7 bytes (`1.1.1.1`) and shrink to `[ipv4]` (6 bytes).
+    // The `mask_output_fits_byte_count_bound` property test pins this bound.
+    let at_signs = input.bytes().filter(|&b| b == b'@').count();
+    let colons = input.bytes().filter(|&b| b == b':').count();
+    let mut out = String::with_capacity(input.len() + 2 * at_signs + colons);
     let mut token_start: Option<usize> = None;
     for (i, c) in input.char_indices() {
         if c.is_whitespace() {

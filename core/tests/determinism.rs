@@ -196,6 +196,20 @@ proptest! {
         prop_assert_eq!(optimized, reference_unwrap_lines(&input));
     }
 
+    /// `split_on` is a hand-rolled, exactly pre-sized `replace(delimiter, "\n")` —
+    /// the pre-sizing keeps the clipboard-derived output from reallocating (and
+    /// leaving unwiped bytes in freed memory). It must stay byte-identical to the
+    /// `str::replace` semantics its doc comment freezes (empty delimiter: no-op).
+    #[test]
+    fn split_on_matches_str_replace(input in interesting_string(), delimiter in param_string()) {
+        let expected = if delimiter.is_empty() {
+            input.clone()
+        } else {
+            input.replace(&delimiter, "\n")
+        };
+        prop_assert_eq!(ops::lines::split_on(&input, &delimiter), expected);
+    }
+
     /// The internal W3 fusion for StripHtml -> StripMarkdown must remain byte-for-byte
     /// identical to applying the two public operations in order.
     #[test]
