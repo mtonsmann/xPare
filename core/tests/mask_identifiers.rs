@@ -164,3 +164,25 @@ proptest! {
         );
     }
 }
+
+#[test]
+fn mask_capacity_pre_pass_counts_only_its_markers() {
+    // The byte-count bound above pins output LENGTH, which cannot see a corrupted
+    // counting pre-pass: miscounting `@`/`:` only changes the `with_capacity`
+    // request (an inflated count over-allocates; an undersized one forces the
+    // reallocation the zeroization posture exists to prevent). Capacity is the
+    // only observable, so pin it directly. `String::with_capacity` may legally
+    // round up, but never to `len + 2 * non_marker_bytes` scale — the bound below
+    // stays comfortably between the exact request and any miscount.
+    for input in ["user@example.com 2001:db8::1", "a@b"] {
+        let at_signs = input.bytes().filter(|&b| b == b'@').count();
+        let colons = input.bytes().filter(|&b| b == b':').count();
+        let bound = input.len() + 2 * at_signs + colons;
+        let out = mask_all(input);
+        assert!(
+            out.capacity() <= bound,
+            "mask of {input:?} allocated {} bytes; the documented pre-size bound is {bound}",
+            out.capacity()
+        );
+    }
+}
