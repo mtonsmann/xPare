@@ -6,6 +6,16 @@ follow semver over the public surface — the C ABI, the config schema, and the
 CLI flags (see [`docs/release-model.md`](docs/release-model.md), "Versioning
 and stability").
 
+## 1.0.0-rc.2 — 2026-06-10 (release candidate)
+
+### Fixed
+
+- **Release packaging**: the unsigned-preview/dist path built a SwiftPM product
+  name derived from the bundle name (`xPareApp`), which no longer exists after
+  the project rename — the product is `XPareApp`. The v1.0.0-rc.1 tag's release
+  run failed at this step, so rc.1 produced no artifacts; the packaging path is
+  now exercised end-to-end before tagging.
+
 ## 1.0.0-rc.1 — 2026-06-10 (release candidate)
 
 First public release candidate, under the project's new name.
