@@ -50,8 +50,10 @@ fmt: ## Format the whole workspace
 fmt-check: ## Check formatting without changing files
 	$(CARGO) fmt --all --check
 
+# --locked on the OUTER invocation too: a plain `cargo run` would re-sync the
+# root Cargo.lock before xtask's lockfile gate runs, making it vacuous.
 ci: ## Full gate: fmt + clippy + tests + every invariant (identical to CI)
-	$(CARGO) run -p xtask -- ci
+	$(CARGO) run --locked -p xtask -- ci
 
 checks: ## Run only the structural invariant checks (no build/test)
 	$(CARGO) run -p xtask -- check-abi

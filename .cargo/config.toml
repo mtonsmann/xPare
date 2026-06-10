@@ -1,0 +1,6 @@
+# Makes the documented `cargo xtask <subcommand>` form work (CONTRIBUTING.md,
+# README.md, docs/). `--locked` on the OUTER invocation matters: a plain
+# `cargo run` would re-sync the root Cargo.lock before xtask's lockfile-sync
+# gate runs, making that gate vacuous for the root workspace.
+[alias]
+xtask = "run --locked -p xtask --"

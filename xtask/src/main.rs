@@ -26,7 +26,7 @@
 //!   check-miri          run the core-ffi boundary tests under Miri (UB detection)
 //!   check-kani          run the bounded Kani proofs over the resource-envelope arithmetic
 //!   check-coverage      line-coverage floor (best-effort; heavy; outside `ci`)
-//!   check-mutants       cargo-mutants; `SS_DIFF_BASE` scopes to a diff (best-effort; outside `ci`)
+//!   check-mutants       cargo-mutants; `XP_DIFF_BASE` scopes to a diff (best-effort; outside `ci`)
 //!   check-swift         macOS shell anti-slop: swift-format lint + swift test + coverage floor
 //!                       (+ SwiftLint if present); best-effort, macOS-only, outside `ci`
 //!   ci                  run fmt --check, clippy -D warnings, test, and all the above
@@ -35,7 +35,7 @@
 //! future agent learns how to fix it rather than how to silence it.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 fn main() -> ExitCode {
@@ -100,11 +100,11 @@ fn usage() {
          \x20 check-docs           build docs with -D warnings (broken intra-doc links, bad HTML)\n\
          \x20 check-workflows      lint GitHub Actions workflows (actionlint + zizmor)\n\
          \x20 check-shell          shellcheck the shell scripts\n\
-         \x20 check-fuzz           build fuzz targets; set SS_FUZZ_SMOKE_SECONDS=N to run them\n\
+         \x20 check-fuzz           build fuzz targets; set XP_FUZZ_SMOKE_SECONDS=N to run them\n\
          \x20 check-miri           run core-ffi boundary tests under Miri (UB detection in the unsafe shim)\n\
          \x20 check-kani           run the bounded Kani proofs over the resource-envelope arithmetic\n\
          \x20 check-coverage       line-coverage floor (best-effort; heavy; outside `ci`)\n\
-         \x20 check-mutants        cargo-mutants; SS_DIFF_BASE=<ref> scopes to a diff (best-effort; outside `ci`)\n\
+         \x20 check-mutants        cargo-mutants; XP_DIFF_BASE=<ref> scopes to a diff (best-effort; outside `ci`)\n\
          \x20 check-swift          macOS shell: swift-format lint + swift test + coverage (+ SwiftLint if present)\n\
          \x20 ci                   fmt + clippy + test + every structural & external check"
     );
@@ -165,7 +165,7 @@ fn gen_header(check_only: bool) -> ExitCode {
                  \n\
                  The C ABI is a frozen compatibility surface. If this change is\n\
                  intentional:\n\
-                   1. bump SS_ABI_VERSION in core-ffi/src/lib.rs,\n\
+                   1. bump XP_ABI_VERSION in core-ffi/src/lib.rs,\n\
                    2. run `cargo xtask gen-header` to regenerate the header,\n\
                    3. call out the ABI change in your PR and confirm a non-Swift\n\
                       shell could still consume the boundary.\n\
@@ -262,20 +262,25 @@ struct DepKind {
     kind: Option<String>,
 }
 
-/// Run `cargo metadata --format-version 1` and parse it. We invoke the same
-/// `cargo` that launched xtask (via `$CARGO`, falling back to `cargo`) so the
-/// pinned toolchain is honored.
+/// Run `cargo metadata --locked --format-version 1` and parse it. We invoke the
+/// same `cargo` that launched xtask (via `$CARGO`, falling back to `cargo`) so the
+/// pinned toolchain is honored. `--locked` matters: the dependency checks must
+/// audit the *committed* `Cargo.lock` — a silent re-resolve here would let the
+/// checks pass against a tree that is not what CI builds or a release ships.
 fn cargo_metadata() -> Result<Metadata, String> {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
     let output = Command::new(&cargo)
-        .args(["metadata", "--format-version", "1"])
+        .args(["metadata", "--locked", "--format-version", "1"])
         .current_dir(workspace_root())
         .output()
         .map_err(|e| format!("failed to run `{cargo} metadata`: {e}"))?;
 
     if !output.status.success() {
         return Err(format!(
-            "`{cargo} metadata` exited with {}:\n{}",
+            "`{cargo} metadata --locked` exited with {}:\n{}\n\
+             If Cargo.lock is out of sync with the manifests, regenerate it (any cargo\n\
+             build without `--locked`, e.g. `cargo metadata --format-version 1`), review\n\
+             the lockfile diff, and commit it.",
             output.status,
             String::from_utf8_lossy(&output.stderr)
         ));
@@ -310,11 +315,13 @@ impl Metadata {
     }
 }
 
-/// Walk the transitive *normal* dependency closure from `start` ids. Dev- and
-/// build-dependencies are skipped (their `dep_kinds` carry no `null`/normal
-/// entry), so e.g. a crate's `proptest`/`cbindgen` does not pollute the result —
-/// but every real runtime/proc-macro dependency does.
-fn normal_dep_closure<'a>(meta: &'a Metadata, start: &[&'a str]) -> BTreeSet<&'a str> {
+/// Walk the transitive dependency closure from `start` ids, following *normal*
+/// (`kind: null`) and *build* (`kind: "build"`) edges. Both kinds matter to the
+/// posture checks: normal deps link into shipped artifacts, and build deps
+/// execute on the build machine via build scripts. Dev-dependencies are skipped
+/// (tests/benches neither ship nor run during a plain build), so e.g. a crate's
+/// `proptest`/`criterion` tree does not pollute the result.
+fn normal_and_build_dep_closure<'a>(meta: &'a Metadata, start: &[&'a str]) -> BTreeSet<&'a str> {
     let nodes = meta.nodes_by_id();
     let name_of = meta.name_of();
 
@@ -331,8 +338,11 @@ fn normal_dep_closure<'a>(meta: &'a Metadata, start: &[&'a str]) -> BTreeSet<&'a
         }
         if let Some(node) = nodes.get(id) {
             for dep in &node.deps {
-                let is_normal = dep.dep_kinds.iter().any(|k| k.kind.is_none());
-                if is_normal && !seen_ids.contains(dep.pkg.as_str()) {
+                let followed = dep
+                    .dep_kinds
+                    .iter()
+                    .any(|k| matches!(k.kind.as_deref(), None | Some("build")));
+                if followed && !seen_ids.contains(dep.pkg.as_str()) {
                     stack.push(dep.pkg.as_str());
                 }
             }
@@ -345,8 +355,8 @@ fn normal_dep_closure<'a>(meta: &'a Metadata, start: &[&'a str]) -> BTreeSet<&'a
 // check-core-deps
 // ---------------------------------------------------------------------------
 
-/// Explicit allowlist for `xpare-core`'s full transitive *normal*
-/// dependency tree.
+/// Explicit allowlist for `xpare-core`'s full transitive dependency tree —
+/// *normal* and *build* dependencies; dev-dependencies (tests/benches) excluded.
 ///
 /// This is the mechanical form of "the core has no OS, filesystem, or network
 /// dependencies". The set is intentionally tiny and consists only of pure-data /
@@ -355,9 +365,9 @@ fn normal_dep_closure<'a>(meta: &'a Metadata, start: &[&'a str]) -> BTreeSet<&'a
 /// * `serde`, `serde_core`, `serde_derive`, `serde_json` — config (de)serialization.
 /// * `pulldown-cmark` — CommonMark → events for the Markdown stripper.
 /// * proc-macro toolchain pulled in by `serde_derive`: `proc-macro2`, `quote`,
-///   `syn`, `unicode-ident`, `unicode-xid`.
-/// * pure formatting / data helpers: `itoa`, `ryu`, `zmij` (float formatting),
-///   `memchr`, `bitflags`, `unicase`.
+///   `syn`, `unicode-ident`.
+/// * pure formatting / data helpers: `itoa` (integer formatting), `zmij` (float
+///   formatting), `memchr`, `bitflags`, `unicase`.
 /// * `zeroize` — best-effort wiping of clipboard-derived pipeline intermediates
 ///   (alloc feature only; no transitive crates, no OS/IO/network surface).
 ///
@@ -380,10 +390,8 @@ const CORE_DEP_ALLOWLIST: &[&str] = &[
     "quote",
     "syn",
     "unicode-ident",
-    "unicode-xid",
     // pure formatting / data helpers
     "itoa",
-    "ryu",
     "zmij",
     "memchr",
     "bitflags",
@@ -393,9 +401,10 @@ const CORE_DEP_ALLOWLIST: &[&str] = &[
     "zeroize",
 ];
 
-/// Assert that every crate in the core's transitive normal-dependency tree is on
-/// [`CORE_DEP_ALLOWLIST`]. This is how a future OS/IO/network dependency sneaking
-/// into the core gets caught at CI time.
+/// Assert that every crate in the core's transitive normal+build dependency tree
+/// is on [`CORE_DEP_ALLOWLIST`] (dev-dependencies excluded). This is how a future
+/// OS/IO/network dependency sneaking into the core — whether linked in or run as
+/// a build script — gets caught at CI time.
 fn check_core_deps() -> Result<(), String> {
     let meta = cargo_metadata().map_err(|e| format!("check-core-deps: FAIL — {e}"))?;
 
@@ -409,7 +418,7 @@ fn check_core_deps() -> Result<(), String> {
     }
 
     let allow: HashSet<&str> = CORE_DEP_ALLOWLIST.iter().copied().collect();
-    let closure = normal_dep_closure(&meta, &core_ids);
+    let closure = normal_and_build_dep_closure(&meta, &core_ids);
 
     let mut offenders: Vec<&str> = closure
         .iter()
@@ -420,7 +429,7 @@ fn check_core_deps() -> Result<(), String> {
 
     if offenders.is_empty() {
         println!(
-            "check-core-deps: core's {} transitive normal deps are all on the allowlist.",
+            "check-core-deps: core's {} transitive normal+build deps are all on the allowlist.",
             closure.len()
         );
         Ok(())
@@ -452,9 +461,12 @@ fn check_core_deps() -> Result<(), String> {
 ///
 /// The privacy posture is **no network anywhere** — not just in the core, but in
 /// every crate that could end up linked into a shipped artifact or run during a
-/// build. If any of these appears anywhere in the workspace dependency tree, that
-/// is a posture change that must be caught, explained, and justified (or, far more
-/// likely, reverted).
+/// build. Concretely, the check walks the *normal* and *build* dependency closure
+/// of every workspace member; dev-dependencies (tests/benches) are deliberately
+/// excluded so the larger `proptest`/`criterion` trees stay out (see
+/// `docs/guardrails/dependency-posture.md`). If any of these appears in that
+/// closure, that is a posture change that must be caught, explained, and
+/// justified (or, far more likely, reverted).
 ///
 /// This is a name banlist, not an exhaustive audit; it targets the common async
 /// runtimes, HTTP/TLS stacks, websocket/RPC libraries, and the low-level
@@ -510,15 +522,15 @@ const NETWORK_BANLIST: &[&str] = &[
     "dns-lookup",
 ];
 
-/// Walk the WHOLE workspace dependency tree and fail if any banned network/OS
-/// crate is present anywhere.
+/// Walk the workspace's normal+build dependency closure (dev-deps excluded) and
+/// fail if any banned network/OS crate is present anywhere in it.
 fn check_no_network() -> Result<(), String> {
     let meta = cargo_metadata().map_err(|e| format!("check-no-network: FAIL — {e}"))?;
 
     // Start from every workspace member so the closure spans core, core-ffi, cli,
     // and xtask (and thus catches a network dep introduced into any of them).
     let members: Vec<&str> = meta.workspace_members.iter().map(String::as_str).collect();
-    let closure = normal_dep_closure(&meta, &members);
+    let closure = normal_and_build_dep_closure(&meta, &members);
 
     let banned: HashSet<&str> = NETWORK_BANLIST.iter().copied().collect();
     let mut offenders: Vec<&str> = closure
@@ -963,10 +975,11 @@ fn check_generated_header_shape(root: &std::path::Path, errors: &mut Vec<String>
     for snippet in [
         "GENERATED by cbindgen",
         "#ifndef XPARE_FFI_H",
-        "uint32_t ss_abi_version(void);",
-        "const char *ss_capabilities_json(void);",
-        "enum SsStatus ss_transform(",
-        "void ss_buffer_free(uint8_t *ptr, size_t len);",
+        "uint32_t xp_abi_version(void);",
+        "const char *xp_capabilities_json(void);",
+        "enum XpStatus xp_transform(",
+        "void xp_buffer_free(uint8_t *ptr, size_t len);",
+        "XP_STATUS_ERR_UNSUPPORTED_CONFIG_VERSION = 5,",
     ] {
         if !text.contains(snippet) {
             errors.push(format!(
@@ -1321,13 +1334,71 @@ fn check_no_content_logging() -> Result<(), String> {
 // check-pipeline-zeroization
 // ---------------------------------------------------------------------------
 //
-// Security finding class: fused pipeline scratch buffers can hold
+// Security finding class: fused pipeline scratch buffers — and op output
+// accumulators that can outgrow any cheap pre-size bound — hold
 // clipboard-derived bytes just like full pipeline intermediates. They must be
-// wiped before their storage is released or reallocated and on drop; otherwise an
-// optimization silently weakens the documented in-memory hygiene posture.
+// wiped before their storage is released or reallocated and on drop; otherwise
+// an optimization silently weakens the documented in-memory hygiene posture.
+//
+// This is a TRIPWIRE, not a proof: it asserts the exact load-bearing source
+// constructs the posture depends on, so deleting or renaming them fails loudly
+// and forces a re-review. It cannot see every allocation (op return values,
+// dev-only paths, third-party parser internals stay best-effort — see
+// core/src/pipeline.rs's module doc and SECURITY.md for the honest gap list).
 
 fn pipeline_path() -> PathBuf {
     workspace_root().join("core/src/pipeline.rs")
+}
+
+/// Load-bearing wipe-on-grow markers for the op accumulators whose output can
+/// outgrow any cheap up-front capacity bound (`html_to_markdown`, the Unicode
+/// case mappings, `strip_markdown`). Each entry is
+/// `(workspace-relative file, exact source marker, remediation reason)`.
+/// Pre-sized ops are NOT listed here: their posture is the documented
+/// `with_capacity` bound at each site, pinned by capacity property tests in
+/// `core/tests/`.
+const OP_ACCUMULATOR_WIPE_MARKERS: &[(&str, &str, &str)] = &[
+    (
+        "core/src/ops/wipe.rs",
+        "let retired = std::mem::replace(buf, grown);",
+        "wipe-on-grow must retire the outgrown allocation by hand (a plain `String` \
+         realloc frees it unwiped)",
+    ),
+    (
+        "core/src/ops/wipe.rs",
+        "drop(Zeroizing::new(retired));",
+        "wipe-on-grow must zeroize the retired allocation before the allocator reclaims it",
+    ),
+    (
+        "core/src/ops/html_to_markdown.rs",
+        "use super::wipe::{push_char_wiping, push_str_wiping};",
+        "html_to_markdown accumulator appends must route through `ops::wipe`",
+    ),
+    (
+        "core/src/ops/html_to_markdown.rs",
+        "text: Zeroizing<String>,",
+        "the html_to_markdown accumulator must live in `Zeroizing` storage so drop wipes it",
+    ),
+    (
+        "core/src/ops/markdown.rs",
+        "use crate::ops::wipe::{push_char_wiping, push_str_wiping};",
+        "strip_markdown accumulator appends must route through `ops::wipe`",
+    ),
+    (
+        "core/src/ops/case.rs",
+        "use crate::ops::wipe::push_char_wiping;",
+        "Unicode case-mapping appends must route through `ops::wipe`",
+    ),
+];
+
+/// Check the wipe-on-grow markers for one file's text; returns the missing
+/// markers' reasons. Split from the IO so tests can run it on doctored sources.
+fn missing_accumulator_wipe_markers(rel: &str, text: &str) -> Vec<&'static str> {
+    OP_ACCUMULATOR_WIPE_MARKERS
+        .iter()
+        .filter(|(file, marker, _)| *file == rel && !text.contains(marker))
+        .map(|(_, _, reason)| *reason)
+        .collect()
 }
 
 fn validate_pipeline_zeroization(text: &str) -> Result<(), String> {
@@ -1382,8 +1453,43 @@ fn check_pipeline_zeroization() -> Result<(), String> {
         )
     })?;
 
+    // Same tripwire posture for the growable op output accumulators.
+    let root = workspace_root();
+    let mut missing = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for (rel, _, _) in OP_ACCUMULATOR_WIPE_MARKERS {
+        if !seen.insert(*rel) {
+            continue;
+        }
+        let path = root.join(rel);
+        let text = std::fs::read_to_string(&path).map_err(|e| {
+            format!(
+                "check-pipeline-zeroization: FAIL — could not read {}: {e}",
+                path.display()
+            )
+        })?;
+        for reason in missing_accumulator_wipe_markers(rel, &text) {
+            missing.push(format!("{rel}: {reason}"));
+        }
+    }
+    if !missing.is_empty() {
+        return Err(format!(
+            "check-pipeline-zeroization: FAIL — growable op accumulators are not \
+             mechanically covered by the wipe-on-grow posture:\n  {}\n\
+             \n\
+             Op outputs that can outgrow any cheap pre-size bound must keep their \
+             accumulators in `Zeroizing` storage and route appends through \
+             `core/src/ops/wipe.rs`, which zeroizes a superseded allocation before \
+             the allocator reclaims it. If the implementation legitimately changed, \
+             update OP_ACCUMULATOR_WIPE_MARKERS to the new load-bearing constructs \
+             in the same PR — do not delete the coverage.",
+            missing.join("\n  ")
+        ));
+    }
+
     println!(
-        "check-pipeline-zeroization: fused pipeline scratch storage is zeroized before release and on drop."
+        "check-pipeline-zeroization: fused pipeline scratch storage is zeroized before release \
+         and on drop; growable op accumulators route appends through the wipe-on-grow helpers."
     );
     Ok(())
 }
@@ -1776,7 +1882,7 @@ fn parse_fuzz_smoke_seconds(raw: Option<&str>) -> Result<Option<u64>, String> {
     }
     let seconds: u64 = raw.parse().map_err(|_| {
         format!(
-            "check-fuzz: FAIL — SS_FUZZ_SMOKE_SECONDS must be a positive integer, \
+            "check-fuzz: FAIL — XP_FUZZ_SMOKE_SECONDS must be a positive integer, \
              0, or empty; got `{raw}`."
         )
     })?;
@@ -1851,7 +1957,7 @@ fn check_fuzz() -> Result<(), String> {
 
     run_cargo_fuzz(&["build"], path_env.as_ref())?;
 
-    let smoke_seconds_raw = std::env::var("SS_FUZZ_SMOKE_SECONDS").ok();
+    let smoke_seconds_raw = std::env::var("XP_FUZZ_SMOKE_SECONDS").ok();
     if let Some(seconds) = parse_fuzz_smoke_seconds(smoke_seconds_raw.as_deref())? {
         let max_total_time = format!("-max_total_time={seconds}");
         for target in targets {
@@ -1863,7 +1969,7 @@ fn check_fuzz() -> Result<(), String> {
         println!("check-fuzz: all fuzz targets smoke-ran for {seconds}s each.");
     } else {
         println!(
-            "check-fuzz: built all fuzz targets. Set SS_FUZZ_SMOKE_SECONDS=N to \
+            "check-fuzz: built all fuzz targets. Set XP_FUZZ_SMOKE_SECONDS=N to \
              run every target briefly."
         );
     }
@@ -2170,7 +2276,7 @@ fn check_coverage() -> Result<(), String> {
 }
 
 /// check-mutants: run cargo-mutants over the product logic (see `.cargo/mutants.toml`). A
-/// surviving mutant is dead code or an under-asserted test. `SS_DIFF_BASE=<ref>` scopes
+/// surviving mutant is dead code or an under-asserted test. `XP_DIFF_BASE=<ref>` scopes
 /// the run to lines changed vs `<ref>` (fast PR feedback via `--in-diff`); unset = full
 /// tree. Best-effort and heavy, so it stays out of the required `ci` gate.
 fn check_mutants() -> Result<(), String> {
@@ -2178,15 +2284,15 @@ fn check_mutants() -> Result<(), String> {
     let path_env = path_with_tool_dir(&tool);
     let root = workspace_root();
 
-    // An empty SS_DIFF_BASE (CI passes "" on non-PR events) means full-tree, same as unset.
-    let diff_base = std::env::var("SS_DIFF_BASE")
+    // An empty XP_DIFF_BASE (CI passes "" on non-PR events) means full-tree, same as unset.
+    let diff_base = std::env::var("XP_DIFF_BASE")
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
 
     let mut args: Vec<String> = vec!["mutants".to_string()];
     if let Some(base) = diff_base {
-        println!("check-mutants: scoping to the diff vs `{base}` (SS_DIFF_BASE)");
+        println!("check-mutants: scoping to the diff vs `{base}` (XP_DIFF_BASE)");
         let diff = Command::new("git")
             .args(["diff", &base])
             .current_dir(&root)
@@ -2194,10 +2300,10 @@ fn check_mutants() -> Result<(), String> {
             .map_err(|e| format!("check-mutants: FAIL — could not run `git diff {base}`: {e}"))?;
         if !diff.status.success() {
             return Err(format!(
-                "check-mutants: FAIL — `git diff {base}` failed; is SS_DIFF_BASE a valid ref?"
+                "check-mutants: FAIL — `git diff {base}` failed; is XP_DIFF_BASE a valid ref?"
             ));
         }
-        let diff_path = root.join("target").join("ss-mutants-in.diff");
+        let diff_path = root.join("target").join("xp-mutants-in.diff");
         if let Some(parent) = diff_path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("check-mutants: FAIL — could not create target dir: {e}"))?;
@@ -2207,7 +2313,7 @@ fn check_mutants() -> Result<(), String> {
         args.push("--in-diff".to_string());
         args.push(diff_path.to_string_lossy().into_owned());
     } else {
-        println!("check-mutants: full-tree run (set SS_DIFF_BASE=<ref> to scope to a diff)");
+        println!("check-mutants: full-tree run (set XP_DIFF_BASE=<ref> to scope to a diff)");
     }
 
     // Parallelism: CI stays SERIAL for predictable memory on shared runners; a LOCAL run
@@ -2712,6 +2818,47 @@ fn check_agent_workflow() -> Result<(), String> {
 // ci
 // ---------------------------------------------------------------------------
 
+/// Assert one workspace's committed lockfile matches its manifests, via
+/// `cargo metadata --locked` (which fails without touching the lockfile when a
+/// re-resolve would be needed).
+fn check_lockfile_sync(label: &str, dir: &Path) -> Result<(), String> {
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+    println!("ci: $ {cargo} metadata --locked  (lockfile sync: {label})");
+    let output = Command::new(&cargo)
+        .args(["metadata", "--locked", "--format-version", "1"])
+        .current_dir(dir)
+        .output()
+        .map_err(|e| format!("ci: FAIL — could not launch `{cargo} metadata --locked`: {e}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "ci: FAIL — the committed {label} lockfile ({}) is out of sync with its\n\
+             manifests:\n{}\n\
+             Every cargo step in this gate runs `--locked` so CI tests exactly the\n\
+             committed dependency tree. Regenerate the lockfile (any cargo build in that\n\
+             directory without `--locked`, e.g. `cargo metadata --format-version 1`),\n\
+             review the lockfile diff for unexpected new crates, and commit it. Do not\n\
+             drop `--locked` from the gate.",
+            dir.join("Cargo.lock").display(),
+            String::from_utf8_lossy(&output.stderr).trim_end()
+        ))
+    }
+}
+
+/// Lockfile honesty for BOTH workspaces: the root and the separate `fuzz/`
+/// workspace (which carries its own `Cargo.lock` precisely so nightly/libFuzzer
+/// pins never leak into the stable build — and which no root cargo command ever
+/// validates).
+fn check_lockfiles_in_sync() -> Result<(), String> {
+    check_lockfile_sync("root workspace", &workspace_root())?;
+    let fuzz = fuzz_dir();
+    if fuzz.join("Cargo.toml").is_file() {
+        check_lockfile_sync("fuzz/ workspace", &fuzz)?;
+    }
+    Ok(())
+}
+
 /// Run a cargo subcommand inheriting stdio; return Ok on success, else a message.
 fn run_cargo(label: &str, args: &[&str]) -> Result<(), String> {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
@@ -2735,13 +2882,25 @@ fn run_cargo(label: &str, args: &[&str]) -> Result<(), String> {
 /// The full local gate, run in fail-fast order. Mirrors what CI runs so a green
 /// `cargo xtask ci` locally means a green CI job.
 fn run_ci() -> ExitCode {
-    // Tooling gates first (cheap to fix, catch the most common breakage).
+    // Lockfile honesty first: the cargo steps below run `--locked`, so a stale
+    // lockfile must surface here as one clear remediation message rather than as
+    // a confusing resolver error halfway through the gate.
+    if let Err(msg) = check_lockfiles_in_sync() {
+        eprintln!("{msg}");
+        return ExitCode::FAILURE;
+    }
+
+    // Tooling gates next (cheap to fix, catch the most common breakage). clippy
+    // and test take `--locked` so the gate builds the committed dependency tree
+    // verified above; `cargo fmt` accepts no `--locked` flag (it only drives
+    // rustfmt and resolves nothing, so there is nothing to lock).
     let cargo_steps: [(&str, &[&str]); 3] = [
         ("fmt", &["fmt", "--all", "--check"]),
         (
             "clippy",
             &[
                 "clippy",
+                "--locked",
                 "--workspace",
                 "--all-targets",
                 "--",
@@ -2749,7 +2908,7 @@ fn run_ci() -> ExitCode {
                 "warnings",
             ],
         ),
-        ("test", &["test", "--workspace"]),
+        ("test", &["test", "--locked", "--workspace"]),
     ];
     for (label, args) in cargo_steps {
         if let Err(msg) = run_cargo(label, args) {
@@ -2932,6 +3091,58 @@ mod tests {
     #[test]
     fn fuzz_smoke_seconds_parser_rejects_invalid_values() {
         assert!(parse_fuzz_smoke_seconds(Some("soon")).is_err());
+    }
+
+    // --- check-core-deps / check-no-network dependency closure ---
+
+    #[test]
+    fn dep_closure_follows_normal_and_build_deps_and_skips_dev_deps() {
+        // The posture checks must see everything that links into a shipped
+        // artifact (normal deps) or executes during a build (build deps), while
+        // dev-only test/bench trees stay out. A dep that is BOTH dev and build
+        // is followed — the build edge alone makes it run at build time.
+        let meta: Metadata = serde_json::from_str(
+            r#"{
+            "packages": [
+                {"id": "root 1.0.0", "name": "root"},
+                {"id": "normal 1.0.0", "name": "normal-dep"},
+                {"id": "build 1.0.0", "name": "build-dep"},
+                {"id": "dev 1.0.0", "name": "dev-dep"},
+                {"id": "dual 1.0.0", "name": "dev-and-build-dep"},
+                {"id": "transitive 1.0.0", "name": "build-transitive"}
+            ],
+            "resolve": {"nodes": [
+                {"id": "root 1.0.0", "deps": [
+                    {"pkg": "normal 1.0.0", "dep_kinds": [{"kind": null}]},
+                    {"pkg": "build 1.0.0", "dep_kinds": [{"kind": "build"}]},
+                    {"pkg": "dev 1.0.0", "dep_kinds": [{"kind": "dev"}]},
+                    {"pkg": "dual 1.0.0", "dep_kinds": [{"kind": "dev"}, {"kind": "build"}]}
+                ]},
+                {"id": "normal 1.0.0", "deps": []},
+                {"id": "build 1.0.0", "deps": [
+                    {"pkg": "transitive 1.0.0", "dep_kinds": [{"kind": null}]}
+                ]},
+                {"id": "dev 1.0.0", "deps": []},
+                {"id": "dual 1.0.0", "deps": []},
+                {"id": "transitive 1.0.0", "deps": []}
+            ]},
+            "workspace_members": ["root 1.0.0"]
+        }"#,
+        )
+        .expect("synthetic cargo-metadata JSON must parse");
+
+        let closure = normal_and_build_dep_closure(&meta, &["root 1.0.0"]);
+        let got: Vec<&str> = closure.into_iter().collect();
+        assert_eq!(
+            got,
+            vec![
+                "build-dep",
+                "build-transitive",
+                "dev-and-build-dep",
+                "normal-dep",
+                "root"
+            ]
+        );
     }
 
     #[test]
@@ -3188,6 +3399,44 @@ mod tests {
         );
         let err = validate_pipeline_zeroization(&weakened).unwrap_err();
         assert!(err.contains("check capacity"), "got: {err}");
+    }
+
+    #[test]
+    fn current_op_accumulator_wipe_markers_all_present() {
+        let root = workspace_root();
+        for (rel, marker, reason) in OP_ACCUMULATOR_WIPE_MARKERS {
+            let text = std::fs::read_to_string(root.join(rel)).unwrap();
+            assert!(
+                text.contains(marker),
+                "{rel} lost load-bearing marker {marker:?} ({reason})"
+            );
+        }
+    }
+
+    #[test]
+    fn op_accumulator_markers_reject_unrouted_appends() {
+        // Doctor the case-mapping source to bypass the wipe helper: the tripwire
+        // must notice the import (the routing's load-bearing construct) is gone.
+        let root = workspace_root();
+        let text = std::fs::read_to_string(root.join("core/src/ops/case.rs")).unwrap();
+        let weakened = text.replace("use crate::ops::wipe::push_char_wiping;", "");
+        let missing = missing_accumulator_wipe_markers("core/src/ops/case.rs", &weakened);
+        assert_eq!(missing.len(), 1, "got: {missing:?}");
+        assert!(missing[0].contains("ops::wipe"), "got: {missing:?}");
+    }
+
+    #[test]
+    fn op_accumulator_markers_reject_unwiped_growth() {
+        // Doctor the wipe helper to free the retired block without zeroizing it.
+        let root = workspace_root();
+        let text = std::fs::read_to_string(root.join("core/src/ops/wipe.rs")).unwrap();
+        let weakened = text.replace("drop(Zeroizing::new(retired));", "drop(retired);");
+        let missing = missing_accumulator_wipe_markers("core/src/ops/wipe.rs", &weakened);
+        assert_eq!(missing.len(), 1, "got: {missing:?}");
+        assert!(
+            missing[0].contains("zeroize the retired"),
+            "got: {missing:?}"
+        );
     }
 
     // --- check-agent-workflow ---
