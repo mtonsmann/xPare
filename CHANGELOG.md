@@ -6,6 +6,19 @@ follow semver over the public surface — the C ABI, the config schema, and the
 CLI flags (see [`docs/release-model.md`](docs/release-model.md), "Versioning
 and stability").
 
+## 1.0.0-rc.3 — 2026-06-10 (release candidate)
+
+### Fixed
+
+- **The rc.2 preview app only ran on the machine that built it**: `core-ffi`
+  emitted both a static archive and a dylib, and the linker silently preferred
+  the dylib — whose install path pointed into the build tree — over the static
+  archive the docs promised. The dylib crate-type is gone, the Swift package
+  links `libxpare_ffi.a` as an explicit linker input (immune to stale dylibs),
+  and packaging now fails closed if the binary has any non-OS dynamic library
+  dependency. Verified by launching the packaged app with the build tree
+  removed.
+
 ## 1.0.0-rc.2 — 2026-06-10 (release candidate)
 
 ### Fixed
