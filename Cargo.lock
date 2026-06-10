@@ -625,33 +625,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "safetystrip-cli"
-version = "0.1.0"
-dependencies = [
- "safetystrip-core",
-]
-
-[[package]]
-name = "safetystrip-core"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "proptest",
- "pulldown-cmark",
- "serde",
- "serde_json",
- "zeroize",
-]
-
-[[package]]
-name = "safetystrip-ffi"
-version = "0.1.0"
-dependencies = [
- "safetystrip-core",
- "zeroize",
-]
-
-[[package]]
 name = "same-file"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1028,8 +1001,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "xpare-cli"
+version = "1.0.0-rc.1"
+dependencies = [
+ "xpare-core",
+]
+
+[[package]]
+name = "xpare-core"
+version = "1.0.0-rc.1"
+dependencies = [
+ "criterion",
+ "proptest",
+ "pulldown-cmark",
+ "serde",
+ "serde_json",
+ "zeroize",
+]
+
+[[package]]
+name = "xpare-ffi"
+version = "1.0.0-rc.1"
+dependencies = [
+ "xpare-core",
+ "zeroize",
+]
+
+[[package]]
 name = "xtask"
-version = "0.1.0"
+version = "1.0.0-rc.1"
 dependencies = [
  "cbindgen",
  "serde",

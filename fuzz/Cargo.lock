@@ -138,25 +138,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
 
 [[package]]
-name = "safetystrip-core"
-version = "0.1.0"
-dependencies = [
- "pulldown-cmark",
- "serde",
- "serde_json",
- "zeroize",
-]
-
-[[package]]
-name = "safetystrip-fuzz"
-version = "0.0.0"
-dependencies = [
- "arbitrary",
- "libfuzzer-sys",
- "safetystrip-core",
-]
-
-[[package]]
 name = "serde"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -242,6 +223,25 @@ name = "wit-bindgen"
 version = "0.57.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
+
+[[package]]
+name = "xpare-core"
+version = "1.0.0-rc.1"
+dependencies = [
+ "pulldown-cmark",
+ "serde",
+ "serde_json",
+ "zeroize",
+]
+
+[[package]]
+name = "xpare-fuzz"
+version = "0.0.0"
+dependencies = [
+ "arbitrary",
+ "libfuzzer-sys",
+ "xpare-core",
+]
 
 [[package]]
 name = "zeroize"
