@@ -18,15 +18,19 @@
  * NOT an ABI change and must NOT bump this.
  *
  * History: v1 → v2 added [`XP_MAX_INPUT_BYTES`] and a new trailing status,
- * [`SsStatus::ErrInputTooLarge`]. Existing status values are unchanged, so a v1
- * caller still interprets `Ok`/`ErrNullArg`/`ErrInvalidConfig`/`ErrInternal`
- * correctly; only the new size ceiling is added.
+ * [`XpStatus::ErrInputTooLarge`]. v2 → v3 is the one coordinated pre-1.0 rename
+ * finishing SafetyStrip → xPare (`ss_*`/`SsStatus`/`SS_STATUS_*` became
+ * `xp_*`/`XpStatus`/`XP_STATUS_*`, done while there are zero external ABI
+ * consumers) and added a new trailing status,
+ * [`XpStatus::ErrUnsupportedConfigVersion`], so a shell can distinguish a config
+ * schema-version mismatch from malformed config JSON. Existing status values are
+ * unchanged in both bumps. The ABI is frozen from 1.0 onward.
  */
-#define XP_ABI_VERSION 2
+#define XP_ABI_VERSION 3
 
 /**
- * Hard upper bound, in bytes, on the input [`ss_transform`] will accept. A larger
- * input returns [`SsStatus::ErrInputTooLarge`] *before* anything is read or
+ * Hard upper bound, in bytes, on the input [`xp_transform`] will accept. A larger
+ * input returns [`XpStatus::ErrInputTooLarge`] *before* anything is read or
  * allocated, so a pathological size can never cause an out-of-memory abort or an
  * allocation-size overflow at the boundary.
  *
@@ -45,31 +49,39 @@
 #define XP_MAX_INPUT_BYTES 2147483648
 
 /**
- * Result status for [`ss_transform`]. `repr(C)` so it is a plain C enum.
+ * Result status for [`xp_transform`]. `repr(C)` so it is a plain C enum.
  */
-typedef enum SsStatus {
+typedef enum XpStatus {
   /**
    * Success. `*out` / `*out_len` describe a buffer the caller must free.
    */
-  SS_STATUS_OK = 0,
+  XP_STATUS_OK = 0,
   /**
    * A required pointer argument was null.
    */
-  SS_STATUS_ERR_NULL_ARG = 1,
+  XP_STATUS_ERR_NULL_ARG = 1,
   /**
-   * `config_json` was not valid UTF-8, not valid JSON, or an unsupported version.
+   * `config_json` was not valid UTF-8, not valid JSON, or failed validation
+   * (e.g. too many operations, an over-long parameter). A schema-version
+   * mismatch is reported separately as [`XpStatus::ErrUnsupportedConfigVersion`].
    */
-  SS_STATUS_ERR_INVALID_CONFIG = 2,
+  XP_STATUS_ERR_INVALID_CONFIG = 2,
   /**
    * An unexpected internal error (e.g. a caught panic). Should never happen.
    */
-  SS_STATUS_ERR_INTERNAL = 3,
+  XP_STATUS_ERR_INTERNAL = 3,
   /**
    * `input_len` exceeded [`XP_MAX_INPUT_BYTES`]; nothing was read, allocated, or
    * transformed. (Added in ABI v2.)
    */
-  SS_STATUS_ERR_INPUT_TOO_LARGE = 4,
-} SsStatus;
+  XP_STATUS_ERR_INPUT_TOO_LARGE = 4,
+  /**
+   * `config_json` declared a config schema version this core does not support,
+   * so a shell can distinguish a version mismatch (upgrade/downgrade skew) from
+   * malformed config JSON. (Added in ABI v3.)
+   */
+  XP_STATUS_ERR_UNSUPPORTED_CONFIG_VERSION = 5,
+} XpStatus;
 
 #ifdef __cplusplus
 extern "C" {
@@ -78,7 +90,7 @@ extern "C" {
 /**
  * Returns the integer ABI version. See [`XP_ABI_VERSION`].
  */
-uint32_t ss_abi_version(void);
+uint32_t xp_abi_version(void);
 
 /**
  * Returns a pointer to a static, NUL-terminated UTF-8 JSON string describing this
@@ -87,7 +99,7 @@ uint32_t ss_abi_version(void);
  * The returned pointer is valid for the lifetime of the process and **must not be
  * freed**. Never returns null.
  */
-const char *ss_capabilities_json(void);
+const char *xp_capabilities_json(void);
 
 /**
  * Transform `input` according to `config_json`.
@@ -97,35 +109,37 @@ const char *ss_capabilities_json(void);
  *   `input_len` is 0.
  * * `config_json` — NUL-terminated UTF-8 JSON config. Must not be null.
  * * `out` / `out_len` — on `Ok`, `*out` receives a heap buffer of `*out_len` UTF-8
- *   bytes (not NUL-terminated) that the caller must release with [`ss_buffer_free`].
+ *   bytes (not NUL-terminated) that the caller must release with [`xp_buffer_free`].
  *   On any error, `*out` is set to null and `*out_len` to 0. Both must not be null.
  *
- * Inputs larger than [`XP_MAX_INPUT_BYTES`] return [`SsStatus::ErrInputTooLarge`]
- * without reading `input` or allocating.
+ * Inputs larger than [`XP_MAX_INPUT_BYTES`] return [`XpStatus::ErrInputTooLarge`]
+ * without reading `input` or allocating. A config whose schema version this core
+ * does not support returns [`XpStatus::ErrUnsupportedConfigVersion`]; any other
+ * config defect returns [`XpStatus::ErrInvalidConfig`].
  *
  * # Safety
  * `input` must be valid for reads of `input_len` bytes (or null with `input_len`
  * 0); `config_json` must point to a valid NUL-terminated string; `out` and
  * `out_len` must be valid for writes.
  */
-enum SsStatus ss_transform(const uint8_t *input,
+enum XpStatus xp_transform(const uint8_t *input,
                            size_t input_len,
                            const char *config_json,
                            uint8_t **out,
                            size_t *out_len);
 
 /**
- * Free a buffer returned by [`ss_transform`], zeroizing it first so clipboard-derived
+ * Free a buffer returned by [`xp_transform`], zeroizing it first so clipboard-derived
  * bytes do not linger in freed memory.
  *
- * `ptr`/`len` must be exactly the values produced by a single `ss_transform` call,
+ * `ptr`/`len` must be exactly the values produced by a single `xp_transform` call,
  * and must be freed at most once. A null `ptr` is a no-op.
  *
  * # Safety
- * `ptr` must originate from `ss_transform`'s `*out` with the matching `len`, not be
+ * `ptr` must originate from `xp_transform`'s `*out` with the matching `len`, not be
  * used afterwards, and not be freed more than once.
  */
-void ss_buffer_free(uint8_t *ptr, size_t len);
+void xp_buffer_free(uint8_t *ptr, size_t len);
 
 #ifdef __cplusplus
 }  // extern "C"

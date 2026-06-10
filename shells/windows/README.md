@@ -28,8 +28,8 @@ Implement the full per-platform checklist (see
   a mechanism that does not require elevated or invasive input permissions.
 - **Settings.** Persist preferences (mode, ordered operations, hotkey, poll
   interval) locally. **Never** persist clipboard content.
-- **Call the core via the C ABI.** Link the core and call `ss_transform` /
-  `ss_buffer_free` / `ss_abi_version` / `ss_capabilities_json`. Build the
+- **Call the core via the C ABI.** Link the core and call `xp_transform` /
+  `xp_buffer_free` / `xp_abi_version` / `xp_capabilities_json`. Build the
   config JSON to the schema in `core/src/config.rs`.
 
 ## Linking the core
@@ -45,6 +45,6 @@ cargo build -p xpare-ffi --release --target x86_64-pc-windows-msvc
 ## Posture (must hold on every platform)
 
 No network anywhere. No persistence or logging of clipboard content; in-memory
-only, and the core zeroizes returned buffers in `ss_buffer_free`. Output is
+only, and the core zeroizes returned buffers in `xp_buffer_free`. Output is
 deterministic for a given `(input, config)`. Keep transform logic in the core,
 not the shell.

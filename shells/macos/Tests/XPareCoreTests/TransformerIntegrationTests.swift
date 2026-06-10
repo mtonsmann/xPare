@@ -3,16 +3,16 @@ import Foundation
 @testable import XPareCore
 
 /// Exercises the real linked Rust core through the C ABI. Passing these proves
-/// the staticlib link, the `(ptr,len)` buffer protocol, and `ss_buffer_free`
+/// the staticlib link, the `(ptr,len)` buffer protocol, and `xp_buffer_free`
 /// all work from Swift end to end. (swift-testing; see TransformConfigTests for
 /// why not XCTest.)
 @Suite struct TransformerIntegrationTests {
     private let transformer = Transformer()
 
     @Test func abiVersionMatchesHeader() {
-        // The frozen header pins XP_ABI_VERSION == 2 (v2 added the input-size ceiling:
-        // XP_MAX_INPUT_BYTES + the ErrInputTooLarge status).
-        #expect(transformer.abiVersion() == 2)
+        // The frozen header pins XP_ABI_VERSION == 3 (v3 renamed the surface to
+        // xp_*/XpStatus/XP_STATUS_* and added the ErrUnsupportedConfigVersion status).
+        #expect(transformer.abiVersion() == 3)
         #expect(Transformer.coreMaxInputBytes > 0)
     }
 
@@ -52,11 +52,12 @@ import Foundation
         #expect(out == s)
     }
 
-    @Test func invalidConfigVersionThrows() {
-        // Hand the core a config with an unsupported version; expect the mapped
-        // invalidConfig error, not a crash.
+    @Test func unsupportedConfigVersionThrowsItsOwnError() {
+        // Hand the core a config with an unsupported schema version; expect the
+        // dedicated ABI v3 error — distinct from malformedConfigThrows below, so
+        // version skew is distinguishable from a broken config.
         let badJSON = #"{"version":999,"operations":[]}"#
-        #expect(throws: TransformError.invalidConfig) {
+        #expect(throws: TransformError.unsupportedConfigVersion) {
             try transformer.transform("x", configJSON: badJSON)
         }
     }
@@ -78,7 +79,8 @@ import Foundation
     @Test func everyErrorHasANonEmptyDescription() {
         let all: [TransformError] = [
             .nullArgument, .invalidConfig, .internalError, .inputTooLarge,
-            .unknownStatus(42), .missingOutputBuffer, .encodingFailed, .decodingFailed,
+            .unsupportedConfigVersion, .unknownStatus(42), .missingOutputBuffer,
+            .encodingFailed, .decodingFailed,
         ]
         for err in all {
             #expect(!err.description.isEmpty)

@@ -53,7 +53,7 @@
   clarification: official Developer ID distribution should embed the checked
   App Sandbox entitlement unless a future PR explicitly changes posture.
 - 2026-06-06: Keep the C ABI unchanged; any FFI memory hygiene change must stay
-  internal to `ss_transform`.
+  internal to `xp_transform`.
 - 2026-06-06: Use an incremental Markdown output state instead of a bounded
   reverse scan, preserving newline coalescing semantics while making structural
   newline insertion constant-time.

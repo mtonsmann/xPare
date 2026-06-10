@@ -1,0 +1,11 @@
+# Default owner for everything in the repo.
+* @mtonsmann
+
+# Security-critical release surface, listed explicitly so a future broadening of
+# the default rule can never silently drop review on these: the CI/release
+# workflows, the signing/notarization script, and the sandbox entitlements
+# (the minimal-entitlements posture is a compatibility surface — see
+# docs/guardrails/macos-posture.md).
+/.github/workflows/ @mtonsmann
+/shells/macos/release.sh @mtonsmann
+/shells/macos/xPare.entitlements @mtonsmann

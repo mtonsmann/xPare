@@ -94,6 +94,11 @@ pub fn strip_html(input: &str) -> String {
         return strip_html_plain_text(input);
     }
 
+    // Stripping is shrink-or-equal (growth factor 1 in
+    // `Operation::max_growth_factor`): tags/comments shrink, entities decode to at
+    // most their source length, and malformed constructs are emitted verbatim. So
+    // this capacity is sufficient and the clipboard-derived buffer never
+    // reallocates — a reallocation would free the old block unwiped.
     let mut out = String::with_capacity(input.len());
     let mut chars = input.char_indices().peekable();
 
@@ -172,6 +177,10 @@ pub(crate) fn decode_entities(input: &str) -> String {
     if !input.as_bytes().contains(&b'&') {
         return input.to_string();
     }
+    // Entity decoding is shrink-or-equal (decoded scalars never outgrow their
+    // source escape; malformed input is emitted verbatim), so the buffer never
+    // reallocates and callers may wipe the returned allocation knowing it is the
+    // only one this function ever held the text in.
     let mut out = String::with_capacity(input.len());
     let mut chars = input.char_indices().peekable();
     while let Some((_, c)) = chars.next() {

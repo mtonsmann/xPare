@@ -166,7 +166,7 @@ Consult:
   (ceiling model, optimization waves, acceptance rules) and `docs/performance.md`
   (what we measure + the local baseline).
 - `docs/release-model.md` and
-  `docs/exec-plans/active/0003-macos-release-plumbing.md` (source / unsigned-preview /
+  `docs/exec-plans/completed/0003-macos-release-plumbing.md` (source / unsigned-preview /
   Developer ID releases).
 
 Performance is *measured* by criterion (`make bench`) and the opt-in `make perf`
@@ -200,7 +200,5 @@ If the docs-only change captures a review lesson, also consult
   against [`docs/guardrails/code-and-test-hygiene.md`](docs/guardrails/code-and-test-hygiene.md)
   ("Tier-2 review") — anti-slop on every code PR, security focus on the security-relevant
   surface listed there. Advisory only; the required gate is `cargo xtask ci`.
-- GitHub integration: prefer the Codex GitHub connector for PR metadata/creation
-  now that it has repo scope for `mtonsmann/xPare`. Use escalated local
-  `gh` as the fallback; sandboxed, non-escalated `gh` auth/network results are
-  not the source of truth for this repo.
+- GitHub integration: use the `gh` CLI for GitHub operations (PRs, issues,
+  releases).

@@ -269,12 +269,12 @@ fn rejects_fuzz_oom_line_affix_pattern_before_transform() {
     let mut ops = vec![Operation::PrefixLines {
         prefix: "~~~\n+c-\0\n\0\0\0".into(),
     }];
-    ops.extend(
-        std::iter::repeat(Operation::PrefixLines {
+    ops.extend(std::iter::repeat_n(
+        Operation::PrefixLines {
             prefix: "> ".into(),
-        })
-        .take(8),
-    );
+        },
+        8,
+    ));
     ops.push(Operation::StripMarkdown);
 
     let cfg = Config::as_given(ops);

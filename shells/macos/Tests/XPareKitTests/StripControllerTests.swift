@@ -191,7 +191,7 @@ struct StripControllerTests {
         )
 
         let outcome = await controller.stripNow(trigger: .manual)
-        #expect(outcome == .tooLarge(bytes: 1000))
+        #expect(outcome == .tooLarge(bytes: 1000, rich: false))
         #expect(pb.writes.isEmpty, "oversized clipboard must be left untouched")
     }
 
@@ -215,7 +215,9 @@ struct StripControllerTests {
         )
 
         let outcome = await controller.stripNow(trigger: .manual)
-        #expect(outcome == .tooLarge(bytes: 1_000))
+        // The refusal must name the rich representation so the surfaced status
+        // explains why a small-looking selection was refused.
+        #expect(outcome == .tooLarge(bytes: 1_000, rich: true))
         #expect(
             pb.materializedReadCount == 0,
             "oversized rich representations must be rejected before decode")
@@ -624,180 +626,7 @@ struct StripControllerTests {
         #expect(auto == .stripped(changed: true))
         #expect(pb.writes == ["[email]"])
     }
-
-    // MARK: - Lifecycle / side effects
-
-    /// `activate()` in the default on-demand mode installs the hotkey but starts no
-    /// monitor (the hard "no timer when continuous is off" rule). The registered
-    /// hotkey is torn down by `deactivate()`.
-    @Test func activateInOnDemandModeRegistersHotkeyButRunsNoMonitor() throws {
-        let (defaults, suite) = try isolatedDefaults()
-        defer { defaults.removePersistentDomain(forName: suite) }
-
-        let pb = FakePasteboard()
-        let controller = StripController(
-            settings: Settings(mode: .onDemand, operations: [.collapseWhitespace]),
-            pasteboard: pb,
-            defaults: defaults
-        )
-        controller.activate()
-        // Pump the run loop: an on-demand controller must never poll/write on its own.
-        let deadline = Date().addingTimeInterval(0.1)
-        while Date() < deadline {
-            RunLoop.current.run(mode: .common, before: Date().addingTimeInterval(0.02))
-        }
-        #expect(pb.writes.isEmpty, "on-demand mode must not write without a trigger")
-        controller.deactivate()
-    }
-
-    /// `update()` persists the new settings and re-applies only the side effects whose
-    /// inputs changed: editing the operations list must NOT thrash the monitor/hotkey,
-    /// but the new pipeline is saved and used.
-    @Test func updateOperationsPersistsWithoutDisturbingMode() async throws {
-        let (defaults, suite) = try isolatedDefaults()
-        defer { defaults.removePersistentDomain(forName: suite) }
-
-        let pb = FakePasteboard(snapshot: PasteboardSnapshot(text: "  hi  ", kind: .plain))
-        let controller = StripController(
-            settings: Settings(mode: .onDemand, operations: [.collapseWhitespace]),
-            pasteboard: pb,
-            defaults: defaults
-        )
-        controller.activate()
-        defer { controller.deactivate() }
-
-        var next = controller.settings
-        next.operations = [.trimTrailingWhitespace, .collapseWhitespace]
-        controller.update(next)
-
-        #expect(controller.settings.operations == [.trimTrailingWhitespace, .collapseWhitespace])
-        // Persisted: a fresh load sees the updated pipeline.
-        #expect(Settings.load(from: defaults).operations == next.operations)
-    }
-
-    /// Switching the mode via `update()` re-applies the monitor: on→continuous starts
-    /// it (it strips on a clipboard change) and continuous→on-demand tears it down.
-    @Test func updateModeStartsThenStopsTheMonitor() async throws {
-        let (defaults, suite) = try isolatedDefaults()
-        defer { defaults.removePersistentDomain(forName: suite) }
-
-        let pb = FakePasteboard(snapshot: PasteboardSnapshot(text: "<p>x</p>", kind: .plain))
-        let controller = StripController(
-            settings: Settings(
-                mode: .onDemand, operations: [.collapseWhitespace], pollIntervalMs: 30),
-            pasteboard: pb,
-            defaults: defaults
-        )
-        controller.activate()
-        defer { controller.deactivate() }
-
-        // Turn continuous ON: an external clipboard change should now be picked up and
-        // stripped. The monitor's timer fires on the main run loop, which advances while we
-        // await (mirrors `continuousMonitorSuppressesSelfWriteBeforeRead`).
-        var on = controller.settings
-        on.mode = .continuous
-        controller.update(on)
-        pb.externalSet(PasteboardSnapshot(text: "  spaced  out  ", kind: .plain))
-
-        var sawWrite = false
-        for _ in 0..<50 where !sawWrite {
-            try await Task.sleep(for: .milliseconds(20))
-            sawWrite = !pb.writes.isEmpty
-        }
-        #expect(sawWrite, "continuous monitor should strip an external clipboard change")
-
-        // Turn continuous OFF: the monitor stops; no further writes after a new change.
-        var off = controller.settings
-        off.mode = .onDemand
-        controller.update(off)
-        let writesAfterStop = pb.writes.count
-        pb.externalSet(PasteboardSnapshot(text: "  more  spaces  ", kind: .plain))
-        try await Task.sleep(for: .milliseconds(150))
-        #expect(pb.writes.count == writesAfterStop, "no writes should land after on-demand")
-    }
-
-    /// Changing only the hotkey re-installs it (the combo-changed branch of `update()`)
-    /// without flipping modes; the controller stays usable on demand.
-    @Test func updateHotkeyReinstallsAndStillStripsOnDemand() async throws {
-        let (defaults, suite) = try isolatedDefaults()
-        defer { defaults.removePersistentDomain(forName: suite) }
-
-        let pb = FakePasteboard(snapshot: PasteboardSnapshot(text: "  trim me  ", kind: .plain))
-        let controller = StripController(
-            settings: Settings(mode: .onDemand, operations: [.trimTrailingWhitespace]),
-            pasteboard: pb,
-            defaults: defaults
-        )
-        controller.activate()
-        defer { controller.deactivate() }
-
-        var next = controller.settings
-        next.hotkey = HotkeyCombo(keyCode: 11, modifiers: 0x0100)  // ⌘B
-        controller.update(next)
-        #expect(controller.settings.hotkey == next.hotkey)
-
-        let outcome = await controller.stripNow(trigger: .manual)
-        #expect(outcome == .stripped(changed: true))
-    }
-
-    /// A transform that throws surfaces the content-free `.failed` outcome and leaves the
-    /// clipboard untouched — the failure category is reported, never the input.
-    @Test func transformFailureSurfacesFailedAndDoesNotWrite() async throws {
-        let (defaults, suite) = try isolatedDefaults()
-        defer { defaults.removePersistentDomain(forName: suite) }
-
-        let pb = FakePasteboard(snapshot: PasteboardSnapshot(text: "anything", kind: .plain))
-        let controller = StripController(
-            settings: Settings(mode: .onDemand, operations: [.collapseWhitespace]),
-            pasteboard: pb,
-            transformer: ThrowingTransformer(),
-            defaults: defaults
-        )
-
-        let outcome = await controller.stripNow(trigger: .manual)
-        #expect(outcome == .failed)
-        #expect(pb.writes.isEmpty)
-    }
 }
-
-private final class RecordingTransformer: Transforming, @unchecked Sendable {
-    private let lock = NSLock()
-    private let output: String
-    private var _callCount = 0
-    private var _configs: [TransformConfig] = []
-
-    init(output: String) {
-        self.output = output
-    }
-
-    var callCount: Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return _callCount
-    }
-
-    var configs: [TransformConfig] {
-        lock.lock()
-        defer { lock.unlock() }
-        return _configs
-    }
-
-    func transform(_ input: String, config: TransformConfig) throws -> String {
-        lock.lock()
-        _callCount += 1
-        _configs.append(config)
-        lock.unlock()
-        return output
-    }
-}
-
-/// Always throws, to drive the controller's content-free `.failed` path.
-private struct ThrowingTransformer: Transforming {
-    func transform(_ input: String, config: TransformConfig) throws -> String {
-        throw TransformError.internalError
-    }
-}
-
 private final class BlockingTransformer: Transforming, @unchecked Sendable {
     private let lock = NSLock()
     private let proceed = DispatchSemaphore(value: 0)

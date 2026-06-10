@@ -1,0 +1,6 @@
+# Blank issues stay enabled on purpose: the templates guide, they don't gate.
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/mtonsmann/xPare/security/advisories/new
+    about: Report privately via GitHub Security Advisories — never in a public issue.

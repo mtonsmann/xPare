@@ -1,0 +1,32 @@
+name: Feature request
+description: Suggest an improvement to xPare.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A note on xPare's posture before you write: no network anywhere, no
+        telemetry, no persistence or logging of clipboard content, minimal
+        sandbox entitlements, deterministic transforms. Proposals that require
+        weakening any of these will be declined (see SECURITY.md and DESIGN.md).
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do that xPare does not support today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What should xPare do? A rough sketch is fine.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you tried, or other tools that partially solve this.
+    validations:
+      required: false

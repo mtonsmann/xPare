@@ -20,11 +20,12 @@ Three threats follow directly, and each maps to a mechanism:
 |---|---|---|
 | **Data exfiltration** — clipboard content leaving the process | Catastrophic: silent theft of secrets | No network anywhere (`check-no-network`); core has no OS/IO/net deps (`check-core-deps`); no logging sink in the core (`deny(print*/dbg!)`); macOS App Sandbox with no network entitlement |
 | **Data persistence** — content outliving its use | Secrets recoverable from disk/logs/freed memory | In-memory only; no files, no logs of content; freed FFI buffers are zeroized; no telemetry |
-| **Untrusted-input parsing** — adversarial HTML/Markdown | Memory-unsafety, panics (DoS), hangs (DoS), or active content surviving into the "clean" output | Core is `#![forbid(unsafe_code)]` (no memory-unsafety by construction); fuzz + property + corpus prove no panic/hang; `strip_html` neutralizes `<script>`/`<style>` |
+| **Untrusted-input parsing** — adversarial HTML/Markdown | Memory-unsafety, panics (DoS), hangs (DoS), or active content surviving into the "clean" output | First-party core code has no `unsafe` (`#![forbid(unsafe_code)]`; the audited pure-data parsing deps carry their own vetted internal `unsafe`); fuzz + property + corpus pin down no panic/hang; `strip_html` neutralizes `<script>`/`<style>` |
 
 The boundary that enforces this is the core/shell split: the core is the untrusted
-parser and cannot be memory-unsafe or leak; the shell is the only thing that talks
-to the OS. See [`SECURITY.md`](SECURITY.md) for the posture as a checklist.
+parser, its first-party code cannot contain `unsafe`, and it cannot leak; the shell
+is the only thing that talks to the OS. See [`SECURITY.md`](SECURITY.md) for the
+posture as a checklist.
 
 The explicit non-goal is defending the system pasteboard from every same-user local
 process. Another local app may write the pasteboard before xPare reads it,
@@ -53,14 +54,15 @@ buffers as a best-effort wipe of clipboard-derived bytes.
 ### D2 — FFI = cbindgen + a narrow C ABI
 
 A C ABI is language-neutral: a future Windows or Linux shell (Swift, C++, C#, Rust)
-consumes it unchanged. **Why these four symbols** — `ss_abi_version`,
-`ss_capabilities_json`, `ss_transform`, `ss_buffer_free` — and nothing more: the
+consumes it unchanged. **Why these four symbols** — `xp_abi_version`,
+`xp_capabilities_json`, `xp_transform`, `xp_buffer_free` — and nothing more: the
 surface stays narrow and data-driven. Feature selection crosses as a serialized
 config string, so **adding a transform is a data change, never an ABI change**. The
 checked-in header (`core-ffi/include/xpare.h`) is the source of truth and
 `cargo xtask check-abi` fails CI if the code drifts from it, making any real ABI
 change a deliberate, reviewable event (bump `XP_ABI_VERSION`, regenerate, call it
-out). See [the FFI guardrail](docs/guardrails/ffi-boundary-and-abi-stability.md).
+out). See [the FFI guardrail](docs/guardrails/ffi-boundary-and-abi-stability.md)
+and [D16](#d16--the-one-coordinated-pre-10-abi-rename-v3) for the v2 → v3 rename.
 
 ### D3 — Config is versioned JSON: an ordered list of operations
 
@@ -81,16 +83,32 @@ at most 32 operations, free-text parameters (`prefix`, `suffix`, `separator`,
 multi-GB intermediates before a transform runs. Adding a transform is a new enum
 variant plus a pipeline arm — zero ABI change.
 
+**Config compatibility is deliberately strict — fail-closed.** `parse_config`
+rejects unknown fields (`deny_unknown_fields`) and any version other than the
+exact `CONFIG_VERSION`; there is no silent tolerance of "mostly valid" configs
+and no forward-compatibility guessing. **Why:** the config crosses a trust
+boundary as data, and a half-understood config silently dropping or reinterpreting
+an operation is worse than a clean, distinguishable error (the FFI surfaces a
+version mismatch as `XP_STATUS_ERR_UNSUPPORTED_CONFIG_VERSION`, separate from
+malformed JSON). Schema evolution happens only through explicit `CONFIG_VERSION`
+bumps. From 1.0, a breaking change to the config schema — like one to the C ABI
+or the CLI flags — requires a major version.
+
 ### D4 — Stateless `repr(C)` error model, lossy input decoding
 
-Errors are a flat `repr(C)` status enum (`Ok`, `ErrNullArg`, `ErrInvalidConfig`,
-`ErrInternal`) with **no global error state**. **Why:** a stateless, thread-safe,
+Errors are a flat `repr(C)` status enum (`XpStatus`, ABI v3) with **no global
+error state**: `XP_STATUS_OK` (0), `XP_STATUS_ERR_NULL_ARG` (1),
+`XP_STATUS_ERR_INVALID_CONFIG` (2), `XP_STATUS_ERR_INTERNAL` (3),
+`XP_STATUS_ERR_INPUT_TOO_LARGE` (4), and `XP_STATUS_ERR_UNSUPPORTED_CONFIG_VERSION`
+(5 — the core's `ConfigError::UnsupportedVersion`, so a shell can distinguish a
+config-version mismatch from malformed JSON). **Why:** a stateless, thread-safe,
 trivially consumable contract — the caller reads the return code, no `errno`-style
 hidden state to race on. Input bytes are decoded with lossy UTF-8 (invalid bytes
 become U+FFFD) rather than rejected, so **adversarial bytes can never make
-`ss_transform` fail** — it always produces *some* defined output. A caught panic
-maps to `ErrInternal`, which should never occur (the core is fuzzed) but is handled
-so a stray panic is never UB.
+`xp_transform` fail** — it always produces *some* defined output. An input above
+`XP_MAX_INPUT_BYTES` returns `XP_STATUS_ERR_INPUT_TOO_LARGE` before anything is
+read or allocated. A caught panic maps to `XP_STATUS_ERR_INTERNAL`, which should
+never occur (the core is fuzzed) but is handled so a stray panic is never UB.
 
 ### D5 — HTML stripper: hand-rolled pure-safe-Rust state machine
 
@@ -100,7 +118,7 @@ HTML5 parser is a large, opaque dependency with broad capability and its own att
 surface; the brief's guidance is to reimplement a small subset rather than depend
 on opaque upstream. Because it is safe Rust, it is **memory-safe by construction**;
 the only residual risks for a hand-rolled parser are panics and hangs, and those
-are proven absent by an adversarial corpus, property tests, and `cargo fuzz`. The
+are pinned down by an adversarial corpus, property tests, and `cargo fuzz`. The
 scanner iterates by `char` and char-aligned byte offsets only (never slicing on a
 non-UTF-8 boundary) and is strictly linear-time with only bounded lookahead.
 
@@ -150,10 +168,10 @@ silently converts every copied web fragment to Markdown.
 
 ### D7 — Buffer ownership: leaked `Box<[u8]>`, freed + zeroized
 
-`ss_transform` returns the output as a `(ptr, len)` pair over a leaked `Box<[u8]>`;
-`ss_buffer_free` reclaims it. **Why `Box<[u8]>` and not the raw `String`/`Vec`:** a
+`xp_transform` returns the output as a `(ptr, len)` pair over a leaked `Box<[u8]>`;
+`xp_buffer_free` reclaims it. **Why `Box<[u8]>` and not the raw `String`/`Vec`:** a
 boxed slice carries exactly `ptr + len` (no separate capacity), which is the minimal
-thing the C side must track and round-trip. `ss_buffer_free` **zeroizes** the buffer
+thing the C side must track and round-trip. `xp_buffer_free` **zeroizes** the buffer
 before dropping it, a best-effort wipe so clipboard-derived bytes do not linger in
 freed memory. The only `unsafe` is reclaiming the box; producing it is safe Rust.
 
@@ -175,12 +193,15 @@ and do not change the core ABI.
 
 ### D9 — Global hotkey: Carbon `RegisterEventHotKey`
 
-The macOS hotkey (default **⌥⌘V**) uses Carbon's `RegisterEventHotKey`. **Why not a
+The macOS hotkey (default **⌃⌥⌘V**, user-configurable via the in-app recorder in
+Settings) uses Carbon's `RegisterEventHotKey`. **Why not a
 `CGEventTap` or a global `NSEvent` monitor:** those require the Accessibility or
 Input Monitoring TCC permissions — broad, scary grants for a clipboard utility.
 `RegisterEventHotKey` registers one specific chord and needs **neither**, which
 keeps the privilege footprint minimal and avoids a permission prompt that would
-undermine user trust.
+undermine user trust. The Settings recorder captures the replacement chord with a
+**local** `NSEvent` monitor (the app's own key events only), which also needs no
+permission — it is not the forbidden global monitor.
 
 ### D10 — CLI has no dependencies
 
@@ -390,7 +411,23 @@ free of OS/IO — this is pure shell/OS integration, per the shell contract); a
 content-named or user-chosen file location (worse privacy, needs entitlements);
 writing the string *and* the file URL together (receiving text editors would
 paste the raw blob, defeating the feature). See SECURITY.md ("Opt-in
-paste-as-file exception") and exec plan 0012.
+paste-as-file exception") and
+[`docs/exec-plans/completed/0012-paste-large-buffers-as-files.md`](docs/exec-plans/completed/0012-paste-large-buffers-as-files.md).
+
+### D16 — The one coordinated pre-1.0 ABI rename (v3)
+
+*Decided 2026-06, for 1.0.0-rc.1.* The repository rename SafetyStrip → xPare
+left the C ABI carrying the old prefix (`ss_*`, `SsStatus`, `SS_STATUS_*`). The
+surface was renamed to `xp_*` / `XpStatus` / `XP_STATUS_*` in **one coordinated
+compatibility event**, bumping `XP_ABI_VERSION` 2 → 3 and adding
+`XP_STATUS_ERR_UNSUPPORTED_CONFIG_VERSION` (see [D4](#d4--stateless-reprc-error-model-lossy-input-decoding))
+in the same bump. **Why now and why once:** there are zero external ABI
+consumers — the macOS shell in this repo is the only caller — so this is the
+last point at which the rename costs nothing; carrying a dead product name in a
+frozen ABI forever was the alternative. The header guard (`XPARE_FFI_H`) and
+`XP_MAX_INPUT_BYTES` were already on the new name and did not change. **The ABI
+is frozen from 1.0 onward:** any breaking change to the C ABI — like one to the
+config schema or the CLI flags — requires a major version.
 
 ### Other settled choices
 
@@ -404,7 +441,10 @@ paste-as-file exception") and exec plan 0012.
   official binaries. Official `make dist` / release-workflow assets must be
   Developer ID signed with the checked-in App Sandbox entitlements, then notarized
   and stapled; the release script verifies the signed entitlement payload is still
-  minimal.
+  minimal. Releases are **arm64-only (Apple Silicon)** at 1.0 and are created as
+  **draft** GitHub releases — a human publishes. There is **no auto-update
+  mechanism by design** (it would need network access); updates are manual via
+  GitHub Releases, and the app shows its version in the menu.
 - **Dependencies:** only boring, audited, API-stable crates with no OS/IO/network
   capability — `serde`/`serde_json` (config), `pulldown-cmark` (Markdown), `zeroize`
   (buffer wipe); `cbindgen` and `proptest` are tooling/dev-only; `libfuzzer-sys` and
@@ -545,7 +585,7 @@ fraction of RAM, and safety-first means **refusing gracefully rather than riskin
 out-of-memory abort**. Three layers:
 
 - **Core (pure):** unbounded — a plain memory-bound function.
-- **C ABI (v2):** a fixed, generous backstop `XP_MAX_INPUT_BYTES` (2 GiB). A larger
+- **C ABI:** a fixed, generous backstop `XP_MAX_INPUT_BYTES` (2 GiB). A larger
   input returns `ErrInputTooLarge` *before* any read or allocation, so it can never
   abort or overflow at the boundary. It must be a constant because the
   platform-neutral core may not ask the OS about memory.
@@ -556,7 +596,8 @@ out-of-memory abort**. Three layers:
 - **CLI:** intentionally uncapped — the right tool for multi-GB *file* work, where the
   caller manages its own memory.
 
-This ceiling is what drove the v1 → v2 ABI bump (see the FFI guardrail).
+This ceiling is what drove the v1 → v2 ABI bump (see the FFI guardrail); the
+v2 → v3 bump was the coordinated rename, [D16](#d16--the-one-coordinated-pre-10-abi-rename-v3).
 
 **Shell responsiveness.** Because a strip can take a few seconds near the top of the
 allowed range, the macOS shell runs the transform on a background task (the pasteboard
@@ -576,7 +617,7 @@ Benchmarks for these sizes live in `core/benches/transform_large.rs`
 These are accepted trade-offs, documented so they are not mistaken for defects.
 
 - **Zeroization is best-effort.** The pipeline now holds each intermediate in a
-  `Zeroizing` buffer (wiped on drop) and `ss_buffer_free` wipes the output buffer, so
+  `Zeroizing` buffer (wiped on drop) and `xp_buffer_free` wipes the output buffer, so
   clipboard-derived bytes are scrubbed from the heap after use — at a measured
   throughput cost on very large inputs (see [`docs/performance.md`](docs/performance.md)).
   It remains best-effort: the caller's input buffer and the OS clipboard itself are
@@ -584,6 +625,8 @@ These are accepted trade-offs, documented so they are not mistaken for defects.
   reuse. The invalid-UTF-8 FFI path is fixed within that ownership model: if lossy
   decoding creates an owned replacement string, that temporary is `Zeroizing` and is
   wiped on drop; the original caller-owned byte buffer remains outside the boundary.
+  The precise inventory — what is wiped, and the remaining best-effort gaps — lives
+  in [`SECURITY.md`](SECURITY.md#where-zeroization-matters).
 - **`StripMarkdown` alone is not a script-neutralizing sanitizer.** It delegates
   *embedded* HTML to `strip_html` best-effort, but the supported path for hostile
   content is `StripHtml` → `StripMarkdown`. Do not rely on `StripMarkdown` by itself

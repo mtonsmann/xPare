@@ -46,6 +46,8 @@ jobs:
   kani:
     name: kani (bounded proofs, best-effort)
     runs-on: ubuntu-latest
+    # Generous: `cargo kani setup` downloads a CBMC toolchain before verifying.
+    timeout-minutes: 90
     continue-on-error: true
     steps:
       - name: Checkout

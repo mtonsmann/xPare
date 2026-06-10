@@ -179,6 +179,31 @@ fn link_destination_edge_cases() {
     assert_eq!(html_to_markdown("<a href=x>t</a>"), "[t](<x>)");
 }
 
+// ---------------------------------------------------------------------------
+// Accumulator-growth regressions: Markdown output can outgrow the input (every
+// escaped char doubles), so the converter's buffers must relocate mid-build.
+// Appends go through the wipe-on-grow helper (`ops::wipe`), which moves the
+// bytes by hand — these pin that already-written content survives relocation.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn escaped_output_growing_past_input_capacity_stays_correct() {
+    // 4096 escaped `*` produce 8192 output bytes from ~4103 input bytes, forcing
+    // the accumulator past its `input.len()` starting capacity at least once.
+    let body = "*".repeat(4096);
+    let input = format!("<p>{body}</p>");
+    assert_eq!(html_to_markdown(&input), "\\*".repeat(4096));
+}
+
+#[test]
+fn pre_block_growing_past_initial_buffer_stays_correct() {
+    // The <pre> side buffer starts empty, so a large body forces repeated growth
+    // before the fenced block is flushed into the main accumulator.
+    let body = "x".repeat(4096);
+    let input = format!("<pre>{body}</pre>");
+    assert_eq!(html_to_markdown(&input), format!("```\n{body}\n```"));
+}
+
 proptest! {
     #[test]
     fn arbitrary_input_is_deterministic_and_panic_free(s in ".*") {
@@ -293,6 +318,104 @@ fn link_destination_escapes_gt_and_backslash() {
     assert_eq!(
         html_to_markdown(r#"<a href="http://e.com/a\b">t</a>"#),
         "[t](<http://e.com/a\\\\b>)"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Rendered-indent clamp: list indentation renders two spaces per level only up
+// to `MAX_RENDERED_LIST_INDENT_DEPTH` (4); deeper items render at the clamp.
+// The list stack itself stays unbounded, so structure tracking and ordered
+// numbering are exact at any depth. Without the clamp, per-item indent grows
+// with the open-list count, so a deeply-nested adversarial list amplifies
+// output quadratically — past `Operation::max_growth_factor() == 5`, the bound
+// `Config::validate`'s amplification envelope multiplies per pipeline.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nested_list_indentation_is_per_level_up_to_the_clamp() {
+    // Depths 0..=4 are all within the clamp: two spaces per level, unchanged.
+    let input = concat!(
+        "<ul><li>a",
+        "<ul><li>b",
+        "<ul><li>c",
+        "<ul><li>d",
+        "<ul><li>e",
+        "</li></ul></li></ul></li></ul></li></ul></li></ul>"
+    );
+    assert_eq!(
+        html_to_markdown(input),
+        "- a\n\n  - b\n\n    - c\n\n      - d\n\n        - e"
+    );
+}
+
+#[test]
+fn nesting_beyond_the_clamp_renders_at_the_clamp_depth() {
+    // Depth 5 exceeds the clamp (4), so `f` renders with the same eight-space
+    // indent as depth-4 `e` instead of gaining another level.
+    let input = concat!(
+        "<ul><li>a",
+        "<ul><li>b",
+        "<ul><li>c",
+        "<ul><li>d",
+        "<ul><li>e",
+        "<ul><li>f",
+        "</li></ul></li></ul></li></ul></li></ul></li></ul></li></ul>"
+    );
+    assert_eq!(
+        html_to_markdown(input),
+        "- a\n\n  - b\n\n    - c\n\n      - d\n\n        - e\n\n        - f"
+    );
+}
+
+#[test]
+fn ordered_numbering_stays_exact_beyond_the_clamp() {
+    // Only the rendered indent is clamped — the unbounded list stack still
+    // numbers items correctly six lists deep. (The first item's indent is
+    // trimmed because the whole output is edge-trimmed.)
+    let input = format!("{}<li>x</li><li>y", "<ol>".repeat(6));
+    assert_eq!(html_to_markdown(&input), "1. x\n        2. y");
+}
+
+#[test]
+fn deeply_nested_list_flood_stays_inside_the_growth_envelope() {
+    // 2000 unclosed `<ul>` + 2000 `<li>x` (18,000 bytes). With unclamped
+    // per-level indentation this shape produced ~8,000,001 output bytes
+    // (quadratic); the clamp keeps it linear and inside the documented
+    // 5x growth bound (`Operation::max_growth_factor`).
+    let input = format!("{}{}", "<ul>".repeat(2000), "<li>x".repeat(2000));
+    let out = html_to_markdown(&input);
+    let bound = 5 * input.len() + 16;
+    assert!(
+        out.len() <= bound,
+        "output {} B exceeds growth bound {} B for input {} B",
+        out.len(),
+        bound,
+        input.len()
+    );
+}
+
+#[test]
+fn ordered_list_numbering_worst_case_stays_inside_the_declared_factor() {
+    // The numbering amplifier that sets the declared factor at 5: at the indent
+    // clamp each 4-byte `<li>` nets 10 + digits(item) output bytes, so growth
+    // passes 3x near a thousand items and trends to ~4.7x at the 2 GiB FFI input
+    // ceiling — never past 5 (derivation on `Operation::max_growth_factor`).
+    // Pin both sides: this shape must exceed the OLD 3x factor (so the declared
+    // factor cannot quietly drop back) and stay inside the declared 5x.
+    let input = format!("{}{}", "<ol>".repeat(5), "<li>".repeat(1000));
+    let out = html_to_markdown(&input);
+    assert!(
+        out.len() > 3 * input.len(),
+        "numbering worst case no longer exceeds 3x ({} B from {} B): the declared \
+         factor may be lowerable",
+        out.len(),
+        input.len()
+    );
+    assert!(
+        out.len() <= 5 * input.len(),
+        "output {} B exceeds the declared 5x growth bound for input {} B",
+        out.len(),
+        input.len()
     );
 }
 

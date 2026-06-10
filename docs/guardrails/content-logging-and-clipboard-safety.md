@@ -27,7 +27,7 @@ upstream FormatStripper `guardrails.py` and enforced here by the in-tree `xtask`
    [privacy-and-data-handling](privacy-and-data-handling.md) rule 2.
 3. **Default verification must not touch the real clipboard.** Any exercise of
    `NSPasteboard.general` stays behind an explicitly opt-in target. `make ci`,
-   `make check`, `make build`, `make test`, `make app`, `make run`, `make preview`,
+   `make checks`, `make build`, `make test`, `make app`, `make run`, `make preview`,
    and `make dist` must use synthetic pasteboards only, so the gate is safe to run
    anywhere and never reads or mutates the user's real clipboard.
 

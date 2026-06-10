@@ -2,21 +2,25 @@ import Foundation
 import CXPare
 
 /// Errors surfaced by the Swift wrapper around the C ABI. Each ``status`` case
-/// maps 1:1 to a non-OK `SsStatus` from the core; ``encodingFailed`` /
+/// maps 1:1 to a non-OK `XpStatus` from the core; ``encodingFailed`` /
 /// ``decodingFailed`` cover the Swift-side marshalling.
 public enum TransformError: Error, Equatable, CustomStringConvertible {
-    /// A required pointer argument was null (`SS_STATUS_ERR_NULL_ARG`).
+    /// A required pointer argument was null (`XP_STATUS_ERR_NULL_ARG`).
     case nullArgument
-    /// The config JSON was rejected by the core (`SS_STATUS_ERR_INVALID_CONFIG`).
+    /// The config JSON was rejected by the core (`XP_STATUS_ERR_INVALID_CONFIG`).
     case invalidConfig
-    /// An unexpected internal error / caught panic (`SS_STATUS_ERR_INTERNAL`).
+    /// An unexpected internal error / caught panic (`XP_STATUS_ERR_INTERNAL`).
     case internalError
     /// Input exceeded the core's hard size ceiling
-    /// (`SS_STATUS_ERR_INPUT_TOO_LARGE`, ABI v2).
+    /// (`XP_STATUS_ERR_INPUT_TOO_LARGE`, ABI v2).
     case inputTooLarge
+    /// The config declared a schema version this core does not support
+    /// (`XP_STATUS_ERR_UNSUPPORTED_CONFIG_VERSION`, ABI v3) — version skew between
+    /// shell and core, distinct from a malformed config.
+    case unsupportedConfigVersion
     /// The core returned a status not covered by the frozen ABI.
     case unknownStatus(UInt32)
-    /// `ss_transform` reported OK but handed back a null output buffer.
+    /// `xp_transform` reported OK but handed back a null output buffer.
     case missingOutputBuffer
     /// Could not encode the config to UTF-8 JSON.
     case encodingFailed
@@ -29,6 +33,8 @@ public enum TransformError: Error, Equatable, CustomStringConvertible {
         case .invalidConfig: return "core rejected the config JSON"
         case .internalError: return "core hit an internal error"
         case .inputTooLarge: return "input exceeds the core's maximum size"
+        case .unsupportedConfigVersion:
+            return "settings format is newer than this core supports — update the app"
         case .unknownStatus(let raw): return "core returned unknown status \(raw)"
         case .missingOutputBuffer: return "core returned OK but no output buffer"
         case .encodingFailed: return "failed to encode config as UTF-8 JSON"
@@ -36,14 +42,15 @@ public enum TransformError: Error, Equatable, CustomStringConvertible {
         }
     }
 
-    /// Translate a raw `SsStatus` into a thrown error, or `nil` for OK.
-    static func from(status: SsStatus) -> TransformError? {
+    /// Translate a raw `XpStatus` into a thrown error, or `nil` for OK.
+    static func from(status: XpStatus) -> TransformError? {
         switch status {
-        case SS_STATUS_OK: return nil
-        case SS_STATUS_ERR_NULL_ARG: return .nullArgument
-        case SS_STATUS_ERR_INVALID_CONFIG: return .invalidConfig
-        case SS_STATUS_ERR_INTERNAL: return .internalError
-        case SS_STATUS_ERR_INPUT_TOO_LARGE: return .inputTooLarge
+        case XP_STATUS_OK: return nil
+        case XP_STATUS_ERR_NULL_ARG: return .nullArgument
+        case XP_STATUS_ERR_INVALID_CONFIG: return .invalidConfig
+        case XP_STATUS_ERR_INTERNAL: return .internalError
+        case XP_STATUS_ERR_INPUT_TOO_LARGE: return .inputTooLarge
+        case XP_STATUS_ERR_UNSUPPORTED_CONFIG_VERSION: return .unsupportedConfigVersion
         default: return .unknownStatus(status.rawValue)
         }
     }
@@ -53,18 +60,18 @@ public enum TransformError: Error, Equatable, CustomStringConvertible {
 ///
 /// Responsibilities:
 /// * encode a ``TransformConfig`` to JSON,
-/// * call `ss_transform`,
+/// * call `xp_transform`,
 /// * build a Swift `String` from the returned `(ptr, len)` UTF-8 buffer,
-/// * `ss_buffer_free` that buffer **exactly once**, even on error paths,
-/// * map any non-OK `SsStatus` to a thrown ``TransformError``.
+/// * `xp_buffer_free` that buffer **exactly once**, even on error paths,
+/// * map any non-OK `XpStatus` to a thrown ``TransformError``.
 ///
 /// The wrapper holds no state and performs no I/O, so it is safe to share.
 public struct Transformer: Sendable {
     public init() {}
 
-    /// The C ABI version this binary was linked against (`ss_abi_version`).
+    /// The C ABI version this binary was linked against (`xp_abi_version`).
     public func abiVersion() -> UInt32 {
-        ss_abi_version()
+        xp_abi_version()
     }
 
     /// The core's hard input ceiling in bytes (`XP_MAX_INPUT_BYTES`). Exposed so the
@@ -72,11 +79,11 @@ public struct Transformer: Sendable {
     /// importing the C module itself.
     public static var coreMaxInputBytes: Int { Int(XP_MAX_INPUT_BYTES) }
 
-    /// The core's self-describing capabilities JSON (`ss_capabilities_json`).
+    /// The core's self-describing capabilities JSON (`xp_capabilities_json`).
     /// The returned pointer is process-static and must not be freed, so we copy
     /// it into a Swift `String`.
     public func capabilities() -> String {
-        guard let ptr = ss_capabilities_json() else { return "" }
+        guard let ptr = xp_capabilities_json() else { return "" }
         return String(cString: ptr)
     }
 
@@ -96,11 +103,11 @@ public struct Transformer: Sendable {
         var outPtr: UnsafeMutablePointer<UInt8>?
         var outLen = 0
 
-        let status: SsStatus = configJSON.withCString { configCStr in
+        let status: XpStatus = configJSON.withCString { configCStr in
             inputBytes.withUnsafeBufferPointer { inBuf in
                 // `inBuf.baseAddress` is nil for an empty array, which the ABI
                 // explicitly allows when the length is 0.
-                ss_transform(
+                xp_transform(
                     inBuf.baseAddress,
                     inBuf.count,
                     configCStr,
@@ -121,7 +128,7 @@ public struct Transformer: Sendable {
         guard let base = outPtr else {
             throw TransformError.missingOutputBuffer
         }
-        defer { ss_buffer_free(base, outLen) }
+        defer { xp_buffer_free(base, outLen) }
 
         let buffer = UnsafeBufferPointer(start: base, count: outLen)
         guard let result = String(bytes: buffer, encoding: .utf8) else {

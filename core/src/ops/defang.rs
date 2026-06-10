@@ -101,7 +101,19 @@ impl BracketStyle {
 /// Empty input yields the empty string. Input with no indicators is returned
 /// verbatim.
 pub fn defang(input: &str, style: BracketStyle) -> String {
-    let mut out = String::with_capacity(input.len() + input.len() / 8 + 8);
+    // Exact-sufficient output capacity. Every substitution brackets a single `.`,
+    // `@`, or `:` occurrence (the URL `[://]` marker brackets its one `:`), adding
+    // exactly two bytes; the scheme mangle (`http` → `hxxp`) is length-preserving
+    // and everything else is copied verbatim. Counting those bytes up front
+    // therefore bounds the output exactly in the worst case (e.g. an IPv4 flood)
+    // and over-estimates otherwise, so the accumulator never reallocates — a
+    // reallocation would free the old block with clipboard-derived bytes unwiped.
+    // The `defang_output_fits_separator_bound` property test pins this bound.
+    let separators = input
+        .bytes()
+        .filter(|b| matches!(b, b'.' | b'@' | b':'))
+        .count();
+    let mut out = String::with_capacity(input.len() + 2 * separators);
     // Walk the input as alternating whitespace runs / non-whitespace tokens, copying
     // whitespace verbatim and transforming each token. char_indices keeps us on UTF-8
     // boundaries; we only ever slice on indices that came from char_indices.
@@ -151,7 +163,15 @@ enum CoreTransform {
 /// Classify a token core. Returns `None` if the core is not an indicator or is
 /// already defanged and should be emitted unchanged.
 fn classify_core(core: &str) -> Option<CoreTransform> {
-    if core.is_empty() || !has_indicator_byte(core) || already_defanged(core) {
+    // Two-term gate, each term load-bearing in exactly one direction.
+    // `!has_indicator_byte` is the conservative fast path: no classifier below can
+    // match a token without one of its bytes, and an empty core has none, so the
+    // empty token lands here too. `already_defanged` is the idempotence guard, and
+    // it is NOT subsumed by the classifiers: a marker-bearing token can still
+    // classify (the email heuristic matches `user[@]corp[.]net`, the URL heuristic
+    // matches `www.example[.]com`), so without the guard a second pass would
+    // double-bracket — `defang_half_defanged_token_is_left_alone` pins this.
+    if !has_indicator_byte(core) || already_defanged(core) {
         return None;
     }
     if is_url(core) {
@@ -365,6 +385,8 @@ pub fn refang(input: &str) -> String {
     // it; otherwise copy the literal span up to the next marker-trigger byte. This
     // avoids the O(n*k) repeated-`replace` chain and any double-rewriting hazards.
     // The span scanner only stops on ASCII bytes, which are always UTF-8 boundaries.
+    // Every reversal shrinks or preserves length, so `input.len()` is a sufficient
+    // capacity and the clipboard-derived accumulator never reallocates.
     let bytes = input.as_bytes();
     let mut out = String::with_capacity(input.len());
     let mut i = 0usize;

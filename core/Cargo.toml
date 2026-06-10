@@ -6,6 +6,8 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Pure, deterministic, memory-safe text transformation core for xPare. No OS, I/O, or network."
+# crates.io publication is deliberately deferred (tracked in docs/deferred-work.md).
+publish = false
 
 [lib]
 name = "xpare_core"

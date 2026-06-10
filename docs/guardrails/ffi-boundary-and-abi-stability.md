@@ -14,20 +14,25 @@ change to it is a deliberate compatibility event.
 
 | Symbol | Contract |
 |---|---|
-| `ss_abi_version() -> u32` | Integer ABI version for capability negotiation. Currently `SS_ABI_VERSION = 2`. |
-| `SS_MAX_INPUT_BYTES` (constant) | Hard upper bound on `ss_transform` input size (2 GiB). A larger input returns `ErrInputTooLarge` with nothing read or allocated. A generous **platform-neutral backstop**; the native shell enforces a tighter, RAM-proportional limit. (Added in v2.) |
-| `ss_capabilities_json() -> *const c_char` | Pointer to a **static**, NUL-terminated JSON self-description (name, version, config-schema version, supported operations). Valid for the process lifetime; **must not be freed**; never null. |
-| `ss_transform(input, input_len, config_json, out, out_len) -> SsStatus` | Transform `input` per `config_json`. On `Ok`, `*out`/`*out_len` is a heap buffer the caller must free. On any error, `*out`=null/`*out_len`=0. |
-| `ss_buffer_free(ptr, len)` | Free (and zeroize) a buffer from `ss_transform`. Null `ptr` is a no-op. Free at most once with the exact matching `(ptr, len)`. |
-| `SsStatus` (`repr(C)` enum) | `Ok=0`, `ErrNullArg=1`, `ErrInvalidConfig=2`, `ErrInternal=3`, `ErrInputTooLarge=4`. No global error state. |
+| `xp_abi_version() -> u32` | Integer ABI version for capability negotiation. Currently `XP_ABI_VERSION = 3`. |
+| `XP_MAX_INPUT_BYTES` (constant) | Hard upper bound on `xp_transform` input size (2 GiB). A larger input returns `ErrInputTooLarge` with nothing read or allocated. A generous **platform-neutral backstop**; the native shell enforces a tighter, RAM-proportional limit. (Added in v2.) |
+| `xp_capabilities_json() -> *const c_char` | Pointer to a **static**, NUL-terminated JSON self-description (name, version, config-schema version, supported operations). Valid for the process lifetime; **must not be freed**; never null. |
+| `xp_transform(input, input_len, config_json, out, out_len) -> XpStatus` | Transform `input` per `config_json`. On `Ok`, `*out`/`*out_len` is a heap buffer the caller must free. On any error, `*out`=null/`*out_len`=0. |
+| `xp_buffer_free(ptr, len)` | Free (and zeroize) a buffer from `xp_transform`. Null `ptr` is a no-op. Free at most once with the exact matching `(ptr, len)`. |
+| `XpStatus` (`repr(C)` enum; C constants `XP_STATUS_*`) | `Ok=0`, `ErrNullArg=1`, `ErrInvalidConfig=2`, `ErrInternal=3`, `ErrInputTooLarge=4`, `ErrUnsupportedConfigVersion=5`. No global error state. |
+
+`ErrUnsupportedConfigVersion` (added in v3) is returned when the config JSON is
+well-formed but its `version` field does not match the core's `CONFIG_VERSION`
+(the core's `ConfigError::UnsupportedVersion`), so a shell can distinguish a
+schema-version mismatch from malformed JSON (`ErrInvalidConfig`).
 
 Memory/ownership/error contract (do not change one side only): input is UTF-8,
 **lossy-decoded** (invalid bytes → U+FFFD) so adversarial bytes never make it fail;
 `input` may be null only if `input_len == 0`; out-params must be writable and are
 initialized on every return path; the output buffer is a leaked `Box<[u8]>`
-reclaimed (and zeroized) by `ss_buffer_free`; a panic in the core is caught and
+reclaimed (and zeroized) by `xp_buffer_free`; a panic in the core is caught and
 returned as `ErrInternal` rather than unwinding across FFI; and an `input_len`
-above `SS_MAX_INPUT_BYTES` is rejected with `ErrInputTooLarge` **before** any read
+above `XP_MAX_INPUT_BYTES` is rejected with `ErrInputTooLarge` **before** any read
 or allocation, so a pathological size cannot cause an out-of-memory abort or an
 allocation-size overflow at the boundary.
 
@@ -48,21 +53,30 @@ allocation-size overflow at the boundary.
    generated header, and no unexpected C/C++/Objective-C files appear.
 3. **A real ABI change is a compatibility event.** If you change a signature, a
    struct/enum layout, or the memory-ownership contract, you must:
-   - bump `SS_ABI_VERSION` in `core-ffi/src/lib.rs`,
+   - bump `XP_ABI_VERSION` in `core-ffi/src/lib.rs`,
    - run `cargo xtask gen-header` to regenerate the header,
    - **call it out in the PR**, and confirm a non-Swift shell could still consume the
      boundary.
 
-   *History:* v1 → v2 added `SS_MAX_INPUT_BYTES` and a new **trailing** `SsStatus`
+   *History:* v1 → v2 added `XP_MAX_INPUT_BYTES` and a new **trailing** status
    value (`ErrInputTooLarge = 4`) for the input-size ceiling. Existing values were
    left unchanged, so it is a backward-additive change — the model case for this rule.
+   v2 → v3 was the one coordinated pre-1.0 rename event: every `ss_*`/`Ss*`/`SS_*`
+   identifier became the matching `xp_*`/`Xp*`/`XP_*` name (finishing the
+   SafetyStrip → xPare rename while the ABI had zero external consumers), plus a new
+   trailing status value (`ErrUnsupportedConfigVersion = 5`). **The ABI is frozen
+   from 1.0 onward** — from then on, any breaking change to it is a major-version
+   event (see `docs/release-model.md`, "Versioning and stability").
 4. **Keep the surface narrow.** Resist adding new entry points. The four symbols
    above are sufficient because behavior is data. New capability should almost always
-   be a new operation, queried via `ss_capabilities_json`, not a new function.
+   be a new operation, queried via `xp_capabilities_json`, not a new function.
 5. **Keep config back-compatible or bump `CONFIG_VERSION`.** The config schema is
    versioned independently (`core/src/config.rs`, currently `2`). An incompatible
    schema change bumps `CONFIG_VERSION`; `parse_config` rejects mismatched versions
-   so a shell detects it deterministically. `CAPABILITIES_JSON`'s `config_version`
+   so a shell detects it deterministically (surfaced across the FFI as
+   `ErrUnsupportedConfigVersion`). The strictness is deliberate and fail-closed:
+   unknown fields and unknown versions are rejected; schema evolution happens only
+   through explicit `CONFIG_VERSION` bumps. `CAPABILITIES_JSON`'s `config_version`
    must stay equal to `CONFIG_VERSION` (a unit test enforces this).
 6. **No `unsafe` outside this crate, and follow the FFI safety rules** in
    [memory-safety](memory-safety.md) (validate pointers, `catch_unwind`, zeroize).
@@ -86,7 +100,7 @@ allocation-size overflow at the boundary.
 
 ## What a PR must call out
 
-- **Whether the ABI changed.** If yes: the `SS_ABI_VERSION` bump, the regenerated
+- **Whether the ABI changed.** If yes: the `XP_ABI_VERSION` bump, the regenerated
   header, and an explicit note that a non-Swift shell can still consume it. If no:
   state that the change is config *data* only and the ABI is unchanged.
 - Any `CONFIG_VERSION` bump and why (what became incompatible).

@@ -1,3 +1,4 @@
+import ServiceManagement
 import SwiftUI
 import XPareCore
 import XPareKit
@@ -39,6 +40,14 @@ final class AppModel: ObservableObject {
     /// True while a strip runs long enough to be worth showing — drives the
     /// "Stripping…" indicator. Set from the controller's threshold-gated callback.
     @Published var isStripping: Bool = false
+    /// Whether the global hotkey is registered with the OS. `false` after a
+    /// failed registration, so the menu and Settings can show the hotkey is
+    /// inactive instead of leaving it silently dead.
+    @Published var hotkeyActive: Bool = false
+    /// Mirror of `SMAppService.mainApp` registration (launch at login).
+    @Published var launchAtLogin: Bool = SMAppService.mainApp.status == .enabled
+    /// Inline, content-free error from the last launch-at-login toggle, if any.
+    @Published var launchAtLoginError: String?
 
     private let controller: StripController
 
@@ -47,6 +56,7 @@ final class AppModel: ObservableObject {
         self.controller = controller
         self.settings = controller.settings
         controller.onStrippingChange = { [weak self] busy in self?.isStripping = busy }
+        controller.onHotkeyStateChange = { [weak self] active in self?.hotkeyActive = active }
         controller.activate()
     }
 
@@ -54,6 +64,41 @@ final class AppModel: ObservableObject {
     func setMode(_ mode: StripMode) {
         settings.mode = mode
         controller.update(settings)
+    }
+
+    /// Persist a newly recorded global hotkey. The controller re-registers it
+    /// immediately and reports the result through `hotkeyActive`.
+    func setHotkey(_ combo: HotkeyCombo) {
+        settings.hotkey = combo
+        controller.update(settings)
+    }
+
+    /// SwiftUI mirror of the configured global hotkey for the "Strip clipboard
+    /// now" menu row, so the displayed hint always matches the recorded chord.
+    /// `nil` (no hint shown) when the key has no single-character equivalent.
+    var stripMenuShortcut: KeyboardShortcut? {
+        settings.hotkey.menuShortcut
+    }
+
+    /// Toggle launch-at-login via `SMAppService` (the modern sandbox-friendly
+    /// API — no helper bundle, no extra entitlement). KNOWN LIMITATION: macOS
+    /// resolves the registration against the app's current on-disk path, so it
+    /// is reliable only when the app runs from a stable location (e.g.
+    /// /Applications); a copy launched from a temporary or build directory may
+    /// fail to register or register a path that later disappears. Errors are
+    /// surfaced inline in Settings; they carry no clipboard content.
+    func setLaunchAtLogin(_ enabled: Bool) {
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+            launchAtLoginError = nil
+        } catch {
+            launchAtLoginError = error.localizedDescription
+        }
+        launchAtLogin = SMAppService.mainApp.status == .enabled
     }
 
     // MARK: - Persistent pipeline (Clean toggles)
@@ -456,12 +501,27 @@ final class AppModel: ObservableObject {
                 lastStatus = "Clipboard empty"
             case .failed:
                 lastStatus = "\(label) failed"
+            case .writeFailed:
+                lastStatus = "Could not write to clipboard"
+            case .skippedConcealed:
+                lastStatus = "Skipped: marked confidential by its source"
             case .notApplicable:
                 lastStatus = notApplicableStatus ?? "\(label): not applicable"
-            case .tooLarge(let bytes):
-                lastStatus = "Clipboard too large (\(bytes / (1024 * 1024)) MB)"
+            case .tooLarge(let bytes, let rich):
+                lastStatus = Self.tooLargeStatus(bytes: bytes, rich: rich)
             }
         }
+    }
+
+    /// Content-free "too large" status. Names the rich representation when that
+    /// is what blew the ceiling, so the refusal is honest about why a seemingly
+    /// small selection was refused (its HTML/RTF form can be far larger than
+    /// the visible text). The clipboard is left unchanged either way.
+    static func tooLargeStatus(bytes: Int, rich: Bool) -> String {
+        let mb = bytes / (1024 * 1024)
+        return rich
+            ? "Rich clipboard content over the size limit (\(mb) MB) — left unchanged"
+            : "Clipboard too large (\(mb) MB)"
     }
 
     /// Run a strip right now from the menu. The transform runs off the main thread;
@@ -477,10 +537,14 @@ final class AppModel: ObservableObject {
                 lastStatus = "Clipboard empty"
             case .failed:
                 lastStatus = "Could not strip"
+            case .writeFailed:
+                lastStatus = "Could not write to clipboard"
+            case .skippedConcealed:
+                lastStatus = "Skipped: marked confidential by its source"
             case .notApplicable:
                 lastStatus = "Nothing to strip"
-            case .tooLarge(let bytes):
-                lastStatus = "Clipboard too large (\(bytes / (1024 * 1024)) MB)"
+            case .tooLarge(let bytes, let rich):
+                lastStatus = Self.tooLargeStatus(bytes: bytes, rich: rich)
             }
         }
     }
@@ -580,12 +644,19 @@ private struct MenuContent: View {
         Button("Strip clipboard now") {
             model.stripNow()
         }
-        .keyboardShortcut("v", modifiers: [.option, .command])
+        // The hint mirrors the *recorded* global hotkey, so the row never
+        // advertises a stale chord after the user changes it in Settings.
+        .keyboardShortcut(model.stripMenuShortcut)
         .disabled(model.isStripping)
 
         Divider()
 
         Text(model.isStripping ? "Stripping…" : model.lastStatus)
+        if !model.hotkeyActive {
+            // Surfaced hotkey failure: registration was rejected (e.g. the
+            // chord is taken by another app), so the shortcut will not fire.
+            Text("Hotkey \(model.settings.hotkey.displayString) inactive")
+        }
 
         Divider()
 
@@ -712,6 +783,11 @@ private struct MenuContent: View {
 
         Divider()
 
+        // Disabled informational row: the bundled version. "xPare dev" when run
+        // unbundled (e.g. `swift run` from a checkout, where no Info.plist
+        // carries CFBundleShortVersionString).
+        Text(Self.versionLabel)
+
         // Activate first: an accessory (LSUIElement) app must become active or the
         // Settings window opens behind everything / not at all. `openSettings` is more
         // reliable than `SettingsLink` for a programmatic open from a menu-bar app.
@@ -726,6 +802,13 @@ private struct MenuContent: View {
         }
         .keyboardShortcut("q")
     }
+
+    /// "xPare v1.2.3" from the bundle, or "xPare dev" outside a bundle.
+    private static let versionLabel: String = {
+        let version =
+            Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        return version.map { "xPare v\($0)" } ?? "xPare dev"
+    }()
 
     /// One on/off row for a zero-parameter rewrite in the *Clean* section.
     private func cleanToggle(

@@ -3,10 +3,10 @@
 //! This is the **only** crate permitted to use `unsafe`, and the surface is kept
 //! deliberately tiny so it can be audited in one sitting:
 //!
-//! * [`ss_abi_version`]      — integer ABI version for capability negotiation.
-//! * [`ss_capabilities_json`] — static JSON describing supported transforms.
-//! * [`ss_transform`]        — `transform(input, config) -> output`.
-//! * [`ss_buffer_free`]      — free (and zeroize) a buffer returned by `ss_transform`.
+//! * [`xp_abi_version`]      — integer ABI version for capability negotiation.
+//! * [`xp_capabilities_json`] — static JSON describing supported transforms.
+//! * [`xp_transform`]        — `transform(input, config) -> output`.
+//! * [`xp_buffer_free`]      — free (and zeroize) a buffer returned by `xp_transform`.
 //!
 //! Adding or changing a *transform* never changes this ABI: feature selection
 //! crosses as the `config_json` string. Any change to the signatures or the enum
@@ -15,7 +15,7 @@
 //!
 //! Safety model: every entry point validates its pointers, decodes input UTF-8
 //! losslessly (so adversarial bytes can never make it fail), and wraps the call to
-//! the core in `catch_unwind` so a panic becomes [`SsStatus::ErrInternal`] instead
+//! the core in `catch_unwind` so a panic becomes [`XpStatus::ErrInternal`] instead
 //! of unwinding across the FFI boundary (which is undefined behavior).
 
 // We cannot `forbid(unsafe_code)` here — this is the boundary. Instead we force
@@ -39,13 +39,17 @@ use zeroize::{Zeroize, Zeroizing};
 /// NOT an ABI change and must NOT bump this.
 ///
 /// History: v1 → v2 added [`XP_MAX_INPUT_BYTES`] and a new trailing status,
-/// [`SsStatus::ErrInputTooLarge`]. Existing status values are unchanged, so a v1
-/// caller still interprets `Ok`/`ErrNullArg`/`ErrInvalidConfig`/`ErrInternal`
-/// correctly; only the new size ceiling is added.
-pub const XP_ABI_VERSION: u32 = 2;
+/// [`XpStatus::ErrInputTooLarge`]. v2 → v3 is the one coordinated pre-1.0 rename
+/// finishing SafetyStrip → xPare (`ss_*`/`SsStatus`/`SS_STATUS_*` became
+/// `xp_*`/`XpStatus`/`XP_STATUS_*`, done while there are zero external ABI
+/// consumers) and added a new trailing status,
+/// [`XpStatus::ErrUnsupportedConfigVersion`], so a shell can distinguish a config
+/// schema-version mismatch from malformed config JSON. Existing status values are
+/// unchanged in both bumps. The ABI is frozen from 1.0 onward.
+pub const XP_ABI_VERSION: u32 = 3;
 
-/// Hard upper bound, in bytes, on the input [`ss_transform`] will accept. A larger
-/// input returns [`SsStatus::ErrInputTooLarge`] *before* anything is read or
+/// Hard upper bound, in bytes, on the input [`xp_transform`] will accept. A larger
+/// input returns [`XpStatus::ErrInputTooLarge`] *before* anything is read or
 /// allocated, so a pathological size can never cause an out-of-memory abort or an
 /// allocation-size overflow at the boundary.
 ///
@@ -62,26 +66,32 @@ pub const XP_ABI_VERSION: u32 = 2;
 /// INT_MAX), corrupting the value for C/C++ consumers and the Swift macro importer.
 pub const XP_MAX_INPUT_BYTES: usize = 2_147_483_648; // 2 GiB (2 * 1024^3)
 
-/// Result status for [`ss_transform`]. `repr(C)` so it is a plain C enum.
+/// Result status for [`xp_transform`]. `repr(C)` so it is a plain C enum.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SsStatus {
+pub enum XpStatus {
     /// Success. `*out` / `*out_len` describe a buffer the caller must free.
     Ok = 0,
     /// A required pointer argument was null.
     ErrNullArg = 1,
-    /// `config_json` was not valid UTF-8, not valid JSON, or an unsupported version.
+    /// `config_json` was not valid UTF-8, not valid JSON, or failed validation
+    /// (e.g. too many operations, an over-long parameter). A schema-version
+    /// mismatch is reported separately as [`XpStatus::ErrUnsupportedConfigVersion`].
     ErrInvalidConfig = 2,
     /// An unexpected internal error (e.g. a caught panic). Should never happen.
     ErrInternal = 3,
     /// `input_len` exceeded [`XP_MAX_INPUT_BYTES`]; nothing was read, allocated, or
     /// transformed. (Added in ABI v2.)
     ErrInputTooLarge = 4,
+    /// `config_json` declared a config schema version this core does not support,
+    /// so a shell can distinguish a version mismatch (upgrade/downgrade skew) from
+    /// malformed config JSON. (Added in ABI v3.)
+    ErrUnsupportedConfigVersion = 5,
 }
 
 /// Returns the integer ABI version. See [`XP_ABI_VERSION`].
 #[no_mangle]
-pub extern "C" fn ss_abi_version() -> u32 {
+pub extern "C" fn xp_abi_version() -> u32 {
     XP_ABI_VERSION
 }
 
@@ -91,7 +101,7 @@ pub extern "C" fn ss_abi_version() -> u32 {
 /// The returned pointer is valid for the lifetime of the process and **must not be
 /// freed**. Never returns null.
 #[no_mangle]
-pub extern "C" fn ss_capabilities_json() -> *const c_char {
+pub extern "C" fn xp_capabilities_json() -> *const c_char {
     static CAPS: OnceLock<CString> = OnceLock::new();
     // The capabilities JSON is ASCII and contains no interior NUL, so `CString::new`
     // cannot fail in practice; `unwrap_or_default` keeps this panic-free regardless.
@@ -106,27 +116,29 @@ pub extern "C" fn ss_capabilities_json() -> *const c_char {
 ///   `input_len` is 0.
 /// * `config_json` — NUL-terminated UTF-8 JSON config. Must not be null.
 /// * `out` / `out_len` — on `Ok`, `*out` receives a heap buffer of `*out_len` UTF-8
-///   bytes (not NUL-terminated) that the caller must release with [`ss_buffer_free`].
+///   bytes (not NUL-terminated) that the caller must release with [`xp_buffer_free`].
 ///   On any error, `*out` is set to null and `*out_len` to 0. Both must not be null.
 ///
-/// Inputs larger than [`XP_MAX_INPUT_BYTES`] return [`SsStatus::ErrInputTooLarge`]
-/// without reading `input` or allocating.
+/// Inputs larger than [`XP_MAX_INPUT_BYTES`] return [`XpStatus::ErrInputTooLarge`]
+/// without reading `input` or allocating. A config whose schema version this core
+/// does not support returns [`XpStatus::ErrUnsupportedConfigVersion`]; any other
+/// config defect returns [`XpStatus::ErrInvalidConfig`].
 ///
 /// # Safety
 /// `input` must be valid for reads of `input_len` bytes (or null with `input_len`
 /// 0); `config_json` must point to a valid NUL-terminated string; `out` and
 /// `out_len` must be valid for writes.
 #[no_mangle]
-pub unsafe extern "C" fn ss_transform(
+pub unsafe extern "C" fn xp_transform(
     input: *const u8,
     input_len: usize,
     config_json: *const c_char,
     out: *mut *mut u8,
     out_len: *mut usize,
-) -> SsStatus {
+) -> XpStatus {
     // Out-params must be writable to report anything at all.
     if out.is_null() || out_len.is_null() {
-        return SsStatus::ErrNullArg;
+        return XpStatus::ErrNullArg;
     }
     // SAFETY: `out`/`out_len` are non-null and the caller guarantees they are valid
     // for writes. Initialize them so the caller has defined values on every path.
@@ -136,13 +148,13 @@ pub unsafe extern "C" fn ss_transform(
     }
 
     if config_json.is_null() || (input.is_null() && input_len != 0) {
-        return SsStatus::ErrNullArg;
+        return XpStatus::ErrNullArg;
     }
 
     // Reject pathologically large inputs BEFORE reading `input` or allocating, so an
     // absurd size cannot trigger an out-of-memory abort or an allocation overflow.
     if input_len > XP_MAX_INPUT_BYTES {
-        return SsStatus::ErrInputTooLarge;
+        return XpStatus::ErrInputTooLarge;
     }
 
     // SAFETY: `input` is non-null and valid for `input_len` bytes, or `input_len`
@@ -159,11 +171,16 @@ pub unsafe extern "C" fn ss_transform(
     let config_cstr = unsafe { CStr::from_ptr(config_json) };
     let config_str = match config_cstr.to_str() {
         Ok(s) => s,
-        Err(_) => return SsStatus::ErrInvalidConfig,
+        Err(_) => return XpStatus::ErrInvalidConfig,
     };
+    // A schema-version mismatch gets its own status so a shell can tell
+    // upgrade/downgrade skew apart from a genuinely malformed config.
     let config = match xpare_core::parse_config(config_str) {
         Ok(c) => c,
-        Err(_) => return SsStatus::ErrInvalidConfig,
+        Err(xpare_core::ConfigError::UnsupportedVersion { .. }) => {
+            return XpStatus::ErrUnsupportedConfigVersion
+        }
+        Err(_) => return XpStatus::ErrInvalidConfig,
     };
 
     // Defense in depth: the core is fuzzed to never panic, but a panic must never
@@ -172,7 +189,7 @@ pub unsafe extern "C" fn ss_transform(
         xpare_core::transform(input_text.as_str(), &config)
     })) {
         Ok(text) => text,
-        Err(_) => return SsStatus::ErrInternal,
+        Err(_) => return XpStatus::ErrInternal,
     };
 
     let (ptr, len) = into_c_buffer(output);
@@ -181,20 +198,20 @@ pub unsafe extern "C" fn ss_transform(
         *out = ptr;
         *out_len = len;
     }
-    SsStatus::Ok
+    XpStatus::Ok
 }
 
-/// Free a buffer returned by [`ss_transform`], zeroizing it first so clipboard-derived
+/// Free a buffer returned by [`xp_transform`], zeroizing it first so clipboard-derived
 /// bytes do not linger in freed memory.
 ///
-/// `ptr`/`len` must be exactly the values produced by a single `ss_transform` call,
+/// `ptr`/`len` must be exactly the values produced by a single `xp_transform` call,
 /// and must be freed at most once. A null `ptr` is a no-op.
 ///
 /// # Safety
-/// `ptr` must originate from `ss_transform`'s `*out` with the matching `len`, not be
+/// `ptr` must originate from `xp_transform`'s `*out` with the matching `len`, not be
 /// used afterwards, and not be freed more than once.
 #[no_mangle]
-pub unsafe extern "C" fn ss_buffer_free(ptr: *mut u8, len: usize) {
+pub unsafe extern "C" fn xp_buffer_free(ptr: *mut u8, len: usize) {
     if ptr.is_null() {
         return;
     }
@@ -208,7 +225,7 @@ pub unsafe extern "C" fn ss_buffer_free(ptr: *mut u8, len: usize) {
 }
 
 /// Convert an owned `String` into a raw `(ptr, len)` over a leaked `Box<[u8]>`.
-/// Pure safe Rust: the only `unsafe` is reclaiming this in [`ss_buffer_free`].
+/// Pure safe Rust: the only `unsafe` is reclaiming this in [`xp_buffer_free`].
 fn into_c_buffer(s: String) -> (*mut u8, usize) {
     let boxed: Box<[u8]> = s.into_bytes().into_boxed_slice();
     let len = boxed.len();

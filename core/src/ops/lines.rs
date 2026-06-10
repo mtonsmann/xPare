@@ -327,7 +327,22 @@ pub fn split_on(input: &str, delimiter: &str) -> String {
     if delimiter.is_empty() {
         return input.to_string();
     }
-    input.replace(delimiter, "\n")
+    // Equivalent to `input.replace(delimiter, "\n")` (same non-overlapping,
+    // left-to-right matches via `match_indices`), but with the output pre-sized:
+    // each match swaps a >= 1-byte delimiter for one `'\n'`, so `input.len()` is a
+    // sufficient capacity and the clipboard-derived buffer never reallocates.
+    // (`str::replace` starts from an empty `String` and grows, which would free
+    // intermediate allocations unwiped.) Pinned by the
+    // `split_on_matches_str_replace` property test.
+    let mut out = String::with_capacity(input.len());
+    let mut tail_start = 0usize;
+    for (start, _) in input.match_indices(delimiter) {
+        out.push_str(&input[tail_start..start]);
+        out.push('\n');
+        tail_start = start + delimiter.len();
+    }
+    out.push_str(&input[tail_start..]);
+    out
 }
 
 /// Extract email-like tokens, one per line.

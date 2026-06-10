@@ -24,16 +24,37 @@ exclude_globs = [
 # every mutation to them "survives" spuriously. The real proof is `cargo xtask check-kani`.
 exclude_re = [
     "kani_proofs",
-    # Confirmed-equivalent helpers (mutants survive because the mutation cannot change
-    # observable output — verified by re-mutation + analysis, not assumed). Excluded so
-    # they stop recurring as noise; see exec plan 0013 for the per-function reasoning.
-    #   defang::has_indicator_byte — pure perf pre-filter; the classifiers re-reject any
-    #     token it would wrongly admit, so its result never changes output.
-    #   defang::already_defanged   — redundant idempotence guard; bracketed/`hxxp` tokens
-    #     are already rejected by every classifier, so its result never changes output.
-    "has_indicator_byte",
-    "already_defanged",
+    # The pattern above only matches FUNCTION mutants (their names carry the
+    # `kani_proofs::` path). The module-level `const MAX_FACTOR: u64 = 1 +
+    # MAX_CONFIG_TEXT_PARAM_BYTES as u64` in the same `#[cfg(kani)]` module surfaces
+    # with no containing-function context — just "config.rs:<l>:<c>: replace + with -"
+    # — so it needs its own pattern (line/column left out so edits to config.rs do not
+    # silently retire it). Same justification: cfg(kani) code never compiles into a
+    # test build, so no test can kill it; `cargo xtask check-kani` exercises the bound,
+    # and the `max_growth_factor_never_exceeds_the_kani_proof_bound` unit test keeps it
+    # in sync with production.
+    'config\.rs:\d+:\d+: replace \+ with [-*]$',
+    # Confirmed-equivalent mutant (survives because the mutation cannot change
+    # observable output — verified by re-mutation + analysis, not assumed):
+    # `defang::has_indicator_byte -> true` admits every token to the classifiers, which
+    # all require one of its bytes (`.` `@` `:` for a match; `[` `(` only feed the
+    # `already_defanged` guard, itself a no-op path), so output is unchanged for every
+    # input. Only the always-true direction is excluded: `-> false` and the in-function
+    # operator mutants are observable (defang stops defanging) and stay under test, as
+    # do all `already_defanged` mutants — its guard is load-bearing for half-defanged
+    # tokens the classifiers still match (pinned by
+    # `defang_half_defanged_token_is_left_alone`), so its mutants are killable and a
+    # blanket exclusion would hide real regressions.
+    'replace has_indicator_byte -> bool with true$',
 ]
+
+# Run the WHOLE workspace's tests against every mutant, not just the mutated package's.
+# Part of the kill surface is deliberately cross-package: xtask's structural tripwires
+# (`validate_pipeline_zeroization` and the accumulator wipe markers) pin security-posture
+# source constructs in `core` — e.g. the wipe-before-growth capacity comparison in
+# `prepare_collapse_scratch` — whose zeroize-vs-clear behavior is invisible to any safe
+# in-crate assertion. Package-scoped testing would misreport those mutants as MISSED.
+test_workspace = true
 
 # Property and corpus tests run longer than a trivial unit test. Give a generous timeout
 # so a slow-but-passing test is never misread as a mutant-induced hang (a false survivor).

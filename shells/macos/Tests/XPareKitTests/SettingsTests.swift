@@ -12,6 +12,22 @@ import Foundation
         #expect(s.hotkey == .defaultCombo)
     }
 
+    @Test func defaultHotkeyIsControlOptionCommandV() {
+        // ⌃⌥⌘V: kVK_ANSI_V (9) + cmdKey | optionKey | controlKey.
+        #expect(HotkeyCombo.defaultCombo.keyCode == 9)
+        #expect(HotkeyCombo.defaultCombo.modifiers == 0x0100 | 0x0800 | 0x1000)
+    }
+
+    /// Changing the *default* combo must not rewrite what users already chose:
+    /// a persisted blob carrying the old ⌥⌘V default decodes to exactly that
+    /// combo, not to the new default.
+    @Test func persistedHotkeyFromAnOlderBuildIsPreservedVerbatim() throws {
+        let legacy = Data(#"{"hotkey":{"keyCode":9,"modifiers":2304}}"#.utf8)  // 0x0900 = ⌥⌘
+        let decoded = try JSONDecoder().decode(Settings.self, from: legacy)
+        #expect(decoded.hotkey == HotkeyCombo(keyCode: 9, modifiers: 0x0100 | 0x0800))
+        #expect(decoded.hotkey != .defaultCombo, "stored combos must not be silently upgraded")
+    }
+
     @Test func codableRoundTrip() throws {
         let original = Settings(
             mode: .continuous,

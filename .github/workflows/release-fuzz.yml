@@ -3,6 +3,10 @@
 # Manually dispatched on a release-candidate ref. The release workflow checks for a
 # successful run on the exact tag SHA before it packages or publishes release assets.
 name: Release Fuzz
+# LOAD-BEARING format: release.yml parses the per-target budget out of this
+# display title ("<N>m/target") to enforce the release fuzz budget floor
+# (prerelease tags >= 10 minutes/target, final releases >= 30). Keep the
+# "(<ref>, <N>m/target)" shape in sync with the gate step in release.yml.
 run-name: Release fuzz (${{ github.ref_name }}, ${{ inputs.minutes_per_target }}m/target)
 
 on:
@@ -55,6 +59,12 @@ jobs:
         with:
           toolchain: nightly
 
+      # Cache-vs-purity tradeoff, decided deliberately: this GATE may reuse
+      # cached dependency/fuzz-target builds — its job is to spend the wall-clock
+      # budget finding crashes, so build provenance does not matter here and the
+      # cache converts setup time into fuzzing time. Shipped artifacts are never
+      # produced by this workflow: release.yml builds them cold (no cargo cache)
+      # on every run.
       - name: Cache cargo
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:

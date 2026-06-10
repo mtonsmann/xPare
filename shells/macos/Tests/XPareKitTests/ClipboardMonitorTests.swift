@@ -61,6 +61,16 @@ struct ClipboardMonitorTests {
         #expect(fireCount == 2)
     }
 
+    /// Apple energy guidance: a repeating poll timer must carry ~10% tolerance
+    /// so the OS can coalesce wakeups (poll phase is irrelevant to change
+    /// detection, so the tolerance costs nothing).
+    @Test func timerCarriesTenPercentTolerance() {
+        let monitor = ClipboardMonitor(pasteboard: FakePasteboard()) {}
+        monitor.start(intervalMs: 500)
+        defer { monitor.stop() }
+        #expect(monitor.timer?.tolerance == 0.05)
+    }
+
     /// start() is idempotent: calling it twice doesn't leave two live timers
     /// (one stop() fully tears down).
     @Test func restartDoesNotLeakTimers() {

@@ -20,7 +20,9 @@ public final class ClipboardMonitor {
     /// Invoked on the main run loop each time `changeCount` advances.
     private let onChange: () -> Void
 
-    private var timer: Timer?
+    /// Internal (not `private`) so tests can assert the timer's configuration
+    /// (the energy-saving tolerance) without widening the public surface.
+    private(set) var timer: Timer?
     private var lastChangeCount: Int
 
     /// Whether a live timer currently exists. Tests assert this is `false`
@@ -50,6 +52,10 @@ public final class ClipboardMonitor {
                 self?.poll()
             }
         }
+        // Apple's energy guidance: give repeating timers some tolerance (~10%
+        // of the interval) so the OS can coalesce wakeups. Poll phase doesn't
+        // matter for change detection — only that each tick eventually happens.
+        timer.tolerance = interval / 10
         // Keep firing while menus/modal panels are open.
         RunLoop.current.add(timer, forMode: .common)
         self.timer = timer

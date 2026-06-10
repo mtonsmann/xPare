@@ -142,6 +142,37 @@ struct PasteAsFileControllerTests {
         #expect(pb.fileURLWrites.isEmpty)
     }
 
+    /// The other failure half: the file persisted fine but the *pasteboard*
+    /// rejected the URL write. The orphaned file is deleted (nothing references
+    /// it) and the strip degrades to the normal in-place plain write.
+    @Test func failedPasteboardURLWriteDeletesFileAndFallsBackToPlainWrite() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let (store, dir) = isolatedStore()
+        defer { store.removeAll() }
+
+        let pb = FakePasteboard(
+            snapshot:
+                PasteboardSnapshot(text: largeText + "  ", kind: .plain))
+        pb.failNextFileURLWrite = true
+        let controller = StripController(
+            settings: enabledSettings(),
+            pasteboard: pb,
+            defaults: defaults,
+            pasteFileStore: store
+        )
+
+        let outcome = await controller.stripNow(trigger: .manual)
+        #expect(
+            outcome == .stripped(changed: true),
+            "a failed pasteboard URL write must degrade to the plain write")
+        #expect(pb.fileURLWrites.isEmpty)
+        #expect(pb.writes == [largeText])
+        #expect(
+            !FileManager.default.fileExists(atPath: dir.path),
+            "the orphaned paste file must not outlive the failed write")
+    }
+
     @Test func staleFileIsDeletedOnceThePasteboardMovesOn() async throws {
         let (defaults, suite) = try isolatedDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }

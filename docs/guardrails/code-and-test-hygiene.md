@@ -66,7 +66,7 @@ style note. Fix the code to satisfy the check; never weaken the check.
 - `cargo xtask check-unused-deps`
 - `cargo xtask check-test-hygiene`
 - `cargo xtask check-docs`
-- `cargo xtask check-mutants` / `cargo xtask check-coverage` (best-effort; `SS_DIFF_BASE=<ref>` scopes to a diff)
+- `cargo xtask check-mutants` / `cargo xtask check-coverage` (best-effort; `XP_DIFF_BASE=<ref>` scopes to a diff)
 
 ## What a PR must call out
 

@@ -206,7 +206,11 @@ fn reference_growth_factor(op: &Operation) -> u64 {
         Operation::PrefixLines { prefix } => 1 + prefix.len() as u64,
         Operation::SuffixLines { suffix } => 1 + suffix.len() as u64,
         Operation::JoinWith { separator } => (separator.len() as u64).max(1),
-        Operation::HtmlToMarkdown | Operation::ChangeCase { .. } | Operation::Defang { .. } => 3,
+        // Ordered-list numbering at the indent clamp reaches (10 + digits(items))/4
+        // per item — ~4.7x at the 2 GiB FFI input ceiling — so HtmlToMarkdown
+        // declares 5, not 3 (see `Operation::max_growth_factor` for the derivation).
+        Operation::HtmlToMarkdown => 5,
+        Operation::ChangeCase { .. } | Operation::Defang { .. } => 3,
         Operation::MaskIdentifiers { .. } => 2,
         _ => 1,
     }

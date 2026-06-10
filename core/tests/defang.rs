@@ -42,6 +42,16 @@ fn defang_www_url_has_no_scheme_to_mangle() {
 }
 
 #[test]
+fn defang_www_url_with_scheme_separator_brackets_only_what_follows_it() {
+    // A "www."-classified URL carrying a "://" later in the token exercises the
+    // no-scheme branch's separator arithmetic: bytes before the marker are copied
+    // verbatim (the leading dot stays live — documented "remaining dots" rule),
+    // the marker is bracketed, and exactly the bytes after the three-byte "://"
+    // are dot-bracketed. An offset error would drop or re-emit bytes around it.
+    assert_eq!(defang("www.://abcdefg.h", SQ), "www.[://]abcdefg[.]h");
+}
+
+#[test]
 fn defang_email() {
     assert_eq!(defang("user@example.com", SQ), "user[@]example[.]com");
 }
@@ -140,6 +150,57 @@ fn defang_already_defanged_is_a_noop() {
 }
 
 #[test]
+fn defang_half_defanged_token_is_left_alone() {
+    // The idempotence guard is load-bearing, not belt-and-suspenders: every token
+    // below carries a defang marker yet would STILL classify (the "www." URL
+    // heuristic or the email heuristic matches it), so only the guard keeps a
+    // second pass from double-bracketing. One case per marker, for both styles —
+    // each marker alone must trip the guard, not just marker combinations.
+    for token in [
+        "www.example[.]com",      // [.] alone
+        "user[@]corp.net",        // [@] alone
+        "www.example.com[://]x",  // [://] alone
+        "www.example.com[:]8080", // [:] alone
+        "www.example(.)com",      // (.) alone
+        "user(@)corp.net",        // (@) alone
+        "www.example.com(://)x",  // (://) alone
+        "www.example.com(:)8080", // (:) alone
+        "user(@)corp(.)net",      // several round markers
+    ] {
+        assert_eq!(
+            defang(token, SQ),
+            token,
+            "half-defanged {token:?} must be a no-op"
+        );
+    }
+}
+
+#[test]
+fn defang_url_with_parenthesized_path_is_still_defanged() {
+    // A bare '(' is not a defang marker: the guard requires a complete round marker
+    // ("(.)", "(@)", "(://)", "(:)"), so parentheses in a URL path must not make the
+    // token read as already-defanged. The trailing ')' is trimmed as surrounding
+    // punctuation and re-emitted verbatim.
+    assert_eq!(
+        defang("http://example.com/page_(1)", SQ),
+        "hxxp[://]example[.]com/page_(1)"
+    );
+}
+
+#[test]
+fn defang_url_with_square_bracketed_path_is_still_defanged() {
+    // The square-arm twin of the parenthesized-path case above: a bare '[' is not a
+    // defang marker either — the guard requires a complete square marker ("[.]",
+    // "[@]", "[://]", "[:]"), so brackets in a URL path must not make the token read
+    // as already-defanged. Each arm needs its own bracket flavor: a '('-bearing core
+    // never exercises the square arm's conjunction, and vice versa.
+    assert_eq!(
+        defang("http://example.com/page_[1]", SQ),
+        "hxxp[://]example[.]com/page_[1]"
+    );
+}
+
+#[test]
 fn defang_url_with_hxxp_in_path_is_left_alone() {
     // The idempotence guard keys on the `hxxp` marker, so a genuine URL whose path
     // already contains "hxxp" is intentionally NOT defanged (documented tradeoff —
@@ -167,6 +228,17 @@ fn defang_round_style() {
 fn defang_preserves_whitespace_exactly() {
     let s = "a\tb  c\r\nhttp://x.y\n";
     assert_eq!(defang(s, SQ), "a\tb  c\r\nhxxp[://]x[.]y\n");
+}
+
+#[test]
+fn defang_capacity_bound_is_exact_for_ipv4_worst_case() {
+    // The output buffer is pre-sized to `input.len() + 2 * #separators` so it never
+    // reallocates (no clipboard-derived bytes left in freed memory). An IPv4 hits
+    // that bound exactly: every separator byte gains two bracket bytes.
+    let input = "1.1.1.1";
+    let out = defang(input, SQ);
+    assert_eq!(out, "1[.]1[.]1[.]1");
+    assert_eq!(out.len(), input.len() + 2 * 3);
 }
 
 // ---------------------------------------------------------------------------
@@ -309,5 +381,26 @@ proptest! {
     fn refang_inverts_defang(input in safe_string(), s in style()) {
         let restored = refang(&defang(&input, s));
         prop_assert_eq!(restored, input);
+    }
+
+    /// Capacity-bound soundness: `defang` pre-sizes its output to `input.len() +
+    /// 2 * #('.'|'@'|':')` so the clipboard-derived buffer never reallocates
+    /// mid-build (a reallocation frees the old block unwiped). Every substitution
+    /// brackets one of those bytes for +2; if the implementation ever grows past
+    /// the bound, this property fails before the hygiene regresses silently.
+    #[test]
+    fn defang_output_fits_separator_bound(input in interesting_string(), s in style()) {
+        let separators = input
+            .bytes()
+            .filter(|b| matches!(b, b'.' | b'@' | b':'))
+            .count();
+        let out = defang(&input, s);
+        prop_assert!(
+            out.len() <= input.len() + 2 * separators,
+            "defang output {} bytes exceeds pre-sized bound {} (input {} bytes)",
+            out.len(),
+            input.len() + 2 * separators,
+            input.len()
+        );
     }
 }

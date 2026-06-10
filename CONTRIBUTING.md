@@ -25,43 +25,50 @@ cargo xtask ci
 This is the single source of truth and exactly what CI runs. In fail-fast order
 it runs:
 
-1. `cargo fmt --all --check`
-2. `cargo clippy --workspace --all-targets -- -D warnings`
-3. `cargo test --workspace`
-4. `cargo xtask check-unsafe-forbid` — core still declares `#![forbid(unsafe_code)]`
-5. `cargo xtask check-core-deps` — core's transitive dep tree is on a strict allowlist
-6. `cargo xtask check-no-network` — no network/OS-capable crate anywhere in the tree
-7. `cargo xtask check-no-content-logging` — no shipped line logs/persists clipboard content
-8. `cargo xtask check-pipeline-zeroization` — fused core scratch storage is wiped before release
-9. `cargo xtask check-agent-workflow` — the AI-native workflow docs exist with required headings
-10. `cargo xtask check-clipboard-safety` — default targets never touch the real clipboard
-11. `cargo xtask check-c-ffi-surface` — no unexpected handwritten C/C++/Objective-C surface
-12. `cargo xtask check-test-hygiene` — every ignored test has a reason; the count is ratcheted
-13. `cargo xtask check-docs` — docs build with `-D warnings` (no broken intra-doc links or invalid HTML)
-14. `cargo xtask check-abi` — the checked-in C header matches the FFI source
-15. `cargo xtask check-entitlements` — the macOS entitlements file is exactly minimal
-16. `cargo xtask check-release-posture` — official signing cannot broaden entitlements
-17. `cargo xtask check-shell` — `shellcheck` over the shell scripts
-18. `cargo xtask check-workflows` — `actionlint` + `zizmor` over `.github/workflows/`
-19. `cargo xtask check-unused-deps` — `cargo-machete`: no declared-but-unused dependency
-20. `cargo xtask check-supply-chain` — `cargo-deny`: advisories, licenses, bans, sources
+1. a lockfile-sync gate — `cargo metadata --locked` over the root **and** `fuzz/`
+   workspaces, so a stale `Cargo.lock` fails with one clear remediation message
+2. `cargo fmt --all --check`
+3. `cargo clippy --locked --workspace --all-targets -- -D warnings`
+4. `cargo test --locked --workspace`
+5. `cargo xtask check-unsafe-forbid` — core still declares `#![forbid(unsafe_code)]`
+6. `cargo xtask check-core-deps` — core's transitive dep tree is on a strict allowlist
+7. `cargo xtask check-no-network` — no network/OS-capable crate anywhere in the tree
+8. `cargo xtask check-no-content-logging` — no shipped line logs/persists clipboard content
+9. `cargo xtask check-pipeline-zeroization` — fused core scratch storage is wiped before release
+10. `cargo xtask check-agent-workflow` — the AI-native workflow docs exist with required headings
+11. `cargo xtask check-clipboard-safety` — default targets never touch the real clipboard
+12. `cargo xtask check-c-ffi-surface` — no unexpected handwritten C/C++/Objective-C surface
+13. `cargo xtask check-test-hygiene` — every ignored test has a reason; the count is ratcheted
+14. `cargo xtask check-docs` — docs build with `-D warnings` (no broken intra-doc links or invalid HTML)
+15. `cargo xtask check-abi` — the checked-in C header matches the FFI source
+16. `cargo xtask check-entitlements` — the macOS entitlements file is exactly minimal
+17. `cargo xtask check-release-posture` — official signing cannot broaden entitlements
+18. `cargo xtask check-shell` — `shellcheck` over the shell scripts
+19. `cargo xtask check-workflows` — `actionlint` + `zizmor` over `.github/workflows/`
+20. `cargo xtask check-unused-deps` — `cargo-machete`: no declared-but-unused dependency
+21. `cargo xtask check-supply-chain` — `cargo-deny`: advisories, licenses, bans, sources
 
 If any check fails, it prints a remediation-oriented message. **Fix the code so
 the check passes; do not weaken the check.** Each check can also be run on its
 own (e.g. `cargo xtask check-abi`) for a fast inner loop.
 
-> The first three steps shell out to `cargo`. Make sure the pinned toolchain
-> (`rust-toolchain.toml`, stable + `clippy` + `rustfmt`) is installed.
+> Steps 1–4 shell out to `cargo` (`cargo fmt` has no `--locked` flag; it resolves
+> nothing). `rust-toolchain.toml` pins the **stable channel** + `clippy` +
+> `rustfmt`, so any current stable works. The MSRV is **1.85** (`rust-version` in
+> `Cargo.toml`), checked by a dedicated CI job — keep new code MSRV-compatible.
+> MSRV bumps are minor releases.
 >
-> Steps 14–16 shell out to external linters. The cargo-installable ones
-> (`cargo-deny`, `zizmor`) auto-install a pinned version on first use; the system
-> tools (`shellcheck`, `actionlint`) print a one-line install command if missing.
-> CI pre-installs all four (pinned), so a green `cargo xtask ci` locally means a
-> green PR — there is no required check outside this one command. Optional fuzzing
-> uses the same pattern through `cargo xtask check-fuzz`, which installs nightly and
-> the pinned `cargo-fuzz` tool when a fresh agent is missing them. Releases add one
-> stronger gate: the manual Release Fuzz workflow must pass on the exact release
-> SHA before `.github/workflows/release.yml` will package the tag.
+> Steps 18–21 shell out to external linters. The cargo-installable ones
+> (`cargo-deny`, `zizmor`, `cargo-machete`) auto-install a pinned version on first
+> use; the system tools (`shellcheck`, `actionlint`) print a one-line install
+> command if missing. CI pre-installs all of them (pinned), so a green
+> `cargo xtask ci` locally means a green PR — there is no required check outside
+> this one command. Optional fuzzing uses the same pattern through
+> `cargo xtask check-fuzz`, which installs nightly and the pinned `cargo-fuzz`
+> tool when a fresh agent is missing them. Releases add one stronger gate: the
+> manual Release Fuzz workflow must pass on the exact release SHA — with a
+> sufficient per-target budget — before `.github/workflows/release.yml` will
+> package the tag (see [Fuzzing](#fuzzing-never-panics-invariant)).
 
 ### `make` shortcuts (optional)
 
@@ -90,24 +97,13 @@ the PR.
 
 ## Automated PR review (advisory)
 
-The tier-2 agent review (anti-slop on every code PR; security focus when the PR touches
-security-relevant surface) runs through a **subscription cloud reviewer**, not a pay-per-token
-CI action — see [the hygiene guardrail](docs/guardrails/code-and-test-hygiene.md) §
-"Tier-2 review". It is **advisory**: it posts findings but never blocks; the required signal
-stays `cargo xtask ci`, and a recurring finding should graduate into a deterministic `xtask`
-check.
-
-One-time setup (pick one; both bill to an existing subscription, not API credits):
-
-- **OpenAI Codex** (ChatGPT Plus/Pro): connect this repo in ChatGPT → Codex's GitHub
-  integration and enable code review. Codex reads [`AGENTS.md`](AGENTS.md) (which routes to
-  `docs/guardrails/`) as its instructions — so it reviews against this repo's standards.
-- **Claude Code cloud review** (where available on your plan): connect via the Claude GitHub
-  app and point it at the same guardrails.
-
-Follow each product's current setup docs for the exact steps; the repo side is already done
-(the rubric lives in `AGENTS.md` + the guardrails). For an in-repo, API-billed GitHub
-workflow instead, see the rationale + revert note in the hygiene guardrail.
+An automated agent review (anti-slop on every code PR; security focus when the PR
+touches security-relevant surface) may post findings against the repo's guardrails —
+see [the hygiene guardrail](docs/guardrails/code-and-test-hygiene.md) § "Tier-2
+review". It is **advisory**: it never blocks; the required signal stays
+`cargo xtask ci`, and a recurring finding should graduate into a deterministic
+`xtask` check. (Reviewer wiring is a maintainer concern, documented in the
+hygiene guardrail.)
 
 ## Closing review findings
 
@@ -131,8 +127,9 @@ document the proof gap and add the strongest repeatable substitute available.
 ## Fuzzing (never-panics invariant)
 
 The core feeds arbitrary, possibly adversarial bytes through hand-rolled
-parsers, so the strippers and the full pipeline are fuzzed to prove they never
-panic or hang. `fuzz/` is its own workspace (libFuzzer + the nightly-only
+parsers, so the strippers and the full pipeline are fuzzed to pin down that they
+never panic or hang — strong probabilistic evidence over billions of generated
+inputs, not a proof. `fuzz/` is its own workspace (libFuzzer + the nightly-only
 toolchain stay out of normal stable builds).
 
 ```sh
@@ -179,7 +176,10 @@ gh workflow run release-fuzz.yml --ref v1.2.3-rc.1 -f minutes_per_target=30
 ```
 
 The release workflow checks GitHub Actions for a successful Release Fuzz run whose
-`head_sha` exactly matches the tag commit. If the final `v1.2.3` tag points at a
+`head_sha` exactly matches the tag commit, **and** enforces a per-target budget
+floor read from the run's title: at least **10 minutes/target** for prerelease
+tags (any tag containing `-`, e.g. `v1.0.0-rc.1`) and at least
+**30 minutes/target** for final releases. If the final `v1.2.3` tag points at a
 different commit than the RC, release packaging fails until Release Fuzz is rerun
 on the new SHA. Crash artifacts and the generated fuzz corpus are uploaded as
 short-retention workflow artifacts.
@@ -302,9 +302,9 @@ It runs, in order: `swift format lint --strict` (driven by
 [`shells/macos/.swift-format`](shells/macos/.swift-format)); a `cargo build -p
 xpare-ffi --release` so the package can link the staticlib over the frozen C ABI;
 `swift test`; and a **Sources-only** line-coverage floor via `llvm-cov`
-(`SWIFT_COVERAGE_FLOOR_PCT`, currently 95% — matching the Rust product floor; baseline
-~95.8%, with the OS-facing pasteboard/hotkey layers tested headlessly and only the SwiftUI
-app executable left unmeasured). If
+(`SWIFT_COVERAGE_FLOOR_PCT` in `xtask/src/main.rs` — a hard ratchet matching the Rust
+product floor, with the OS-facing pasteboard/hotkey layers tested headlessly and only the
+SwiftUI app executable left unmeasured). If
 [`swiftlint`](https://github.com/realm/SwiftLint) is on `PATH` it also runs a
 style/complexity pass against [`shells/macos/.swiftlint.yml`](shells/macos/.swiftlint.yml)
 (non-`--strict`: warnings advise, only `error`-severity findings fail). CI installs a

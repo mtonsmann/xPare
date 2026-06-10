@@ -1,6 +1,12 @@
 # Exec Plan 0003 — macOS release plumbing
 
-Status: **active** · Started: 2026-06-05
+Status: **completed**. Started: 2026-06-05. Completed: 2026-06-09.
+
+> Completion note: all work-plan items landed; the flow was subsequently hardened
+> for 1.0 (fail-closed notarization, draft releases, arm64-only assets — see
+> [`docs/release-model.md`](../../release-model.md) for the current model). The
+> non-blocking follow-ups below moved to
+> [`docs/deferred-work.md`](../../deferred-work.md).
 
 ## Goal
 

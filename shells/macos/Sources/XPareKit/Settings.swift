@@ -24,13 +24,16 @@ public struct HotkeyCombo: Codable, Equatable, Sendable {
         self.modifiers = modifiers
     }
 
-    /// Default hotkey: ⌥⌘V. The numeric constants match Carbon's
-    /// `kVK_ANSI_V` (9), `cmdKey` (0x0100), and `optionKey` (0x0800); we hardcode
-    /// them here so this type stays Carbon-free, and `HotkeyManager` re-derives
-    /// the same values from the Carbon headers.
+    /// Default hotkey: ⌃⌥⌘V. The numeric constants match Carbon's `kVK_ANSI_V`
+    /// (9), `cmdKey` (0x0100), `optionKey` (0x0800), and `controlKey` (0x1000);
+    /// we hardcode them here so this type stays Carbon-free, and `HotkeyManager`
+    /// re-derives the same values from the Carbon headers. Control is included
+    /// so the default cannot shadow apps' common in-app ⌥⌘V bindings
+    /// ("Paste and Match Style" variants). Only the *default* carries Control:
+    /// a combo persisted by an older build keeps whatever the user had.
     public static let defaultCombo = HotkeyCombo(
         keyCode: 9,
-        modifiers: 0x0100 | 0x0800
+        modifiers: 0x0100 | 0x0800 | 0x1000
     )
 }
 

@@ -1,6 +1,10 @@
 # Exec Plan 0005 — Canonical pipeline ordering
 
-Status: **active** · Started: 2026-06-05
+Status: **completed**. Started: 2026-06-05. Completed: 2026-06-09.
+
+> Completion note: canonical-by-default ordering, `ordering: as_given`,
+> `CONFIG_VERSION` 2, and the shell's "Manual order" drag-to-reorder mode all
+> shipped; D3 was amended and D13 recorded in `DESIGN.md`.
 
 ## Goal
 

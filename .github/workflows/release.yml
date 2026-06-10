@@ -1,12 +1,15 @@
 # xPare release.
 #
 # Tag-triggered (v*). The `validate` job first requires a successful manual
-# Release Fuzz run on the exact tag SHA, then runs the full gate, builds the app
-# bundle, and uploads an explicitly UNSIGNED preview artifact — it needs no Apple
-# secrets, so it works on every tag and every fork. `publish-official` runs only
-# when the repo opts in (vars.XPARE_ENABLE_OFFICIAL_RELEASE == 'true') AND
-# the Apple Developer ID / notary secrets are present; it signs with the checked
-# App Sandbox entitlements, notarizes, and publishes the GitHub Release.
+# Release Fuzz run on the exact tag SHA (budget floor: prerelease >= 10m/target,
+# final >= 30m/target — see the gate step), then runs the full gate, builds the
+# app bundle, and uploads an explicitly UNSIGNED preview artifact — it needs no
+# Apple secrets, so it works on every tag and every fork. `publish-official`
+# runs whenever the repo variable XPARE_ENABLE_OFFICIAL_RELEASE == 'true'; it
+# does NOT silently skip on missing credentials — a validation step FAILS the
+# job if any Apple Developer ID / notary secret is absent. It signs with the
+# checked App Sandbox entitlements, notarizes, publishes the GitHub Release,
+# then attaches a build-provenance attestation and an SPDX SBOM to the assets.
 # Signing/notary credentials are NEVER required for pull-request CI (see
 # .github/workflows/ci.yml).
 name: Release
@@ -16,13 +19,24 @@ on:
     tags:
       - "v*"
 
+# One release run per ref at a time. Never cancel an in-flight release — an
+# interrupted sign/notarize/publish could leave a half-published release —
+# so queue instead of cancel-in-progress.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
 jobs:
   validate:
     name: validate + unsigned preview
-    runs-on: macos-latest
+    # Pinned runner image, NOT macos-latest: this workflow produces the shipped
+    # (signed) artifacts, so the Xcode/codesign/notarytool toolchain must not
+    # drift silently when GitHub repoints the -latest alias.
+    runs-on: macos-15
+    timeout-minutes: 120
     permissions:
       actions: read
       contents: read
@@ -33,6 +47,9 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+          # Full history: package-app.sh derives the bundle build number from
+          # `git rev-list --count HEAD`, which is always 1 on a depth-1 clone.
+          fetch-depth: 0
 
       - name: Install Rust (pinned stable + clippy + rustfmt)
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
@@ -42,6 +59,13 @@ jobs:
       - name: Verify release entitlements file
         run: cargo run -p xtask -- check-entitlements
 
+      # Fuzz budget policy: a successful Release Fuzz run on the exact tag SHA is
+      # required, AND its per-target budget must meet the floor for the release
+      # class — prerelease tags (any tag containing '-', e.g. v1.0.0-rc.1) need
+      # >= 10 minutes/target; final releases need >= 30 minutes/target. The
+      # budget is recovered from the run's display title
+      # ("Release fuzz (<ref>, <N>m/target)"), which release-fuzz.yml embeds via
+      # `run-name`, so an under-budget run can never satisfy the gate.
       - name: Require release fuzz for this SHA
         env:
           GH_TOKEN: ${{ github.token }}
@@ -52,34 +76,58 @@ jobs:
           set -euo pipefail
           runs_json="$(gh api \
             -H "Accept: application/vnd.github+json" \
-            "/repos/${REPOSITORY}/actions/workflows/release-fuzz.yml/runs?event=workflow_dispatch&status=success&head_sha=${RELEASE_SHA}&per_page=1")"
+            "/repos/${REPOSITORY}/actions/workflows/release-fuzz.yml/runs?event=workflow_dispatch&status=success&head_sha=${RELEASE_SHA}&per_page=50")"
           runs_file="${RUNNER_TEMP}/release-fuzz-runs.json"
           printf '%s' "${runs_json}" > "${runs_file}"
 
           if python3 - "${runs_file}" <<'PY'
           import json
           import os
+          import re
           import sys
 
           with open(sys.argv[1], encoding="utf-8") as fh:
               runs = json.load(fh).get("workflow_runs", [])
 
           release_sha = os.environ["RELEASE_SHA"]
+          ref_name = os.environ["RELEASE_REF_NAME"]
+          # Prerelease tags (v1.0.0-rc.1, ...) contain '-'; finals do not.
+          required_minutes = 10 if "-" in ref_name else 30
+
+          best = None
           for run in runs:
-              if run.get("head_sha") == release_sha and run.get("conclusion") == "success":
-                  print(f"release-fuzz: found successful run {run.get('html_url')}")
+              if run.get("head_sha") != release_sha or run.get("conclusion") != "success":
+                  continue
+              match = re.search(r"(\d+)m/target", run.get("display_title") or "")
+              if match is None:
+                  continue
+              minutes = int(match.group(1))
+              if best is None or minutes > best[0]:
+                  best = (minutes, run.get("html_url"))
+              if minutes >= required_minutes:
+                  print(
+                      f"release-fuzz: found successful {minutes}m/target run "
+                      f"(floor for {ref_name}: {required_minutes}m/target): {run.get('html_url')}"
+                  )
                   sys.exit(0)
 
-          print(
-              f"release-fuzz: no successful run found for {release_sha}",
-              file=sys.stderr,
-          )
+          if best is None:
+              print(
+                  f"release-fuzz: no successful run with a parseable budget found for {release_sha}",
+                  file=sys.stderr,
+              )
+          else:
+              print(
+                  f"release-fuzz: best successful run is {best[0]}m/target ({best[1]}), below "
+                  f"the {required_minutes}m/target floor for {ref_name}",
+                  file=sys.stderr,
+              )
           sys.exit(1)
           PY
           then
             echo "Release fuzz gate satisfied for ${RELEASE_SHA}."
           else
-            echo "::error::Run the Release Fuzz workflow successfully for this exact SHA before releasing."
+            echo "::error::Run the Release Fuzz workflow successfully for this exact SHA with enough per-target budget (prerelease >= 10m, final >= 30m) before releasing."
             echo "Use: gh workflow run release-fuzz.yml --ref ${RELEASE_REF_NAME} -f minutes_per_target=30"
             exit 1
           fi
@@ -88,18 +136,82 @@ jobs:
         run: |
           set -euo pipefail
           version="${VERSION#v}"
-          if ! [[ "${version}" =~ ^[0-9]+(\.[0-9]+){2}([.-][A-Za-z0-9]+)?$ ]]; then
-            echo "Release tags must look like vX.Y.Z or vX.Y.Z-suffix."
+          if ! [[ "${version}" =~ ^[0-9]+(\.[0-9]+){2}(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$ ]]; then
+            echo "Release tags must look like vX.Y.Z or vX.Y.Z-<prerelease> (dotted prerelease such as v1.0.0-rc.1 is allowed)."
             exit 1
           fi
           echo "RELEASE_VERSION=${version}" >> "${GITHUB_ENV}"
 
+      # A tag that disagrees with [workspace.package].version would ship an app
+      # whose Info.plist / --version contradict the release name. Fail closed
+      # before doing any expensive work.
+      - name: Assert tag matches workspace version
+        run: |
+          set -euo pipefail
+          workspace_version="$(cargo metadata --no-deps --format-version 1 | python3 -c '
+          import json, sys
+          packages = json.load(sys.stdin)["packages"]
+          print(next(p["version"] for p in packages if p["name"] == "xpare-core"))
+          ')"
+          if [ "${RELEASE_VERSION}" != "${workspace_version}" ]; then
+            echo "::error::Tag v${RELEASE_VERSION} does not match the workspace version ${workspace_version}."
+            echo "Bump [workspace.package].version in Cargo.toml to ${RELEASE_VERSION} (or retag at the right commit) before releasing."
+            exit 1
+          fi
+          echo "Tag v${RELEASE_VERSION} matches workspace version ${workspace_version}."
+
+      # External linters that `cargo xtask ci` shells out to (supply-chain,
+      # workflow, shell, unused-deps). Mirrors ci.yml: pinned, PREBUILT binaries
+      # so the gate below cannot pass vacuously by skipping a missing tool. Keep
+      # the versions in lockstep with CARGO_DENY_VERSION / ZIZMOR_VERSION /
+      # CARGO_MACHETE_VERSION in xtask/src/main.rs.
+      - name: Install lint tools (cargo-deny, zizmor, shellcheck, cargo-machete)
+        uses: taiki-e/install-action@59012be0884e296ca2da49b530610e72c49039ad # v2.81.6
+        with:
+          tool: cargo-deny@0.19.8,zizmor@1.25.2,shellcheck@0.11.0,cargo-machete@0.9.2
+
+      # actionlint from its pinned release tarball, sha256-verified — the
+      # darwin_arm64 asset (this job runs on the arm64 macos-15 image; ci.yml
+      # installs linux_amd64 with its own checksum). Bump the version AND the
+      # checksum together with ACTIONLINT_INSTALL_HINT in xtask/src/main.rs.
+      # Checksum from actionlint_1.7.12_checksums.txt.
+      - name: Install actionlint (pinned + checksum-verified)
+        run: |
+          ver=1.7.12
+          sha=aba9ced2dee8d27fecca3dc7feb1a7f9a52caefa1eb46f3271ea66b6e0e6953f
+          tmp="$(mktemp -d)"
+          curl --fail --silent --show-error --location \
+            --output "${tmp}/actionlint.tar.gz" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ver}/actionlint_${ver}_darwin_arm64.tar.gz"
+          echo "${sha}  ${tmp}/actionlint.tar.gz" | shasum -a 256 --check --strict -
+          tar -xzf "${tmp}/actionlint.tar.gz" -C "${tmp}" actionlint
+          sudo install -m 0755 "${tmp}/actionlint" /usr/local/bin/actionlint
+          actionlint --version
+
+      # Pinned + sha256-verified SwiftLint, mirroring ci.yml's macos-shell job:
+      # `portable_swiftlint.zip` is a universal macOS binary that needs no Xcode
+      # to run. Bump ver and sha together.
+      - name: Install SwiftLint (pinned + checksum-verified)
+        run: |
+          ver=0.63.3
+          sha=fb045e85e7cb3374f42a4840b6b85a0106302afa69035c0c6f29af4a44c810b6
+          tmp="$(mktemp -d)"
+          curl --fail --silent --show-error --location \
+            --output "${tmp}/swiftlint.zip" \
+            "https://github.com/realm/SwiftLint/releases/download/${ver}/portable_swiftlint.zip"
+          echo "${sha}  ${tmp}/swiftlint.zip" | shasum -a 256 --check --strict -
+          unzip -o -q "${tmp}/swiftlint.zip" -d "${tmp}/swiftlint"
+          sudo install -m 0755 "${tmp}/swiftlint/swiftlint" /usr/local/bin/swiftlint
+          swiftlint version
+
       # The same portable gate engineers run locally: fmt + clippy -D warnings +
       # tests + every structural invariant (unsafe-forbid, core-deps, no-network,
       # ABI drift, entitlements, and the ported content-logging / clipboard-safety
-      # checks).
+      # checks), plus the external linters installed above.
+      # --locked on the OUTER invocation too: a plain `cargo run` would re-sync the
+      # root Cargo.lock before xtask's lockfile gate runs, making it vacuous.
       - name: cargo xtask ci
-        run: cargo run -p xtask -- ci
+        run: cargo run --locked -p xtask -- ci
 
       - name: Build the Swift shell (release)
         run: |
@@ -128,9 +240,18 @@ jobs:
     name: sign, notarize, and publish
     needs: validate
     if: ${{ vars.XPARE_ENABLE_OFFICIAL_RELEASE == 'true' }}
-    runs-on: macos-latest
+    # Pinned runner image, NOT macos-latest: this job signs and notarizes the
+    # shipped artifacts, so the Xcode/codesign/notarytool toolchain must not
+    # drift silently when GitHub repoints the -latest alias.
+    runs-on: macos-15
+    timeout-minutes: 120
     permissions:
+      # Publishes the GitHub Release and uploads its assets.
       contents: write
+      # Build-provenance attestation: sign with the workflow's OIDC identity and
+      # store the attestation.
+      id-token: write
+      attestations: write
     env:
       VERSION: ${{ github.ref_name }}
       NOTARY_PROFILE: xpare-notary
@@ -139,6 +260,9 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+          # Full history: package-app.sh derives the bundle build number from
+          # `git rev-list --count HEAD`, which is always 1 on a depth-1 clone.
+          fetch-depth: 0
 
       - name: Install Rust (pinned stable + clippy + rustfmt)
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
@@ -152,8 +276,8 @@ jobs:
         run: |
           set -euo pipefail
           version="${VERSION#v}"
-          if ! [[ "${version}" =~ ^[0-9]+(\.[0-9]+){2}([.-][A-Za-z0-9]+)?$ ]]; then
-            echo "Release tags must look like vX.Y.Z or vX.Y.Z-suffix."
+          if ! [[ "${version}" =~ ^[0-9]+(\.[0-9]+){2}(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$ ]]; then
+            echo "Release tags must look like vX.Y.Z or vX.Y.Z-<prerelease> (dotted prerelease such as v1.0.0-rc.1 is allowed)."
             exit 1
           fi
           echo "RELEASE_VERSION=${version}" >> "${GITHUB_ENV}"
@@ -184,10 +308,14 @@ jobs:
         env:
           MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -euo pipefail
-          echo "${MACOS_CERTIFICATE_P12_BASE64}" | base64 -D > "${CERTIFICATE_PATH}"
+          # Throwaway keychain password: cryptographically random, never derived
+          # from predictable run metadata (run_id/run_attempt are public). It
+          # guards the imported signing key for this job only and dies with the
+          # keychain in the cleanup step.
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
+          echo "${MACOS_CERTIFICATE_P12_BASE64}" | base64 -d > "${CERTIFICATE_PATH}"
           security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
           security set-keychain-settings -lut 21600 "${KEYCHAIN_PATH}"
           security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
@@ -212,12 +340,41 @@ jobs:
             --team-id "${MACOS_NOTARY_TEAM_ID}" \
             --password "${MACOS_NOTARY_PASSWORD}"
 
-      - name: Sign, notarize, and publish
+      - name: Sign and notarize (make dist)
+        run: make dist VERSION="${RELEASE_VERSION}" CERT_NAME="${CERT_NAME}" NOTARY_PROFILE="${NOTARY_PROFILE}" SIGN_ENTITLEMENTS="${GITHUB_WORKSPACE}/shells/macos/xPare.entitlements"
+
+      # Signed build provenance for everything we ship: a verifier can check that
+      # an asset was built by THIS workflow at THIS SHA (`gh attestation verify`).
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-path: |
+            dist/release/*.zip
+            dist/release/SHA256SUMS*
+
+      # SPDX SBOM of the workspace (syft catalogs the Cargo lockfile), staged
+      # next to the zips and attached to the release after it exists below.
+      - name: Generate SBOM (SPDX JSON)
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: .
+          format: spdx-json
+          output-file: dist/release/xPare-v${{ env.RELEASE_VERSION }}-sbom.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: make github-release VERSION="${RELEASE_VERSION}"
+
+      - name: Attach SBOM to the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          make dist VERSION="${RELEASE_VERSION}" CERT_NAME="${CERT_NAME}" NOTARY_PROFILE="${NOTARY_PROFILE}" SIGN_ENTITLEMENTS="${GITHUB_WORKSPACE}/shells/macos/xPare.entitlements"
-          make github-release VERSION="${RELEASE_VERSION}"
+          set -euo pipefail
+          gh release upload "v${RELEASE_VERSION}" \
+            "dist/release/xPare-v${RELEASE_VERSION}-sbom.spdx.json" --clobber
 
       - name: Clean temporary signing material
         if: ${{ always() }}

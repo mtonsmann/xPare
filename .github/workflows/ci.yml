@@ -39,6 +39,7 @@ jobs:
   xtask-ci:
     name: xtask ci (fmt + clippy + test + invariants)
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -49,11 +50,14 @@ jobs:
       # rust-toolchain.toml's channel; we add clippy + rustfmt explicitly because
       # `cargo xtask ci` shells out to both.
       - name: Install Rust (pinned stable + clippy + rustfmt)
+        id: toolchain
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           components: clippy, rustfmt
 
-      # Cache the cargo registry, git db, and target dir keyed on the lockfile.
+      # Cache the cargo registry, git db, and target dir keyed on the toolchain
+      # (dtolnay/rust-toolchain's `cachekey` output) plus the lockfile, so a
+      # toolchain bump never restores stale incremental artifacts.
       - name: Cache cargo
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
@@ -62,9 +66,9 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-cargo-${{ steps.toolchain.outputs.cachekey }}-
 
       # External linters that `cargo xtask ci` shells out to (supply-chain, workflow,
       # shell). Installed here as pinned, PREBUILT binaries so CI stays fast (no
@@ -101,8 +105,40 @@ jobs:
       # check, then the external linters above (check-shell; check-workflows =
       # actionlint + zizmor; check-supply-chain = cargo-deny). A green run here means a
       # green PR — there is no required check outside this one command.
+      # --locked on the OUTER invocation too: a plain `cargo run` would re-sync the
+      # root Cargo.lock before xtask's lockfile gate runs, making it vacuous.
       - name: cargo xtask ci
-        run: cargo run -p xtask -- ci
+        run: cargo run --locked -p xtask -- ci
+
+  # ----------------------------------------------------------------------------
+  # MSRV: the workspace must keep compiling on the minimum supported Rust version
+  # declared as `rust-version` in Cargo.toml. `cargo check --locked` is enough —
+  # the full gate (tests, lints) runs on pinned stable above; this job only
+  # proves the declared floor has not silently risen. Keep the `toolchain:`
+  # value in lockstep with `rust-version`.
+  # ----------------------------------------------------------------------------
+  msrv:
+    name: msrv (cargo check on rust-version)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # This job proves the declared floor still COMPILES. Warning sets differ
+      # across compiler versions, so don't inherit the workflow-wide
+      # `-D warnings` — the pinned-stable gate above already denies warnings.
+      RUSTFLAGS: ""
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Install Rust 1.85 (MSRV)
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # MSRV — see Cargo.toml rust-version
+        with:
+          toolchain: "1.85"
+
+      - name: cargo check (MSRV)
+        run: cargo check --workspace --locked
 
   # ----------------------------------------------------------------------------
   # Best-effort macOS shell anti-slop tier: `cargo xtask check-swift` builds the FFI
@@ -116,6 +152,7 @@ jobs:
   macos-shell:
     name: macOS shell anti-slop (swift-format + test + coverage)
     runs-on: macos-latest
+    timeout-minutes: 60
     continue-on-error: true
     steps:
       - name: Checkout
@@ -124,8 +161,10 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust (pinned stable)
+        id: toolchain
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
+      # Keyed on toolchain + lockfile like the xtask-ci cache above.
       - name: Cache cargo
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
@@ -134,9 +173,9 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-cargo-${{ steps.toolchain.outputs.cachekey }}-
 
       # Pinned + sha256-verified SwiftLint (the style/complexity phase of check-swift),
       # installed like actionlint: a release asset from a pinned tag, checksum-checked.
@@ -172,6 +211,7 @@ jobs:
   fuzz-smoke:
     name: fuzz smoke (nightly, best-effort)
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     continue-on-error: true
     steps:
       - name: Checkout
@@ -206,6 +246,7 @@ jobs:
   miri:
     name: miri (nightly, best-effort)
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     continue-on-error: true
     steps:
       - name: Checkout
@@ -233,6 +274,7 @@ jobs:
   zizmor:
     name: zizmor (workflow security)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       # The zizmor action uploads its findings to GitHub code scanning (SARIF).

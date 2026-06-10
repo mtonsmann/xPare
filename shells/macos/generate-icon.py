@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate a SafetyStrip .iconset with no external image dependencies.
+"""Generate the xPare .iconset with no external image dependencies.
 
 Pure stdlib (struct/zlib/math) so it runs anywhere Python 3 is present — no Pillow.
 Writes the ten PNG sizes Apple's `iconutil` expects into the given iconset dir;
@@ -53,8 +53,8 @@ def write_png(path: Path, size: int) -> None:
 def pixel(size: int, x: float, y: float) -> bytes:
     scale = size / 1024.0
     center = size / 2.0
-    distance = math.hypot(x - center, y - center)
-    if distance > center - 10 * scale:
+    coverage = squircle_coverage(size, x, y)
+    if coverage <= 0.0:
         return bytes((0, 0, 0, 0))
 
     t = y / max(size - 1, 1)
@@ -70,8 +70,30 @@ def pixel(size: int, x: float, y: float) -> bytes:
     r, g, b = over((240, 248, 246), (r, g, b), stripe_alpha * 0.96)
     r, g, b = over((36, 185, 170), (r, g, b), accent_alpha * 0.9)
 
-    shade = 0.92 + 0.08 * (1.0 - distance / center)
-    return bytes((clamp(r * shade), clamp(g * shade), clamp(b * shade), 255))
+    distance = math.hypot(x - center, y - center)
+    shade = 0.92 + 0.08 * max(0.0, 1.0 - distance / center)
+    return bytes((clamp(r * shade), clamp(g * shade), clamp(b * shade), clamp(255 * coverage)))
+
+
+def squircle_coverage(size: int, x: float, y: float) -> float:
+    """Coverage (0..1) of the macOS Big Sur+ icon shape at a sample point.
+
+    Apple's icon grid: the shape leaves a ~10% transparent margin on every side
+    (the system renders no mask, so a full-bleed icon looks oversized next to
+    every other app), and the corners are rounded at ~22.37% of the shape's
+    width — the 824 px shape / ~185 px corner figure from Apple's 1024 px
+    template. A true superellipse corner differs imperceptibly at these sizes
+    and would cost the stdlib-only simplicity, so this is a rounded rect with a
+    ~1 px anti-aliased edge to keep the small sizes clean.
+    """
+    center = size / 2.0
+    margin = size * 0.10
+    half = center - margin
+    radius = 2.0 * half * 0.2237
+    dx = max(abs(x - center) - (half - radius), 0.0)
+    dy = max(abs(y - center) - (half - radius), 0.0)
+    outside = math.hypot(dx, dy) - radius
+    return smooth(-0.5, 0.5, outside)
 
 
 def smooth(edge0: float, edge1: float, value: float) -> float:

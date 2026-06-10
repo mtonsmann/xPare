@@ -237,7 +237,7 @@ fi
 
 # --- triage helpers ----------------------------------------------------------------
 # Scratch space for snapshots and tool logs; cleaned up on exit.
-triage_tmp=$(mktemp -d "${TMPDIR:-/tmp}/ss-fuzz-triage.XXXXXX")
+triage_tmp=$(mktemp -d "${TMPDIR:-/tmp}/xp-fuzz-triage.XXXXXX")
 trap 'rm -rf "$triage_tmp"' EXIT
 
 nightly_version=$(rustc +nightly --version 2>/dev/null || echo "unknown nightly toolchain")

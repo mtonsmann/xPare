@@ -1,5 +1,7 @@
+import AppKit
 import SwiftUI
 import XPareCore
+import XPareKit
 
 /// The Settings window (DESIGN.md D12, "Route A").
 ///
@@ -13,6 +15,26 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            Section("General") {
+                // Launch at login via SMAppService.mainApp — see
+                // `AppModel.setLaunchAtLogin` for the stable-location caveat.
+                Toggle(
+                    "Launch at login",
+                    isOn: Binding(
+                        get: { model.launchAtLogin },
+                        set: { model.setLaunchAtLogin($0) }
+                    ))
+                if let error = model.launchAtLoginError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
+
+            Section("Global hotkey") {
+                HotkeyRecorderRow(model: model)
+            }
+
             Section("Line operations with text") {
                 ForEach(AppModel.ParamOp.allCases) { kind in
                     ParamRow(model: model, kind: kind)
@@ -110,37 +132,120 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 440, height: 520)
+        .frame(width: 440, height: 560)
         .navigationTitle("xPare Settings")
     }
 }
 
-/// One enable-toggle + text-field row for a free-text parameterized op. The field is
-/// disabled until the op is enabled, so it's clear the value only applies when on.
-private struct ParamRow: View {
+/// Records a replacement global hotkey. While recording, a LOCAL key-event
+/// monitor (scoped to this app's own windows, so it needs no Accessibility or
+/// Input Monitoring grant — the global monitors the posture forbids) captures
+/// the next keyDown. Escape cancels; chords without at least one of ⌘/⌃/⌥ are
+/// refused (`HotkeyCombo.init(keyCode:modifierFlags:)`), since they would
+/// shadow normal typing. The monitor is removed the moment recording ends and
+/// when the view disappears, so no monitor outlives the interaction.
+private struct HotkeyRecorderRow: View {
     @ObservedObject var model: AppModel
-    let kind: AppModel.ParamOp
+    @State private var isRecording = false
+    @State private var keyMonitor: Any?
 
     var body: some View {
         HStack {
-            Toggle(
-                kind.label,
-                isOn: Binding(
-                    get: { model.paramEnabled(kind) },
-                    set: { model.setParam(kind, enabled: $0, value: model.paramValue(kind)) }
-                ))
+            Text("Strip clipboard now")
             Spacer(minLength: 8)
-            TextField(
-                "value",
-                text: Binding(
-                    get: { model.paramValue(kind) },
-                    set: { model.setParam(kind, enabled: model.paramEnabled(kind), value: $0) }
-                )
-            )
-            .textFieldStyle(.roundedBorder)
-            .frame(width: 150)
-            .disabled(!model.paramEnabled(kind))
+            Button(isRecording ? "Type shortcut…" : model.settings.hotkey.displayString) {
+                isRecording ? stopRecording() : startRecording()
+            }
         }
+        .onDisappear { stopRecording() }
+        if isRecording {
+            Text("Press a key with ⌘, ⌃, or ⌥. Esc cancels.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else if !model.hotkeyActive {
+            Text("This shortcut could not be registered — it may be in use by another app.")
+                .font(.caption)
+                .foregroundStyle(.red)
+        }
+    }
+
+    private func startRecording() {
+        isRecording = true
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            handleKeyDown(event)
+        }
+    }
+
+    /// Removing the monitor is unconditional teardown: safe to call twice.
+    private func stopRecording() {
+        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        keyMonitor = nil
+        isRecording = false
+    }
+
+    /// Always returns `nil` (the event is swallowed) so keystrokes made while
+    /// recording never reach the form underneath.
+    private func handleKeyDown(_ event: NSEvent) -> NSEvent? {
+        if event.keyCode == 53 {  // kVK_Escape — cancel, keep the current hotkey
+            stopRecording()
+            return nil
+        }
+        guard
+            let combo = HotkeyCombo(keyCode: event.keyCode, modifierFlags: event.modifierFlags)
+        else {
+            return nil  // no ⌘/⌃/⌥ held — keep recording until a valid chord or Esc
+        }
+        model.setHotkey(combo)
+        stopRecording()
+        return nil
+    }
+}
+
+/// One enable-toggle + text-field row for a free-text parameterized op.
+///
+/// The field is always editable so a value can be typed *before* enabling; the
+/// typed draft lives here and is committed to settings only while the op is on.
+/// Inline validation closes the empty-parameter gap: the toggle stays disabled
+/// while the value is empty (enabling, say, split-on-delimiter with no
+/// delimiter could only fail or do nothing at strip time), and clearing the
+/// field while enabled shows a warning instead of failing later.
+private struct ParamRow: View {
+    @ObservedObject var model: AppModel
+    let kind: AppModel.ParamOp
+    @State private var draft: String = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Toggle(
+                    kind.label,
+                    isOn: Binding(
+                        get: { model.paramEnabled(kind) },
+                        set: { model.setParam(kind, enabled: $0, value: draft) }
+                    )
+                )
+                .disabled(!model.paramEnabled(kind) && draft.isEmpty)
+                Spacer(minLength: 8)
+                TextField("value", text: $draft)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 150)
+                    .onChange(of: draft) {
+                        if model.paramEnabled(kind) {
+                            model.setParam(kind, enabled: true, value: draft)
+                        }
+                    }
+            }
+            if draft.isEmpty {
+                Text(
+                    model.paramEnabled(kind)
+                        ? "This operation needs a value."
+                        : "Enter a value to enable."
+                )
+                .font(.caption)
+                .foregroundStyle(model.paramEnabled(kind) ? Color.orange : Color.secondary)
+            }
+        }
+        .onAppear { draft = model.paramValue(kind) }
     }
 }
 

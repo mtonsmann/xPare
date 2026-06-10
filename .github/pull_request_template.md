@@ -33,7 +33,7 @@ invariant introduced, with where it is now enforced. -->
 <!-- ABI (version bump? header regenerated?), entitlements, network capability,
 zeroization, supported transforms. State "none" explicitly if nothing changed. -->
 
-- ABI: <none / bumped SS_ABI_VERSION, header regenerated, non-Swift shell confirmed>
+- ABI: <none / bumped XP_ABI_VERSION, header regenerated, non-Swift shell confirmed>
 - Privacy / security: <none / describe>
 
 ## Tests / properties / fuzzing added or updated

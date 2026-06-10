@@ -31,9 +31,9 @@ docs/        ARCHITECTURE/DESIGN/SECURITY, guardrails, exec plans
 
 ### `core/` — `xpare-core`
 
-The transformation engine. `String` in, `String` out, selected by a [`Config`].
-Fed arbitrary, possibly adversarial text, so it carries the load-bearing safety
-invariants.
+The transformation engine. `String` in, `String` out, selected by a `Config`
+(defined in `core/src/config.rs`). Fed arbitrary, possibly adversarial text, so
+it carries the load-bearing safety invariants.
 
 | File | Responsibility |
 |---|---|
@@ -48,7 +48,10 @@ invariants.
 | `core/src/ops/lines.rs` | The line model plus the line ops and best-effort `extract_emails`/`extract_urls`. |
 | `core/src/ops/case.rs` | `change_case`: upper / lower / title / sentence (full Unicode). |
 | `core/src/ops/indicators.rs` | Shared token and email/URL/IP heuristics used by extraction, IOC cleanup, and masking. |
+| `core/src/ops/defang.rs` | `defang`/`refang` — neutralize / re-activate network indicators (URLs, hostnames, IPv4/IPv6, emails) using the de-facto infosec bracket conventions. |
+| `core/src/ops/urls.rs` | `clean_urls` — strip known tracking/analytics query parameters from URL tokens (curated, baked-in denylist). |
 | `core/src/ops/mask.rs` | Token-level privacy masking for selected email, IPv4, and IPv6 identifiers. |
+| `core/src/ops/wipe.rs` | `pub(crate)` wipe-on-grow append helper: when an accumulator must grow, the superseded allocation is zeroized before the allocator reclaims it. |
 
 Public API: `transform`, `parse_config`, `capabilities`/`CAPABILITIES_JSON`,
 and the `Config`, `Operation`, `CaseKind`, `ConfigError`, `CONFIG_VERSION` types.
@@ -77,23 +80,37 @@ Subcommands: `capabilities`, `transform`.
 The portable enforcer of the invariants (no external cargo plugins), so the same
 checks run locally and in CI. Subcommands: `gen-header`, `check-abi`,
 `check-unsafe-forbid`, `check-core-deps`, `check-no-network`, `check-entitlements`,
-`check-no-content-logging`, `check-clipboard-safety`, `check-agent-workflow`,
+`check-no-content-logging`, `check-clipboard-safety`,
+`check-pipeline-zeroization` (fused core scratch storage is wiped before release),
+`check-agent-workflow`,
+`check-c-ffi-surface` (C/SwiftPM interop stays header-only and tiny),
+`check-release-posture` (official signing cannot broaden entitlements),
+`check-supply-chain` (cargo-deny: advisories, licenses, bans, sources),
 `check-unused-deps` (cargo-machete: no declared-but-unused dependency),
 `check-test-hygiene` (every ignored test has a reason; the count is ratcheted),
 `check-docs` (docs build with `-D warnings`: no broken intra-doc links or invalid doc
-HTML), `check-miri` (run the `core-ffi` boundary tests under Miri), `check-kani` (run
+HTML), `check-workflows` (actionlint + zizmor over `.github/workflows/`),
+`check-shell` (shellcheck over the shell scripts),
+`check-fuzz` (build the fuzz targets; `XP_FUZZ_SMOKE_SECONDS=N` smoke-runs them),
+`check-miri` (run the `core-ffi` boundary tests under Miri), `check-kani` (run
 the bounded resource-envelope proofs), `check-coverage` (line-coverage floor ratchet via
-cargo-llvm-cov, excluding the `xtask` harness) and `check-mutants` (mutation testing via
-cargo-mutants) — those last four nightly/heavy, best-effort, and outside the required gate
-— and `ci` (fmt + clippy + test + every structural check).
+cargo-llvm-cov, excluding the `xtask` harness), `check-mutants` (mutation testing via
+cargo-mutants; `XP_DIFF_BASE=<ref>` scopes to a diff) and `check-swift` (macOS shell
+lint + test + coverage floor) — fuzz/Miri/Kani/coverage/mutants/swift are
+nightly/heavy/platform-bound, best-effort, and outside the required gate —
+and `ci` (a lockfile-sync gate over the root and `fuzz/` workspaces, then fmt +
+clippy + test + every structural check; see
+[`CONTRIBUTING.md`](CONTRIBUTING.md#the-full-local-gate) for the exact order).
 See [the dependency guardrail](docs/guardrails/dependency-posture.md) and [the code &
 test hygiene guardrail](docs/guardrails/code-and-test-hygiene.md).
 
 ### `fuzz/` — `xpare-fuzz`
 
 Its **own** workspace (so libFuzzer and the nightly toolchain never leak into the
-stable build). cargo-fuzz targets prove the never-panics invariant on the
-hand-rolled parsers: `strip_html`, `strip_markdown`, `transform_pipeline`.
+stable build). cargo-fuzz targets pin down the never-panics invariant on the
+hand-rolled parsers and the full pipeline: `strip_html`, `strip_markdown`,
+`defang`, `clean_urls`, `mask_identifiers`, `transform_pipeline`,
+`html_to_markdown`, `parse_config`.
 
 ### `shells/` — native OS integration
 
@@ -121,13 +138,13 @@ in a shell.**
    │  • extracts the best text rep  │   rich → plain                               │
    │  • owns hotkey / tray / poller │                                              │
    └───────────────────────────────┼─────────────────────────────────────────────┘
-                                    │  ss_transform(input_bytes, config_json)   ← C ABI
+                                    │  xp_transform(input_bytes, config_json)   ← C ABI (v3)
    ┌───────────────────────────────┼─────────────────────────────────────────────┐
    │  CORE (no OS, no IO, no net)   │   #![forbid(unsafe_code)]                    │
    │  • lossy-UTF-8 decode          │   parses untrusted text                      │
    │  • run the ordered pipeline    │   pure, deterministic, never panics          │
    └───────────────────────────────┼─────────────────────────────────────────────┘
-                                    │  (ptr, len)  →  ss_buffer_free zeroizes
+                                    │  (ptr, len)  →  xp_buffer_free zeroizes
    ┌───────────────────────────────┼─────────────────────────────────────────────┐
    │  SHELL writes the result back to the pasteboard IN PLACE (no paste simulation)│
    └─────────────────────────────────────────────────────────────────────────────┘
@@ -135,10 +152,13 @@ in a shell.**
 
 Two things make this boundary meaningful:
 
-1. **The core is the untrusted-input parser, and it cannot be memory-unsafe.**
-   `#![forbid(unsafe_code)]` makes that true by construction; the only residual
-   risk for the hand-rolled parsers (panics, hangs) is pinned down by the fuzz +
-   property + corpus suites.
+1. **The core is the untrusted-input parser, and its first-party code has no
+   `unsafe`.** `#![forbid(unsafe_code)]` makes the compiler reject any `unsafe`
+   in the core itself; the few third-party parsing dependencies
+   (`pulldown-cmark`, `memchr`) are a frozen, audited, pure-data allowlist that
+   carry their own vetted internal `unsafe`. The residual risk for the
+   hand-rolled parsers (panics, hangs) is pinned down by the fuzz + property +
+   corpus suites.
 2. **The core cannot leak data.** It has no OS, filesystem, network, logging, or
    global mutable state — enforced by the dependency allowlist and the
    no-network banlist, not just promised.
@@ -155,12 +175,12 @@ which is small enough to read end to end.
    because that is the path that neutralizes `<script>`/`<style>` and tags.
    The one-shot `HtmlToMarkdown` command is the deliberate exception: it consumes
    the raw HTML representation directly so structure can be preserved as Markdown.
-3. The shell calls `ss_transform(input, config_json)`. `config_json` is a
+3. The shell calls `xp_transform(input, config_json)`. `config_json` is a
    versioned, ordered list of operations — feature selection is **data**, not API.
 4. The core lossy-decodes the bytes, runs the pipeline left-to-right, and returns
    an owned `(ptr, len)` buffer.
 5. The shell writes the transformed text back to the clipboard **in place**, then
-   frees the buffer with `ss_buffer_free`, which zeroizes it first.
+   frees the buffer with `xp_buffer_free`, which zeroizes it first.
 
 The canonical sanitization config is **`StripHtml` → `StripMarkdown`** (HTML first
 to neutralize active content, then Markdown to remove residual formatting),
@@ -183,7 +203,7 @@ therefore CI). Fix the code to satisfy the check; never weaken the check.
 | No log sink in the core | `#![deny(clippy::print_stdout, print_stderr)]` in core/core-ffi + workspace-wide `dbg_macro` deny + no logging deps | `core/src/lib.rs`, `[workspace.lints]` |
 | No clipboard content logged or persisted | `check-no-content-logging` (scans shipped Rust + Swift source for sink calls on clipboard-derived content) | `xtask` |
 | Default checks avoid the real clipboard | `check-clipboard-safety` (no default Make target depends on a real-clipboard smoke) | `xtask`, `Makefile` |
-| Pipeline intermediates and fused scratch storage wiped before release | `Zeroizing` buffers in the pipeline + `check-pipeline-zeroization` + `ss_buffer_free` zeroizes output | `core/src/pipeline.rs`, `xtask`, `core-ffi` |
+| Pipeline intermediates, fused scratch, and growable op accumulators wiped before release | `Zeroizing` buffers in the pipeline + `check-pipeline-zeroization` (a regression tripwire for the fused-scratch and wipe-on-grow accumulator patterns, not a whole-program proof) + `xp_buffer_free` zeroizes output | `core/src/pipeline.rs`, `core/src/ops/wipe.rs`, `xtask`, `core-ffi` |
 | Deterministic output | `transform(x,c) == transform(x,c)` property test | `core` tests |
 | Optimized pipeline == reference semantics | differential property test: production `transform` equals a one-op-at-a-time reference interpreter (so every fused fast path stays byte-for-byte equal to sequential application, and canonical ordering equals an explicitly sorted `as_given` run) | `core/tests/reference_transform.rs` |
 | AI-native workflow docs present & structured | `check-agent-workflow` (the workflow doc, brief/PR templates, and per-class task prompts exist with required headings) | `xtask`, `docs/agent-workflow.md` |

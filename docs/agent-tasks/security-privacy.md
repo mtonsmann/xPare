@@ -22,7 +22,7 @@ logging, network, telemetry, or in-memory lifetime / zeroization.
 - **No clipboard content logged or persisted.** Log fixed operational states only;
   persist user *settings*, never clipboard-derived text.
 - **In-memory only.** Pipeline intermediates stay in `Zeroizing`; fused scratch is
-  wiped before release/growth; `ss_buffer_free` zeroizes the output. Do not weaken
+  wiped before release/growth; `xp_buffer_free` zeroizes the output. Do not weaken
   any of these.
 - **Minimal entitlements.** The macOS entitlements file is exactly
   `com.apple.security.app-sandbox = true`. No network/device/personal-info/automation/

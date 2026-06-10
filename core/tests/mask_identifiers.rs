@@ -116,6 +116,17 @@ fn already_masked_placeholders_are_unchanged() {
     assert_eq!(mask_all(input), input);
 }
 
+#[test]
+fn shortest_growing_cores_mask_correctly() {
+    // The output buffer is pre-sized to `input.len() + 2*#'@' + #':'` so the
+    // clipboard-derived accumulator never reallocates. These are the shortest
+    // classifiable cores — the worst growth cases that bound rests on: email
+    // `a@b.c` (5 bytes, one '@') -> `[email]` (7 bytes), and IPv6 `a::b` (4
+    // bytes, two ':') -> `[ipv6]` (6 bytes).
+    assert_eq!(mask_identifiers("a@b.c", true, false, false), "[email]");
+    assert_eq!(mask_identifiers("a::b", false, false, true), "[ipv6]");
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(512))]
 
@@ -131,5 +142,47 @@ proptest! {
         let once = mask_identifiers(&input, emails, ipv4, ipv6);
         let twice = mask_identifiers(&once, emails, ipv4, ipv6);
         prop_assert_eq!(once, twice);
+    }
+
+    /// Capacity-bound soundness: `mask_identifiers` pre-sizes its output to
+    /// `input.len() + 2*#'@' + #':'` so the clipboard-derived buffer never
+    /// reallocates mid-build (a reallocation frees the old block unwiped). Each
+    /// growing placeholder is paid for by the `@`/`:` bytes of the core it
+    /// replaces; if masking ever outgrows the bound, this fails before the
+    /// hygiene regresses silently.
+    #[test]
+    fn mask_output_fits_byte_count_bound(input in ".*", emails in any::<bool>(), ipv4 in any::<bool>(), ipv6 in any::<bool>()) {
+        let at_signs = input.bytes().filter(|&b| b == b'@').count();
+        let colons = input.bytes().filter(|&b| b == b':').count();
+        let out = mask_identifiers(&input, emails, ipv4, ipv6);
+        prop_assert!(
+            out.len() <= input.len() + 2 * at_signs + colons,
+            "mask output {} bytes exceeds pre-sized bound {} (input {} bytes)",
+            out.len(),
+            input.len() + 2 * at_signs + colons,
+            input.len()
+        );
+    }
+}
+
+#[test]
+fn mask_capacity_pre_pass_counts_only_its_markers() {
+    // The byte-count bound above pins output LENGTH, which cannot see a corrupted
+    // counting pre-pass: miscounting `@`/`:` only changes the `with_capacity`
+    // request (an inflated count over-allocates; an undersized one forces the
+    // reallocation the zeroization posture exists to prevent). Capacity is the
+    // only observable, so pin it directly. `String::with_capacity` may legally
+    // round up, but never to `len + 2 * non_marker_bytes` scale — the bound below
+    // stays comfortably between the exact request and any miscount.
+    for input in ["user@example.com 2001:db8::1", "a@b"] {
+        let at_signs = input.bytes().filter(|&b| b == b'@').count();
+        let colons = input.bytes().filter(|&b| b == b':').count();
+        let bound = input.len() + 2 * at_signs + colons;
+        let out = mask_all(input);
+        assert!(
+            out.capacity() <= bound,
+            "mask of {input:?} allocated {} bytes; the documented pre-size bound is {bound}",
+            out.capacity()
+        );
     }
 }

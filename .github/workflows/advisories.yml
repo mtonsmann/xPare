@@ -1,0 +1,45 @@
+# Scheduled RustSec advisory scan.
+#
+# `cargo deny check advisories` already runs inside `cargo xtask ci` on every
+# PR, but advisories are published against EXISTING lockfiles — a quiet repo
+# with no commits would never re-scan. This weekly schedule re-checks both
+# lockfiles against the live advisory DB: the main workspace AND the separate
+# `fuzz/` workspace, whose Cargo.lock is otherwise never scanned (it is split
+# out so libFuzzer/nightly never leak into the stable build — see
+# docs/guardrails/dependency-posture.md).
+name: Advisories
+
+on:
+  schedule:
+    # Weekly, Monday 06:37 UTC (off the :00 spike so the run isn't queue-delayed).
+    - cron: "37 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  advisories:
+    name: cargo-deny advisories (workspace + fuzz)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      # Pinned, prebuilt binary — keep the version in lockstep with
+      # CARGO_DENY_VERSION in xtask/src/main.rs and the ci.yml install step.
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@59012be0884e296ca2da49b530610e72c49039ad # v2.81.6
+        with:
+          tool: cargo-deny@0.19.8
+
+      - name: Check advisories (workspace)
+        run: cargo deny check advisories
+
+      # The fuzz workspace has no deny.toml of its own; reuse the root policy so
+      # any scoped, justified advisory ignores stay consistent across both trees.
+      - name: Check advisories (fuzz workspace)
+        run: cargo deny --manifest-path fuzz/Cargo.toml --config deny.toml check advisories

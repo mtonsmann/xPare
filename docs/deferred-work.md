@@ -48,8 +48,9 @@ Nothing here is committed scope; it's a memory aid for the next maintainer.
   Z→A / ±ignore-case) as an inline `Picker` so the active one gets the system ✓ (the
   native Finder "Sort By" idiom). Moved out of the Settings window so each control has
   one home.
-- ~~**Drag-to-reorder pipeline.**~~ Delivered by exec-plan 0005 (canonical pipeline
-  ordering): the pipeline runs in a correct/efficient canonical order by default, and
+- ~~**Drag-to-reorder pipeline.**~~ Delivered by
+  [`0005-canonical-pipeline-ordering.md`](exec-plans/completed/0005-canonical-pipeline-ordering.md):
+  the pipeline runs in a correct/efficient canonical order by default, and
   the Settings window's "Manual order" mode provides drag-to-reorder for exact control.
 - ~~**Measured throughput for `defang` / `clean_urls`.**~~ Done — the throughput
   harness (`make perf`) now measures the new ops alongside the existing pipeline.
@@ -83,8 +84,8 @@ Nothing here is committed scope; it's a memory aid for the next maintainer.
   `cargo xtask check-swift` (`make swift`): a **best-effort, macOS-only** tier that fronts
   `swift format lint --strict` (config in `shells/macos/.swift-format`), a `cargo build -p
   xpare-ffi --release` + `swift test`, and a Sources-only line-coverage floor via
-  `llvm-cov` (`SWIFT_COVERAGE_FLOOR_PCT`, 95% — matching the Rust product floor; measured
-  baseline ~96.0%). It runs in the `continue-on-error` `macos-shell` CI job (replacing the
+  `llvm-cov` (`SWIFT_COVERAGE_FLOOR_PCT`; the floor and measured baseline are documented
+  in `shells/macos/README.md`). It runs in the `continue-on-error` `macos-shell` CI job (replacing the
   old `swift build` smoke), so the shell's tests now run in CI rather than only locally, and
   skips cleanly where the Swift toolchain is absent. The Swift sources were normalized once
   with `swift format` so the strict lint passes; the coverage floor is a ratchet (raise,
@@ -104,3 +105,93 @@ Nothing here is committed scope; it's a memory aid for the next maintainer.
   *security* posture was already enforced (`check-no-content-logging` /
   `check-clipboard-safety` scan `.swift`; `check-c-ffi-surface`; entitlements).
   (0013 → cross-language follow-up)
+
+## From exec-plan 0011 — config resource envelope
+
+- **Budgeted / fallible `transform`.** A
+  `transform(input, config) -> Result<_, _>` with an output budget would be the
+  strongest arbitrary-config defense, but it is a larger core/FFI contract change
+  (and, post-1.0, a major-version ABI event). The accepted-config envelope blocks
+  the amplification class for product-shaped configs; a fallible transform remains
+  future hardening if arbitrary untrusted configs become in-scope. (0011 → D-2)
+- **Shell mirror of the envelope limits.** Settings now validates empty op
+  parameters inline; mirroring the core's envelope limits (param byte length,
+  no-newline rule) as immediate UI feedback remains optional polish — the core
+  stays authoritative either way. (0011 → D-4)
+
+## From exec-plan 0003 — macOS release plumbing
+
+Distribution-channel follow-ups, deliberately out of 1.0 scope (releases at 1.0 are
+a notarized arm64-only `.app` zip on GitHub Releases — see
+[`release-model.md`](release-model.md)):
+
+- **DMG packaging.** Ship a `.dmg` alongside (or instead of) the zip. The zip is
+  sufficient for Gatekeeper-stapled distribution; a DMG adds drag-to-Applications
+  ergonomics and background art but also `create-dmg`-style tooling and its own
+  signing/notarization step. (0003 → channels beyond zip)
+- **x86_64 / universal binary.** 1.0 ships arm64-only. Add an x86_64 slice (or a
+  `lipo` universal binary) only on demonstrated demand — it doubles build/notarize
+  time and the Intel install base for a new utility is shrinking. Asset names
+  already encode the architecture so this is additive. (0003 → follow-up)
+- **Homebrew: personal tap, then `homebrew/cask` submission.** Start with a
+  personal tap (`brew tap mtonsmann/xpare`) once notarized releases exist; casks
+  require a notarized app, and unsigned casks are being removed from
+  `homebrew/cask` by September 2026. A `homebrew/cask` self-submission also has a
+  notability bar (~225 GitHub stars at time of writing), so the personal tap is the
+  realistic first step. (0003 → follow-up)
+- **Verify Gatekeeper acceptance on a clean macOS machine** after the first real
+  notarized release — the signing path is fail-closed and mechanically checked,
+  but it has never run end-to-end with real Developer ID credentials.
+  (0003 → follow-up)
+- **Mac App Store distribution.** A different signing/review/entitlement world
+  (and the sandbox story would need re-review under App Store rules). Revisit only
+  if GitHub-Release distribution proves insufficient. (0003 → channels)
+
+## From the 1.0 release-prep review (2026-06)
+
+Items consciously deferred while driving to 1.0.0:
+
+- **Update-channel revisit.** xPare has **no auto-update by design** — Sparkle 2
+  (the standard macOS updater) would add a network call and an appcast fetch,
+  which the no-network posture rejects; updates are manual via GitHub Releases
+  (see [`release-model.md`](release-model.md) → "Updates"). Revisit only with a
+  design that preserves no-network (e.g. user-initiated check only), and treat it
+  as a posture change.
+- **Reproducible builds.** A bit-for-bit reproducible bundle would strengthen the
+  provenance story beyond the build attestation. Needs pinned toolchains, stable
+  zip timestamps, and codesigning determinism analysis — a project of its own.
+- **crates.io publication of `xpare-core`.** The core is `publish = false` today;
+  publication is deferred until the public-API surface is worth freezing for
+  external consumers (semver then applies to the Rust API too, not just the C
+  ABI/config/CLI surface).
+- **README screenshot / demo GIF assets.** The README ships textual; record a
+  short menu-bar demo and a Settings screenshot once the 1.0 UI is final, so the
+  assets don't churn.
+- **`cargo-auditable`.** Embed the dependency list in released binaries so
+  `cargo audit bin` can scan shipped artifacts. Cheap to add to the release build;
+  do it together with the next release-plumbing pass.
+- **OpenSSF Best Practices badge application.** Scorecard already runs in CI; the
+  Best Practices (formerly CII) badge is a questionnaire-driven complement worth
+  filing once 1.0 is out and the docs stabilize.
+- **Oversized-rich-clipboard plain-text fallback.** When rich clipboard content
+  exceeds the size ceiling, xPare refuses and leaves it untouched rather than
+  falling back to the (smaller) plain-text representation. The refusal is
+  **deliberate**: silently transforming a different representation than the user
+  sees invites surprising data loss, and reading an alternate representation of
+  content we refused to read widens the touched surface. Revisit only with a
+  privacy argument, not a convenience one.
+- **End-to-end test for hotkey registration *failure*.** The success path, the
+  state/callback funnel, and the handler-install result are tested, but driving
+  `RegisterEventHotKey`/`InstallEventHandler` failure headlessly would require
+  injecting a fake `HotkeyManager` factory into `StripController`, widening its
+  API. Revisit if the registration code grows. (release-prep shell pass)
+- **Automated tests for launch-at-login and the recorder/launch-at-login UI.**
+  These live in the `XPareApp` executable target (no test target), and
+  `SMAppService` talks to the real OS login-items service; the testable
+  conversion logic (NSEvent flags → Carbon mask, display strings) is covered in
+  `XPareKit`. (release-prep shell pass)
+- **Nightly fuzz pass over the zeroization-hardened parsers.** The wipe-on-grow
+  rework touched `html_to_markdown`'s hand-rolled parser without an accompanying
+  nightly fuzz smoke (property suites are green). The ≥ 10 min/target Release Fuzz
+  run required for the `v1.0.0-rc.1` tag covers this; no separate action needed
+  unless that gate is skipped. (release-prep core pass)

@@ -274,6 +274,23 @@ fn case_lower_unicode_expanding_fallback() {
     );
 }
 
+#[test]
+fn case_lower_expanding_input_grows_past_initial_capacity() {
+    // 'İ' lowercases 2 -> 3 bytes, so the output must outgrow the input-sized
+    // buffer; appends go through the wipe-on-grow helper (`ops::wipe`), and this
+    // pins that already-written bytes survive the relocation.
+    let input = "İ".repeat(512);
+    assert_eq!(
+        run(
+            Operation::ChangeCase {
+                case: CaseKind::Lower
+            },
+            &input
+        ),
+        "i\u{307}".repeat(512)
+    );
+}
+
 // ---------------------------------------------------------------------------
 // change_case: Title
 // ---------------------------------------------------------------------------
