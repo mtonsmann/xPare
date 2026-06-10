@@ -5,7 +5,7 @@
 //! representative fixtures and a proptest over arbitrary `Config` values.
 
 use proptest::prelude::*;
-use safetystrip_core::{
+use xpare_core::{
     parse_config, BracketStyle, CaseKind, Config, ConfigError, Operation, Ordering, CONFIG_VERSION,
     MAX_CONFIG_OPERATIONS, MAX_CONFIG_TEXT_PARAM_BYTES, MAX_PIPELINE_GROWTH_FACTOR,
 };

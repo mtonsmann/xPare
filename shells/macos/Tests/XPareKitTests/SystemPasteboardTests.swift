@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 import Testing
 
-@testable import SafetyStripKit
+@testable import XPareKit
 
 /// Exercises the *real* `SystemPasteboard` against an app-private
 /// `NSPasteboard(name:)` — a uniquely named pasteboard that works headlessly (no

@@ -1,5 +1,5 @@
 import Foundation
-@testable import SafetyStripCore
+@testable import XPareCore
 
 /// A `Transforming` stub for tests: records the thread it ran on and can block for a
 /// fixed delay, so tests can prove the transform runs **off the main thread** and can

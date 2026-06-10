@@ -7,8 +7,8 @@
 //! `String`: the strippers never panic and are deterministic.
 
 use proptest::prelude::*;
-use safetystrip_core::ops::html::strip_html;
-use safetystrip_core::ops::markdown::strip_markdown;
+use xpare_core::ops::html::strip_html;
+use xpare_core::ops::markdown::strip_markdown;
 
 mod html_regression {
     use super::*;

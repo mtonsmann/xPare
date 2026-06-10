@@ -1,6 +1,6 @@
 import Testing
 import Foundation
-@testable import SafetyStripCore
+@testable import XPareCore
 
 /// Exercises the real linked Rust core through the C ABI. Passing these proves
 /// the staticlib link, the `(ptr,len)` buffer protocol, and `ss_buffer_free`
@@ -10,8 +10,8 @@ import Foundation
     private let transformer = Transformer()
 
     @Test func abiVersionMatchesHeader() {
-        // The frozen header pins SS_ABI_VERSION == 2 (v2 added the input-size ceiling:
-        // SS_MAX_INPUT_BYTES + the ErrInputTooLarge status).
+        // The frozen header pins XP_ABI_VERSION == 2 (v2 added the input-size ceiling:
+        // XP_MAX_INPUT_BYTES + the ErrInputTooLarge status).
         #expect(transformer.abiVersion() == 2)
         #expect(Transformer.coreMaxInputBytes > 0)
     }

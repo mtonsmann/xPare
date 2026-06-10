@@ -1,4 +1,4 @@
-# cargo-deny policy — the supply-chain gate for SafetyStrip.
+# cargo-deny policy — the supply-chain gate for xPare.
 #
 # Run by `cargo xtask check-supply-chain` (and inside `cargo xtask ci`). This is the
 # known-vulnerability + license + source layer that complements the structural
@@ -64,7 +64,7 @@ exceptions = [
 # A second major version of a crate is worth a look (bloat / divergent behavior) but
 # is not fatal on its own, so it is a warning. A wildcard ("*") version requirement on
 # a crates.io dependency is never acceptable in a shipped tool and is denied — but the
-# workspace's OWN crates depend on each other by `path` (safetystrip-ffi/-cli -> core),
+# workspace's OWN crates depend on each other by `path` (xpare-ffi/-cli -> core),
 # which carries no version and so reads as a wildcard; allow-wildcard-paths exempts
 # those intra-workspace path deps only, not registry crates. The strict core-deps
 # allowlist (check-core-deps) remains the authority on what the CORE may pull in.

@@ -1,8 +1,8 @@
 import Testing
 import Foundation
 import AppKit
-@testable import SafetyStripKit
-@testable import SafetyStripCore
+@testable import XPareKit
+@testable import XPareCore
 
 /// Controller behavior, end-to-end through the real linked core. `@MainActor`
 /// (controller is main-actor) and `.serialized` because one test pumps the run
@@ -93,7 +93,7 @@ struct StripControllerTests {
         let (defaults, suite) = try isolatedDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
 
-        let operationLists: [[SafetyStripCore.Operation]] = [
+        let operationLists: [[XPareCore.Operation]] = [
             [],
             [.stripMarkdown],
             [.stripHtml],
@@ -229,7 +229,7 @@ struct StripControllerTests {
     /// touch NSPasteboard.general, but verifies raw rich data is refused before
     /// decode/AppKit materialization or plain fallback.
     @Test func systemPasteboardRejectsOversizedHtmlRepresentationBeforeFallback() throws {
-        let name = NSPasteboard.Name("SafetyStripTests.\(UUID().uuidString)")
+        let name = NSPasteboard.Name("xPareTests.\(UUID().uuidString)")
         let rawPasteboard = NSPasteboard(name: name)
         rawPasteboard.clearContents()
         defer { rawPasteboard.clearContents() }
@@ -248,7 +248,7 @@ struct StripControllerTests {
     }
 
     /// The default ceiling is sane: positive, comfortably above a real clipboard,
-    /// and never above the core's hard backstop (`SS_MAX_INPUT_BYTES`).
+    /// and never above the core's hard backstop (`XP_MAX_INPUT_BYTES`).
     @Test func defaultCeilingIsSaneAndClampedToCoreBackstop() {
         let ceiling = StripController.defaultMaxInputBytes()
         #expect(ceiling > 1_000_000, "ceiling should comfortably fit real clipboards")
@@ -403,7 +403,7 @@ struct StripControllerTests {
             "stale runOnce output must not overwrite newer clipboard data")
     }
 
-    /// A SafetyStrip self-write in continuous mode is recognized by generation
+    /// A xPare self-write in continuous mode is recognized by generation
     /// and not reprocessed when the monitor reports that same change.
     @Test func continuousSelfWriteGenerationIsSuppressed() async throws {
         let (defaults, suite) = try isolatedDefaults()
@@ -436,7 +436,7 @@ struct StripControllerTests {
         #expect(pb.writes == ["clean"])
     }
 
-    /// The monitor callback path suppresses SafetyStrip's own write before it
+    /// The monitor callback path suppresses xPare's own write before it
     /// reads or transforms that same generation again.
     @Test func continuousMonitorSuppressesSelfWriteBeforeRead() async throws {
         let (defaults, suite) = try isolatedDefaults()

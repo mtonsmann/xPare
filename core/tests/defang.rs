@@ -1,13 +1,13 @@
 //! Golden + property tests for the `defang` / `refang` indicator operations.
 //!
-//! These call the op functions directly (`safetystrip_core::ops::defang::{defang,
+//! These call the op functions directly (`xpare_core::ops::defang::{defang,
 //! refang, BracketStyle}`) — the house style mirrors `golden.rs` (exact-output table
 //! tests pinning the documented behavior) and `determinism.rs` (proptest strategies
 //! biased toward the interesting bytes, asserting panic-freedom, determinism, and the
 //! op-specific algebraic laws: idempotence of `defang` and the `refang ∘ defang`
 //! round-trip).
 
-use safetystrip_core::ops::defang::{defang, refang, BracketStyle};
+use xpare_core::ops::defang::{defang, refang, BracketStyle};
 
 use proptest::prelude::*;
 

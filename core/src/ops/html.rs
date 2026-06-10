@@ -165,7 +165,7 @@ pub fn strip_html(input: &str) -> String {
 /// Decode the same curated HTML entity set used by [`strip_html`] without treating
 /// tags or structural newlines specially.
 ///
-/// This is shared by text-preserving converters that still need SafetyStrip's
+/// This is shared by text-preserving converters that still need xPare's
 /// bounded, panic-free entity behavior. Unknown or malformed entities are emitted
 /// literally, matching the stripper contract.
 pub(crate) fn decode_entities(input: &str) -> String {

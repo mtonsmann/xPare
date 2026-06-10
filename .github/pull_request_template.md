@@ -1,5 +1,5 @@
 <!--
-This PR template enforces SafetyStrip's evidence-first workflow
+This PR template enforces xPare's evidence-first workflow
 (docs/agent-workflow.md). The diff is a proposal; the filled sections below are the
 evidence a reviewer trusts. Docs-only changes may skip runtime checks, but a skipped
 check must be explained in "Proof gaps / skipped checks".

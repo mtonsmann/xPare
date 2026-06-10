@@ -7,7 +7,7 @@ serialization, the capabilities/version query, or the generated header.
 
 - [`docs/agent-workflow.md`](../agent-workflow.md).
 - [`docs/guardrails/ffi-boundary-and-abi-stability.md`](../guardrails/ffi-boundary-and-abi-stability.md).
-- `core-ffi/src/lib.rs`, `core-ffi/cbindgen.toml`, `core-ffi/include/safetystrip.h`.
+- `core-ffi/src/lib.rs`, `core-ffi/cbindgen.toml`, `core-ffi/include/xpare.h`.
 - `core-ffi/tests/abi_roundtrip.rs` (the boundary-contract tests).
 - `ARCHITECTURE.md` (the boundary contract), `DESIGN.md` D2/D4/D7.
 
@@ -38,13 +38,13 @@ serialization, the capabilities/version query, or the generated header.
 
 - Extend `core-ffi/tests/abi_roundtrip.rs`: status code, out-param clearing, and the
   ownership/free protocol for any new path. Compare output against
-  `safetystrip_core::transform` rather than hardcoding brittle strings.
+  `xpare_core::transform` rather than hardcoding brittle strings.
 - If the ABI version changed, assert `ss_abi_version()` and the header `#define` agree.
 
 ## Required evidence
 
 - `cargo xtask check-abi`, `cargo xtask check-c-ffi-surface`,
-  `cargo test -p safetystrip-ffi`, and `cargo xtask ci`.
+  `cargo test -p xpare-ffi`, and `cargo xtask ci`.
 - `cargo run -p xtask -- check-miri` — runs the `core-ffi` boundary tests under
   Miri's UB detector (pointer/provenance/aliasing/buffer-ownership). Required
   evidence for any change to the `unsafe` shim.

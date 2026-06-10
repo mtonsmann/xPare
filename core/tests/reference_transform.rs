@@ -1,6 +1,6 @@
 //! Cedar-style executable reference semantics for the transform pipeline.
 //!
-//! SafetyStrip is not an authorization-policy engine, so it does not use Cedar. It
+//! xPare is not an authorization-policy engine, so it does not use Cedar. It
 //! borrows Cedar's *method*: a simple, auditable **reference interpreter** that the
 //! optimized production pipeline is differentially tested against. The production
 //! `transform` fuses adjacent operations and folds intermediates through `Zeroizing`
@@ -24,7 +24,7 @@
 //! This is verification-*guided* development, not formal verification.
 
 use proptest::prelude::*;
-use safetystrip_core::{
+use xpare_core::{
     ops, transform, BracketStyle, CaseKind, Config, Operation, Ordering, CONFIG_VERSION,
     MAX_CONFIG_OPERATIONS, MAX_PIPELINE_GROWTH_FACTOR,
 };

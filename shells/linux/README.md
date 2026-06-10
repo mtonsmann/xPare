@@ -1,4 +1,4 @@
-# SafetyStrip — Linux shell (reserved)
+# xPare — Linux shell (reserved)
 
 This directory is a **reserved sibling**. There is no Linux shell yet; this note
 records what adding one entails. The macOS shell (`shells/macos`) is the
@@ -7,7 +7,7 @@ reference implementation.
 ## Adding this platform = implement the shell contract
 
 A platform shell owns all OS integration and calls the Rust core through the
-**same frozen C ABI** (`core-ffi/include/safetystrip.h`). **Zero core changes
+**same frozen C ABI** (`core-ffi/include/xpare.h`). **Zero core changes
 are required** — feature selection crosses the boundary as a JSON config string,
 so a new transform is never an ABI or shell-contract change.
 
@@ -39,9 +39,9 @@ Implement the full per-platform checklist (see
 Build the FFI crate and link the resulting library:
 
 ```sh
-cargo build -p safetystrip-ffi --release
-# -> target/release/libsafetystrip_ffi.a  (static)
-#    target/release/libsafetystrip_ffi.so  (dynamic)
+cargo build -p xpare-ffi --release
+# -> target/release/libxpare_ffi.a  (static)
+#    target/release/libxpare_ffi.so  (dynamic)
 ```
 
 ## Posture (must hold on every platform)

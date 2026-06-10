@@ -21,7 +21,7 @@ upstream FormatStripper `guardrails.py` and enforced here by the in-tree `xtask`
    operation choices, the hotkey, window state. Never write clipboard input/output
    or derived text to disk, `UserDefaults`, or an archive. The single sanctioned
    exception is the opt-in **paste-as-file** store (`PasteFileStore.swift`): its
-   sink lines carry the `safetystrip:allow-content-persistence` marker, which the
+   sink lines carry the `xpare:allow-content-persistence` marker, which the
    check honors **only in that file** — the marker appearing anywhere else is
    itself a violation. See `SECURITY.md` ("Opt-in paste-as-file exception") and
    [privacy-and-data-handling](privacy-and-data-handling.md) rule 2.

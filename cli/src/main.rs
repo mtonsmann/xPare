@@ -1,4 +1,4 @@
-//! Headless harness over `safetystrip-core`.
+//! Headless harness over `xpare-core`.
 //!
 //! This is the core's own validation/fuzz driver and a manual testing aid — it has
 //! no clipboard or OS integration. It reads bytes from stdin, decodes them
@@ -8,8 +8,8 @@
 //! Usage:
 //!
 //! ```text
-//! safetystrip capabilities
-//! safetystrip transform [--config <file> | --config-json <json>]   < input > output
+//! xpare capabilities
+//! xpare transform [--config <file> | --config-json <json>]   < input > output
 //! ```
 //!
 //! With no config, `transform` applies the identity pipeline. Errors go to stderr;
@@ -21,15 +21,15 @@
 use std::io::{Read, Write};
 use std::process::ExitCode;
 
-use safetystrip_core::{capabilities, parse_config, transform, Config, Ordering};
+use xpare_core::{capabilities, parse_config, transform, Config, Ordering};
 
 const USAGE: &str = "\
-safetystrip — strip and transform text via safetystrip-core
+xpare — strip and transform text via xpare-core
 
 USAGE:
-    safetystrip capabilities
-    safetystrip transform [--config <file> | --config-json <json>] [--canonical]
-    safetystrip --help
+    xpare capabilities
+    xpare transform [--config <file> | --config-json <json>] [--canonical]
+    xpare --help
 
 Reads stdin, writes stdout. With no config, applies the identity pipeline.
 The two config flags are mutually exclusive and may each appear at most once.

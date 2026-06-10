@@ -14,7 +14,7 @@
   - Markdown newline coalescing can be superlinear,
   - HTML sources can run Markdown stripping before HTML stripping,
   - rich pasteboard data can be parsed before the shell size ceiling,
-  - continuous mode can reprocess SafetyStrip self-writes,
+  - continuous mode can reprocess xPare self-writes,
   - stale asynchronous transforms can overwrite newer clipboard contents.
 - Address the recommended documentation follow-ups, including local
   pasteboard-writer assumptions, release sandbox posture, and the FFI

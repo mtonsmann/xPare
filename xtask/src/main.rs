@@ -1,4 +1,4 @@
-//! Mechanical invariant enforcement for SafetyStrip.
+//! Mechanical invariant enforcement for xPare.
 //!
 //! The single, portable enforcer of the §5 invariants — no external cargo plugins
 //! required, so the same checks run locally and in CI.
@@ -7,7 +7,7 @@
 //!   gen-header          (re)write the frozen C header from the FFI source
 //!   check-abi           fail if the checked-in C header has drifted
 //!   check-unsafe-forbid assert `#![forbid(unsafe_code)]` is present in core
-//!   check-core-deps     strict allowlist on `safetystrip-core`'s dependency tree
+//!   check-core-deps     strict allowlist on `xpare-core`'s dependency tree
 //!   check-no-network    workspace-wide banlist of network/OS-capable crates
 //!   check-entitlements  assert the macOS entitlements file is minimal
 //!   check-no-content-logging  assert no clipboard content is logged/persisted
@@ -131,10 +131,10 @@ fn workspace_root() -> PathBuf {
 }
 
 fn header_path() -> PathBuf {
-    workspace_root().join("core-ffi/include/safetystrip.h")
+    workspace_root().join("core-ffi/include/xpare.h")
 }
 
-/// Generate the C header from the `safetystrip-ffi` source using the pinned
+/// Generate the C header from the `xpare-ffi` source using the pinned
 /// cbindgen lib + the checked-in `cbindgen.toml`.
 fn generate_header() -> String {
     let crate_dir = workspace_root().join("core-ffi");
@@ -345,7 +345,7 @@ fn normal_dep_closure<'a>(meta: &'a Metadata, start: &[&'a str]) -> BTreeSet<&'a
 // check-core-deps
 // ---------------------------------------------------------------------------
 
-/// Explicit allowlist for `safetystrip-core`'s full transitive *normal*
+/// Explicit allowlist for `xpare-core`'s full transitive *normal*
 /// dependency tree.
 ///
 /// This is the mechanical form of "the core has no OS, filesystem, or network
@@ -368,7 +368,7 @@ fn normal_dep_closure<'a>(meta: &'a Metadata, start: &[&'a str]) -> BTreeSet<&'a
 /// dependency that pulled it in — not to widen this list.
 const CORE_DEP_ALLOWLIST: &[&str] = &[
     // workspace member itself (closure includes the root)
-    "safetystrip-core",
+    "xpare-core",
     // direct config / markdown deps
     "serde",
     "serde_core",
@@ -399,10 +399,10 @@ const CORE_DEP_ALLOWLIST: &[&str] = &[
 fn check_core_deps() -> Result<(), String> {
     let meta = cargo_metadata().map_err(|e| format!("check-core-deps: FAIL — {e}"))?;
 
-    let core_ids = meta.package_ids_named("safetystrip-core");
+    let core_ids = meta.package_ids_named("xpare-core");
     if core_ids.is_empty() {
         return Err(
-            "check-core-deps: FAIL — `safetystrip-core` not found in `cargo metadata`. \
+            "check-core-deps: FAIL — `xpare-core` not found in `cargo metadata`. \
              Did the core crate get renamed or removed?"
                 .to_string(),
         );
@@ -426,7 +426,7 @@ fn check_core_deps() -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "check-core-deps: FAIL — `safetystrip-core` depends (transitively) on crate(s) \
+            "check-core-deps: FAIL — `xpare-core` depends (transitively) on crate(s) \
              not on the allowlist:\n\
              \x20 {}\n\
              \n\
@@ -540,7 +540,7 @@ fn check_no_network() -> Result<(), String> {
              workspace dependency tree:\n\
              \x20 {}\n\
              \n\
-             SafetyStrip's privacy posture is no-network-anywhere: a plain-text clipboard\n\
+             xPare's privacy posture is no-network-anywhere: a plain-text clipboard\n\
              utility must never be able to exfiltrate clipboard content, and no shipped or\n\
              build-time crate should grant that capability. Remove the dependency that\n\
              pulled this in. If a network capability is somehow genuinely required, it is a\n\
@@ -556,7 +556,7 @@ fn check_no_network() -> Result<(), String> {
 // ---------------------------------------------------------------------------
 
 fn entitlements_path() -> PathBuf {
-    workspace_root().join("shells/macos/SafetyStrip.entitlements")
+    workspace_root().join("shells/macos/xPare.entitlements")
 }
 
 /// Validate the *text* of a macOS entitlements plist (a portable XML string scan;
@@ -739,7 +739,7 @@ fn validate_release_posture(release_text: &str, entitlements_text: &str) -> Resu
     let mut missing = Vec::new();
     require_script_snippet(
         release_text,
-        r#"DEFAULT_SIGN_ENTITLEMENTS="${SCRIPT_DIR}/SafetyStrip.entitlements""#,
+        r#"DEFAULT_SIGN_ENTITLEMENTS="${SCRIPT_DIR}/xPare.entitlements""#,
         "default signing entitlements must be the checked-in plist",
         &mut missing,
     );
@@ -861,10 +861,10 @@ fn check_release_posture() -> Result<(), String> {
 // ---------------------------------------------------------------------------
 
 const ALLOWED_C_FFI_SURFACE: &[&str] = &[
-    "core-ffi/include/safetystrip.h",
-    "shells/macos/Sources/CSafetyStrip/dummy.c",
-    "shells/macos/Sources/CSafetyStrip/include/module.modulemap",
-    "shells/macos/Sources/CSafetyStrip/include/shim.h",
+    "core-ffi/include/xpare.h",
+    "shells/macos/Sources/CXPare/dummy.c",
+    "shells/macos/Sources/CXPare/include/module.modulemap",
+    "shells/macos/Sources/CXPare/include/shim.h",
 ];
 
 fn slash_path(path: &std::path::Path) -> String {
@@ -951,7 +951,7 @@ fn check_file_lines(
 }
 
 fn check_generated_header_shape(root: &std::path::Path, errors: &mut Vec<String>) {
-    let rel = "core-ffi/include/safetystrip.h";
+    let rel = "core-ffi/include/xpare.h";
     let path = root.join(rel);
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
@@ -962,7 +962,7 @@ fn check_generated_header_shape(root: &std::path::Path, errors: &mut Vec<String>
     };
     for snippet in [
         "GENERATED by cbindgen",
-        "#ifndef SAFETYSTRIP_FFI_H",
+        "#ifndef XPARE_FFI_H",
         "uint32_t ss_abi_version(void);",
         "const char *ss_capabilities_json(void);",
         "enum SsStatus ss_transform(",
@@ -1005,25 +1005,20 @@ fn check_c_ffi_surface() -> Result<(), String> {
 
     check_file_lines(
         &root,
-        "shells/macos/Sources/CSafetyStrip/dummy.c",
+        "shells/macos/Sources/CXPare/dummy.c",
         &[],
         &mut errors,
     );
     check_file_lines(
         &root,
-        "shells/macos/Sources/CSafetyStrip/include/shim.h",
-        &[r#"#include "../../../../../core-ffi/include/safetystrip.h""#],
+        "shells/macos/Sources/CXPare/include/shim.h",
+        &[r#"#include "../../../../../core-ffi/include/xpare.h""#],
         &mut errors,
     );
     check_file_lines(
         &root,
-        "shells/macos/Sources/CSafetyStrip/include/module.modulemap",
-        &[
-            "module CSafetyStrip {",
-            r#"header "shim.h""#,
-            "export *",
-            "}",
-        ],
+        "shells/macos/Sources/CXPare/include/module.modulemap",
+        &["module CXPare {", r#"header "shim.h""#, "export *", "}"],
         &mut errors,
     );
     check_generated_header_shape(&root, &mut errors);
@@ -1037,7 +1032,7 @@ fn check_c_ffi_surface() -> Result<(), String> {
         Err(format!(
             "check-c-ffi-surface: FAIL —\n  {}\n\
              \n\
-             SafetyStrip keeps handwritten C logic out of the project. The only allowed \
+             xPare keeps handwritten C logic out of the project. The only allowed \
              C-adjacent surface is the cbindgen-generated ABI header, a SwiftPM shim \
              that includes that header, the module map, and an empty dummy translation \
              unit required by SwiftPM. Do not add C/C++/Objective-C implementation code \
@@ -1133,11 +1128,11 @@ fn flags_content_logging(line: &str) -> bool {
 /// the content scan, but only inside [`CONTENT_PERSISTENCE_ALLOWED_FILES`];
 /// anywhere else the marker's presence is itself a violation, so the exemption
 /// cannot quietly spread.
-const CONTENT_PERSISTENCE_ALLOW_MARKER: &str = "safetystrip:allow-content-persistence";
+const CONTENT_PERSISTENCE_ALLOW_MARKER: &str = "xpare:allow-content-persistence";
 
 /// The only shipped source files permitted to carry the allow marker.
 const CONTENT_PERSISTENCE_ALLOWED_FILES: &[&str] =
-    &["shells/macos/Sources/SafetyStripKit/PasteFileStore.swift"];
+    &["shells/macos/Sources/XPareKit/PasteFileStore.swift"];
 
 /// Per-line verdict for `check-no-content-logging`, marker-aware. Returns a short
 /// reason when the line is a violation; `None` when it is clean or exempted.
@@ -1309,13 +1304,13 @@ fn check_no_content_logging() -> Result<(), String> {
             "check-no-content-logging: FAIL — line(s) appear to log or persist clipboard-derived \
              content:\n\x20 {}\n\
              \n\
-             SafetyStrip must never write clipboard content to a log sink, to disk, or to user\n\
+             xPare must never write clipboard content to a log sink, to disk, or to user\n\
              defaults. Log fixed operational states only; persist user *settings* (operation\n\
              choices, shortcuts), never clipboard input/output/derived text. If this is a false\n\
              positive, rename the local so the line no longer reads as logging real content.\n\
              The ONE sanctioned exception is the opt-in paste-as-file store\n\
              (PasteFileStore.swift), whose sink lines carry the\n\
-             `safetystrip:allow-content-persistence` marker; that marker is honored nowhere\n\
+             `xpare:allow-content-persistence` marker; that marker is honored nowhere\n\
              else, and never silences a finding by being copied around.",
             hits.join("\n  ")
         ))
@@ -1934,14 +1929,14 @@ fn check_miri() -> Result<(), String> {
     ensure_nightly_toolchain()?;
     ensure_miri_component()?;
 
-    // `cargo miri test -p safetystrip-ffi` builds the FFI crate (and its deps) under
+    // `cargo miri test -p xpare-ffi` builds the FFI crate (and its deps) under
     // Miri and runs its tests, including the unsafe boundary round-trips. The core is
     // pulled in as a dependency and interpreted too, but we scope the *test run* to
     // the crate that owns the unsafe so the pass stays fast. Default Miri isolation
     // is fine: nothing in these tests touches the filesystem, clock, or network.
-    println!("check-miri: $ cargo +nightly miri test -p safetystrip-ffi");
+    println!("check-miri: $ cargo +nightly miri test -p xpare-ffi");
     let status = Command::new("cargo")
-        .args(["+nightly", "miri", "test", "-p", "safetystrip-ffi"])
+        .args(["+nightly", "miri", "test", "-p", "xpare-ffi"])
         .current_dir(workspace_root())
         .status()
         .map_err(|e| {
@@ -2025,17 +2020,17 @@ fn ensure_kani() -> Result<(), String> {
 }
 
 /// check-kani: run the bounded proofs over the resource-envelope arithmetic in
-/// `safetystrip-core`. Best-effort and heavy, so it stays out of the required `ci`
+/// `xpare-core`. Best-effort and heavy, so it stays out of the required `ci`
 /// gate (mirrors `check-fuzz` / `check-miri`).
 fn check_kani() -> Result<(), String> {
     ensure_kani()?;
 
-    // `cargo kani -p safetystrip-core` discovers and verifies every `#[kani::proof]`
+    // `cargo kani -p xpare-core` discovers and verifies every `#[kani::proof]`
     // harness in the core crate. Harnesses are `#[cfg(kani)]`, so this is the only
     // command that compiles them at all.
-    println!("check-kani: $ cargo kani -p safetystrip-core");
+    println!("check-kani: $ cargo kani -p xpare-core");
     let status = Command::new("cargo")
-        .args(["kani", "-p", "safetystrip-core"])
+        .args(["kani", "-p", "xpare-core"])
         .current_dir(workspace_root())
         .status()
         .map_err(|e| format!("check-kani: FAIL — could not launch `cargo kani`: {e}"))?;
@@ -2086,7 +2081,7 @@ const COVERAGE_FLOOR_PCT: u32 = 95;
 /// improve. Matches the Rust product floor (95%) — the OS-facing layers are tested
 /// headlessly: `SystemPasteboard` against an app-private `NSPasteboard(name:)`, and the
 /// Carbon hot-key trampoline by invoking it with a synthesized `kEventHotKeyPressed` event.
-/// (The `SafetyStripApp` SwiftUI target is the only unmeasured Swift: it's an executable,
+/// (The `XPareApp` SwiftUI target is the only unmeasured Swift: it's an executable,
 /// not linked into the test bundle — the analog of the Rust binary crates the workspace
 /// floor doesn't gate on.) Measured Sources-only baseline at this floor was ~95.8% lines
 /// (Tests/ and the derived test runner are excluded); the floor sits just under so a
@@ -2417,9 +2412,9 @@ fn check_swift_format(swift: &std::path::Path, shell: &std::path::Path) -> Resul
 /// Phase 2: build the FFI staticlib the Swift package links over the frozen C ABI.
 fn swift_build_ffi_staticlib() -> Result<(), String> {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-    println!("check-swift: $ {cargo} build -p safetystrip-ffi --release");
+    println!("check-swift: $ {cargo} build -p xpare-ffi --release");
     let status = Command::new(&cargo)
-        .args(["build", "-p", "safetystrip-ffi", "--release"])
+        .args(["build", "-p", "xpare-ffi", "--release"])
         .current_dir(workspace_root())
         .status()
         .map_err(|e| format!("check-swift: FAIL — could not launch `cargo build`: {e}"))?;
@@ -2427,7 +2422,7 @@ fn swift_build_ffi_staticlib() -> Result<(), String> {
         Ok(())
     } else {
         Err(
-            "check-swift: FAIL — building the FFI staticlib (`cargo build -p safetystrip-ffi \
+            "check-swift: FAIL — building the FFI staticlib (`cargo build -p xpare-ffi \
              --release`) failed; the Swift package links it over the frozen C ABI."
                 .to_string(),
         )
@@ -2703,7 +2698,7 @@ fn check_agent_workflow() -> Result<(), String> {
         Err(format!(
             "check-agent-workflow: FAIL —\n\x20 {}\n\
              \n\
-             SafetyStrip's evidence-first workflow lives in repo-native docs so future\n\
+             xPare's evidence-first workflow lives in repo-native docs so future\n\
              agents have a clear loop (see docs/agent-workflow.md). These files must stay\n\
              present and structured. Restore the missing file or section; do not delete the\n\
              workflow docs to make this check pass. If a section is intentionally renamed,\n\
@@ -3104,7 +3099,7 @@ mod tests {
         let root = workspace_root();
         let release = std::fs::read_to_string(root.join("shells/macos/release.sh")).unwrap();
         let entitlements =
-            std::fs::read_to_string(root.join("shells/macos/SafetyStrip.entitlements")).unwrap();
+            std::fs::read_to_string(root.join("shells/macos/xPare.entitlements")).unwrap();
         validate_release_posture(&release, &entitlements).unwrap();
     }
 
@@ -3272,7 +3267,7 @@ mod tests {
     #[test]
     fn content_persistence_marker_exempts_only_the_allowlisted_file() {
         let sink_line = "try Data(text.utf8).write(to: url) \
-                         // safetystrip:allow-content-persistence: transformed clipboard result";
+                         // xpare:allow-content-persistence: transformed clipboard result";
         // In the sanctioned store file, the marker exempts the line.
         assert_eq!(content_line_violation(sink_line, true), None);
         // Anywhere else, carrying the marker is itself a violation — the exemption
@@ -3280,9 +3275,7 @@ mod tests {
         assert!(content_line_violation(sink_line, false).is_some());
         // Even a harmless line is flagged if it smuggles the marker into a
         // non-allowlisted file.
-        assert!(
-            content_line_violation("// safetystrip:allow-content-persistence", false).is_some()
-        );
+        assert!(content_line_violation("// xpare:allow-content-persistence", false).is_some());
         // Without the marker, the ordinary scan applies regardless of file.
         assert!(content_line_violation(
             "UserDefaults.standard.set(clipboardText, forKey: key)",
@@ -3301,7 +3294,7 @@ mod tests {
         // that must be made deliberately (and update SECURITY.md + the guardrail).
         assert_eq!(
             CONTENT_PERSISTENCE_ALLOWED_FILES,
-            &["shells/macos/Sources/SafetyStripKit/PasteFileStore.swift"]
+            &["shells/macos/Sources/XPareKit/PasteFileStore.swift"]
         );
         // ...and the file it names must actually exist (rename protection).
         assert!(

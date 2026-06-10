@@ -1,6 +1,6 @@
 # Design
 
-This is the *why* behind SafetyStrip. [`ARCHITECTURE.md`](ARCHITECTURE.md) is the
+This is the *why* behind xPare. [`ARCHITECTURE.md`](ARCHITECTURE.md) is the
 map (what lives where, the boundary, the invariants); this document records the
 settled decisions and their rationale, how the threat model shaped them, what the
 known limitations are, and what is deliberately out of scope until the project
@@ -8,7 +8,7 @@ grows. The decision log mirrors `docs/exec-plans/completed/0001-initial-rearch.m
 
 ## Threat model
 
-SafetyStrip processes the **clipboard**, which is one of the most sensitive data
+xPare processes the **clipboard**, which is one of the most sensitive data
 streams on a machine. At any moment it may contain passwords, API tokens, private
 keys, PII, or proprietary source code. It also routinely contains **rich text**
 (HTML/RTF) and Markdown copied from web pages, chat apps, and editors — i.e.
@@ -27,9 +27,9 @@ parser and cannot be memory-unsafe or leak; the shell is the only thing that tal
 to the OS. See [`SECURITY.md`](SECURITY.md) for the posture as a checklist.
 
 The explicit non-goal is defending the system pasteboard from every same-user local
-process. Another local app may write the pasteboard before SafetyStrip reads it,
+process. Another local app may write the pasteboard before xPare reads it,
 replace it while a transform is in flight, or feed rich/oversized data to consume
-resources. SafetyStrip's security promise is narrower and enforceable: when it is
+resources. xPare's security promise is narrower and enforceable: when it is
 the component handling clipboard content, it does not exfiltrate, persist, log, or
 memory-unsafely parse that content, and it refuses oversized text before calling the
 core.
@@ -57,9 +57,9 @@ consumes it unchanged. **Why these four symbols** — `ss_abi_version`,
 `ss_capabilities_json`, `ss_transform`, `ss_buffer_free` — and nothing more: the
 surface stays narrow and data-driven. Feature selection crosses as a serialized
 config string, so **adding a transform is a data change, never an ABI change**. The
-checked-in header (`core-ffi/include/safetystrip.h`) is the source of truth and
+checked-in header (`core-ffi/include/xpare.h`) is the source of truth and
 `cargo xtask check-abi` fails CI if the code drifts from it, making any real ABI
-change a deliberate, reviewable event (bump `SS_ABI_VERSION`, regenerate, call it
+change a deliberate, reviewable event (bump `XP_ABI_VERSION`, regenerate, call it
 out). See [the FFI guardrail](docs/guardrails/ffi-boundary-and-abi-stability.md).
 
 ### D3 — Config is versioned JSON: an ordered list of operations
@@ -167,7 +167,7 @@ On-demand mode (the default) does no polling: a hotkey triggers a single
 read → transform → in-place rewrite.
 
 This is a best-effort convenience, not a pasteboard lock or an inter-process
-compare-and-swap. The shell suppresses SafetyStrip self-write generations, drops a
+compare-and-swap. The shell suppresses xPare self-write generations, drops a
 transform completion if `changeCount` moved while it was running, and coalesces
 continuous callbacks while a strip is already in flight. A local pasteboard writer
 can still race before the read or after the rewrite; those controls are shell-only
@@ -184,7 +184,7 @@ undermine user trust.
 
 ### D10 — CLI has no dependencies
 
-The `safetystrip` CLI parses its own arguments by hand. **Why:** it is a boring
+The `xpare` CLI parses its own arguments by hand. **Why:** it is a boring
 validation/fuzz harness; an arg-parsing dependency would add surface for no benefit.
 All config parsing lives in the core, so the CLI is a thin stdin→core→stdout pipe.
 
@@ -331,7 +331,7 @@ config's output growth by the per-op factor product.
 
 **Cedar is the inspiration, not a dependency.** AWS's Cedar pairs its production
 authorization engine with a simple executable specification and proves them
-equivalent by differential random testing — the discipline this borrows. SafetyStrip
+equivalent by differential random testing — the discipline this borrows. xPare
 is **not** an authorization-policy engine and has no need for a policy language, so it
 does **not** add Cedar (or any policy/DSL crate); doing so would import a large
 capability surface for a problem the project does not have. What it adopts is the
@@ -373,7 +373,7 @@ explicit, justified, documented, and enforced. The exception is engineered to
 stay singular:
 
 - one audited writer (`PasteFileStore`), the only file where
-  `check-no-content-logging` honors the `safetystrip:allow-content-persistence`
+  `check-no-content-logging` honors the `xpare:allow-content-persistence`
   marker — the marker anywhere else fails CI, and an xtask unit test pins the
   allowlist to exactly that file;
 - the file lives in the sandbox container's temp directory
@@ -396,7 +396,7 @@ paste-as-file exception") and exec plan 0012.
 
 - **macOS posture:** App Sandbox + Hardened Runtime, **minimal entitlements**. The
   only entitlement is `com.apple.security.app-sandbox` = true — reading and writing
-  the pasteboard needs no entitlement. **In-place rewrite only:** SafetyStrip never
+  the pasteboard needs no entitlement. **In-place rewrite only:** xPare never
   simulates a paste (`Cmd-V`), which would need Accessibility and could fire into
   the wrong app; it only replaces the clipboard's own contents. See
   [the macOS posture guardrail](docs/guardrails/macos-posture.md).
@@ -545,12 +545,12 @@ fraction of RAM, and safety-first means **refusing gracefully rather than riskin
 out-of-memory abort**. Three layers:
 
 - **Core (pure):** unbounded — a plain memory-bound function.
-- **C ABI (v2):** a fixed, generous backstop `SS_MAX_INPUT_BYTES` (2 GiB). A larger
+- **C ABI (v2):** a fixed, generous backstop `XP_MAX_INPUT_BYTES` (2 GiB). A larger
   input returns `ErrInputTooLarge` *before* any read or allocation, so it can never
   abort or overflow at the boundary. It must be a constant because the
   platform-neutral core may not ask the OS about memory.
 - **macOS shell:** the real, RAM-proportional policy —
-  `min(SS_MAX_INPUT_BYTES, physicalMemory / 10)`, which keeps a worst-case strip under
+  `min(XP_MAX_INPUT_BYTES, physicalMemory / 10)`, which keeps a worst-case strip under
   ~half of RAM and scales with the machine. An oversized clipboard yields a
   content-free "too large" status and is left untouched.
 - **CLI:** intentionally uncapped — the right tool for multi-GB *file* work, where the
@@ -615,7 +615,7 @@ These are accepted trade-offs, documented so they are not mistaken for defects.
   postal addresses, secrets, every possible email/IP spelling, or identifiers
   embedded inside larger non-whitespace strings. It rewrites output only; the
   original OS clipboard value and same-user pasteboard races remain outside
-  SafetyStrip's confidentiality boundary.
+  xPare's confidentiality boundary.
 - **Rich→plain extraction is the shell's best-effort.** The core transforms whatever
   text the shell extracts; choosing the best clipboard representation (preferring
   HTML) is a shell responsibility and is itself heuristic per platform. The macOS
@@ -630,9 +630,9 @@ These are accepted trade-offs, documented so they are not mistaken for defects.
 - **Continuous mode is polling, not event-driven.** macOS exposes no clipboard-change
   notification, so the poller checks `changeCount` on an interval (default 500 ms);
   there is an inherent up-to-interval latency in continuous mode (on-demand mode is
-  immediate). It suppresses SafetyStrip self-writes and drops stale transform
+  immediate). It suppresses xPare self-writes and drops stale transform
   completions, but it does not serialize every same-user pasteboard race: a local
-  writer can still change the pasteboard before SafetyStrip reads or after it writes.
+  writer can still change the pasteboard before xPare reads or after it writes.
 
 ## Adopt if the project grows
 

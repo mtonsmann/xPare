@@ -1,6 +1,6 @@
 # Release Model
 
-SafetyStrip follows the normal open-source macOS pattern:
+xPare follows the normal open-source macOS pattern:
 
 - **Source is the canonical distribution** for contributors and privacy-sensitive
   users (`make app` / `make run` build and launch a local bundle).
@@ -9,8 +9,8 @@ SafetyStrip follows the normal open-source macOS pattern:
   release with notes.
 - Broad end-user downloads must be **Developer ID signed and notarized**.
 
-Unlike the upstream FormatStripper lineage, the SafetyStrip Swift app **statically
-links** `libsafetystrip_ffi.a`, so a release bundle has **no embedded dylib** under
+Unlike the upstream FormatStripper lineage, the xPare Swift app **statically
+links** `libxpare_ffi.a`, so a release bundle has **no embedded dylib** under
 `Contents/Frameworks` to relocate or sign separately — the bundle is the Swift
 executable plus its `Info.plist` and icon, and the Developer ID signature covers the
 single Mach-O and the bundle.
@@ -20,7 +20,7 @@ single Mach-O and the bundle.
 The local product is source-built. From the repo root:
 
 ```sh
-make app     # build + assemble shells/macos/dist/SafetyStrip.app (ad-hoc signed)
+make app     # build + assemble shells/macos/dist/xPare.app (ad-hoc signed)
 make run     # the above, then `open` it
 ```
 
@@ -31,7 +31,7 @@ make preview                 # uses an exact vX.Y.Z tag, or:
 make preview VERSION=1.2.3
 ```
 
-That writes `dist/release/SafetyStrip-vX.Y.Z-macos-<arch>-unsigned-preview.zip` and
+That writes `dist/release/xPare-vX.Y.Z-macos-<arch>-unsigned-preview.zip` and
 its `.sha256`. Preview archives are test artifacts, not official binaries: they are
 unsigned/ad-hoc and must not be promoted as end-user downloads. There are **no
 official downloadable release assets yet** — by design, the bundle is
@@ -46,8 +46,8 @@ unsigned/un-notarized until Developer ID credentials exist.
 Signed assets are architecture-labeled:
 
 ```text
-SafetyStrip-vX.Y.Z-macos-arm64.zip
-SafetyStrip-vX.Y.Z-macos-x86_64.zip
+xPare-vX.Y.Z-macos-arm64.zip
+xPare-vX.Y.Z-macos-x86_64.zip
 ```
 
 If the project later ships universal binaries, asset names should make the
@@ -62,8 +62,8 @@ architecture choice explicit.
    FFI staticlib + `swift build -c release` → `make preview` → upload the unsigned
    preview as a workflow artifact.
 2. **publish-official** (gated): only when repo variable
-   `SAFETYSTRIP_ENABLE_OFFICIAL_RELEASE == 'true'` **and** the Apple secrets are
-   present. It re-checks `shells/macos/SafetyStrip.entitlements`, imports the
+   `XPARE_ENABLE_OFFICIAL_RELEASE == 'true'` **and** the Apple secrets are
+   present. It re-checks `shells/macos/xPare.entitlements`, imports the
    Developer ID cert into a temp keychain, stores notary credentials, runs
    `make dist` (Developer ID sign executable and bundle with the checked App
    Sandbox entitlements → verify both signed payloads are minimal → notarize →
@@ -93,17 +93,17 @@ at a different SHA, the release fails until fuzz is rerun on that SHA.
 On an exact `vX.Y.Z` tag, with full Xcode + a Developer ID identity:
 
 ```sh
-xcrun notarytool store-credentials safetystrip-notary \
+xcrun notarytool store-credentials xpare-notary \
   --apple-id you@example.com --team-id TEAMID --password app-specific-password
 
 make dist VERSION=1.2.3 \
   CERT_NAME="Developer ID Application: Your Name (TEAMID)" \
-  NOTARY_PROFILE=safetystrip-notary
+  NOTARY_PROFILE=xpare-notary
 
 make github-release VERSION=1.2.3
 ```
 
-`make dist` defaults to `shells/macos/SafetyStrip.entitlements` and fails if that
+`make dist` defaults to `shells/macos/xPare.entitlements` and fails if that
 file is unavailable. `SIGN_ENTITLEMENTS` exists so CI can pass that checked file as
 an absolute path; `release.sh` rejects any path that does not resolve to the checked
 file. The signed payload must contain only
@@ -114,11 +114,11 @@ checks that this fail-closed release path remains wired into the script.
 
 ## First public binary prerequisites
 
-- Lock the public bundle identifier (currently `com.safetystrip.app`).
+- Lock the public bundle identifier (currently `com.xpare.app`).
 - Decide universal vs. per-arch assets.
 - Add Developer ID signing + notarization secrets (kept **out** of the repo).
-- Keep official signing tied to `shells/macos/SafetyStrip.entitlements`; a signed
-  app without the minimal App Sandbox-only payload is not an official SafetyStrip
+- Keep official signing tied to `shells/macos/xPare.entitlements`; a signed
+  app without the minimal App Sandbox-only payload is not an official xPare
   release.
 - Verify Gatekeeper acceptance on a clean macOS machine.
 - Keep the no-network, no-telemetry, no-clipboard-content-logging posture intact —

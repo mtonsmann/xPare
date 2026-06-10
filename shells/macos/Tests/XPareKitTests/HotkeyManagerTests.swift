@@ -2,7 +2,7 @@ import Carbon.HIToolbox
 import Foundation
 import Testing
 
-@testable import SafetyStripKit
+@testable import XPareKit
 
 /// Covers the global-hotkey glue: the Carbon constant derivation, the process-wide
 /// id/handler dispatch table, and the `HotkeyManager` register/unregister lifecycle.

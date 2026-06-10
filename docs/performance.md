@@ -1,6 +1,6 @@
 # Performance
 
-SafetyStrip treats performance as a product requirement **after** safety and
+xPare treats performance as a product requirement **after** safety and
 privacy. Clipboard transforms should feel instant for ordinary text, and large log
 pastes should stay bounded, predictable, and measurable — never at the cost of a
 guardrail. The full method (ceiling model, optimization waves, acceptance rules)
@@ -11,7 +11,7 @@ lives in
 
 | Layer | Command | What it tells you |
 |-------|---------|-------------------|
-| Complexity gate | `cargo test -p safetystrip-core --test perf_guard` (runs in `make ci`) | Linear-time behavior holds; an O(n²)/DoS regression is caught. Always-on, cannot flake. |
+| Complexity gate | `cargo test -p xpare-core --test perf_guard` (runs in `make ci`) | Linear-time behavior holds; an O(n²)/DoS regression is caught. Always-on, cannot flake. |
 | Statistical benches | `make bench`, `make bench-large` | criterion MiB/s with confidence intervals + outlier detection — the authoritative measurement. |
 | Throughput baseline | `make perf PERF_MIB=128 PERF_SAMPLES=7` | A quick roofline-calibrated MiB/s table for a same-machine regression read; optional hard floor. |
 
@@ -114,7 +114,7 @@ release profile is now speed-tuned (`opt-level = 3`), which materially improves 
 parser, byte-scanner, line-op, and end-to-end rows at the cost of no longer choosing
 the smallest release artifacts by default. The pipeline now borrows caller-owned
 input for the first pass and only wraps operation outputs that feed later passes in
-`Zeroizing`, eliminating one unnecessary SafetyStrip-owned full-buffer duplicate
+`Zeroizing`, eliminating one unnecessary xPare-owned full-buffer duplicate
 while preserving intermediate wiping. The W3 fusions remove the trim/remove-blank
 intermediate and the common collapse/trim/remove suffix from the default path. The
 W3b fused collapse scratch is transform-local `Zeroizing` storage: it is wiped before

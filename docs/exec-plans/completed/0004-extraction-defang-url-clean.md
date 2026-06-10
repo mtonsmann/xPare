@@ -176,13 +176,13 @@ final wire names and the shell needs the mirror.
 
 ### WS-C — Swift core mirror
 - Add `defang(style:)`, `refang`, `cleanUrls` cases to `Operation` in
-  `shells/macos/Sources/SafetyStripCore/TransformConfig.swift` + `opTag` + hand-written
+  `shells/macos/Sources/XPareCore/TransformConfig.swift` + `opTag` + hand-written
   Codable encode/decode arms + a `BracketStyle` enum mirroring the Rust one.
 - Extend `TransformConfigTests.swift`: encode each new variant and assert the JSON
   matches the wire contract byte-for-structure; decode round-trip.
 
 ### WS-D — macOS shell UX
-- Restructure `MenuContent` (`SafetyStripApp.swift`) into the D12 sections: **Clean**
+- Restructure `MenuContent` (`XPareApp.swift`) into the D12 sections: **Clean**
   (toggles — add `SortLines`, `Defang`), **Extract** (one-shot *commands* —
   `Extract emails`, `Extract URLs`, `Refang clipboard`).
 - Enum params as submenus (SwiftUI `Menu`): `Defang` bracket style; (optional now)
@@ -195,7 +195,7 @@ final wire names and the shell needs the mirror.
   `SuffixLines` / `JoinWith` / `SplitOn`, and a reorderable list binding to
   `settings.operations` (pipeline order). Persists through existing `Settings`
   Codable.
-- Tests in `SafetyStripKitTests`: transient-config command path doesn't persist;
+- Tests in `XPareKitTests`: transient-config command path doesn't persist;
   continuous mode refuses reductions; Settings round-trips the new params.
 
 ### WS-E — Integration & docs

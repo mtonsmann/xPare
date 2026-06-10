@@ -1,6 +1,6 @@
 # Agent workflow — evidence-first engineering
 
-SafetyStrip is an AI-native, correctness-oriented repository. The goal is not to
+xPare is an AI-native, correctness-oriented repository. The goal is not to
 generate code faster; it is to make **correctness evidence** the artifact a change
 is judged by. Code is cheap. The evidence that a change is safe, deterministic, and
 posture-preserving is what takes review time — so the workflow front-loads it.
@@ -135,7 +135,7 @@ knows the boundary of the evidence.
 
 ## North star
 
-> SafetyStrip should make it hard for an agent to submit a plausible patch without
+> xPare should make it hard for an agent to submit a plausible patch without
 > also submitting the evidence needed to trust it.
 >
 > Code is cheap. Correctness evidence is the artifact.

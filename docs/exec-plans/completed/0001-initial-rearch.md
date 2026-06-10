@@ -60,7 +60,7 @@ Phase 0 freezes the contracts so work parallelizes without merge conflicts:
 - No unsafe in core → `#![forbid(unsafe_code)]` + `xtask check-unsafe-forbid`
 - No OS/IO/net in core → `xtask check-core-deps` (strict allowlist)
 - No network anywhere → `xtask check-no-network` (workspace banlist)
-- Frozen ABI → checked-in `safetystrip.h` + `xtask check-abi` (drift fails CI)
+- Frozen ABI → checked-in `xpare.h` + `xtask check-abi` (drift fails CI)
 - Config is data → serde round-trip + version proptests
 - Never panics → fuzz targets + property tests + checked-in adversarial corpus replay
 - No log sink → core denies `print*`/`dbg!`; no logging deps

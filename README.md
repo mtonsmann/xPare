@@ -1,6 +1,6 @@
-# SafetyStrip
+# xPare
 
-A **memory-safe, plain-text clipboard utility**. SafetyStrip cleans the text on
+A **memory-safe, plain-text clipboard utility**. xPare cleans the text on
 your clipboard — coerce rich text to plain, strip HTML and Markdown, normalize
 whitespace, change case, run line operations, extract emails/URLs, defang and
 refang network indicators (IOCs), strip URL tracking parameters, and mask selected
@@ -11,7 +11,7 @@ file** instead of a raw string, so pasting attaches a file rather than dumping a
 huge blob.
 
 Its whole reason to exist is trust: the clipboard holds passwords, tokens, PII, and
-source, and the markup it carries is untrusted. So SafetyStrip is built so that
+source, and the markup it carries is untrusted. So xPare is built so that
 
 - **no clipboard content can leave the process** (no network anywhere, no
   persistence, no logging of content — persistence has exactly one *opt-in*
@@ -53,23 +53,23 @@ cargo test  --workspace
 
 ### Run the headless CLI harness
 
-The `safetystrip` CLI (package `safetystrip-cli`) is a thin stdin → core → stdout
+The `xpare` CLI (package `xpare-cli`) is a thin stdin → core → stdout
 pipe with no clipboard or OS integration — handy for trying transforms:
 
 ```sh
 # Strip HTML (note <script> bodies are dropped, tags removed):
 echo '<b>hi</b><script>steal()</script>' | \
-  cargo run -p safetystrip-cli -- transform \
+  cargo run -p xpare-cli -- transform \
     --config-json '{"version":2,"operations":[{"op":"strip_html"}]}'
 # -> hi
 
 # The canonical sanitization order, StripHtml then StripMarkdown:
 echo '**bold** <i>x</i>' | \
-  cargo run -p safetystrip-cli -- transform \
+  cargo run -p xpare-cli -- transform \
     --config-json '{"version":2,"operations":[{"op":"strip_html"},{"op":"strip_markdown"}]}'
 
 # Ask the core what it can do:
-cargo run -p safetystrip-cli -- capabilities
+cargo run -p xpare-cli -- capabilities
 ```
 
 A config is `{"version":2,"operations":[ ... ],"ordering":"canonical"}` — a list of
@@ -120,7 +120,7 @@ runs each op in ~0.2–2 s (see [DESIGN.md](DESIGN.md#performance--large-inputs-
 Two pass/fail guards back the measurements: `core/tests/perf_guard.rs` (in the gate)
 asserts the strippers stay **linear** on large adversarial inputs, and its
 `--ignored` `handles_256mb_log_pipeline` test validates a full 256 MB pipeline on
-demand (`cargo test -p safetystrip-core --test perf_guard -- --ignored`).
+demand (`cargo test -p xpare-core --test perf_guard -- --ignored`).
 
 For a quick same-machine throughput baseline (roofline controls + per-op + end-to-end
 medians, synthetic input only):
@@ -159,7 +159,7 @@ a gated Developer ID sign + notarize flow (`make dist`) — is documented in
 ```
 core/         pure transform core — #![forbid(unsafe_code)], no OS/IO/net
 core-ffi/     thin C ABI shim (the only crate with `unsafe`) + the frozen header
-cli/          headless harness over the core (binary: safetystrip)
+cli/          headless harness over the core (binary: xpare)
 xtask/        mechanical invariant enforcement — `cargo xtask <check>`
 fuzz/         cargo-fuzz targets (separate workspace, nightly)
 shells/macos  Swift menu-bar shell over the C ABI

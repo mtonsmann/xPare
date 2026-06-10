@@ -7,14 +7,14 @@
 //!   hash-set *membership*, which is fine), depended on time/locale, etc.
 //! * **Never panics:** `transform` returns for every input, including adversarial
 //!   bytes, lone `\r`, mixed CRLF, control chars, and huge whitespace runs. A panic
-//!   here would surface as `SS_ERR_INTERNAL` at the FFI boundary, so we forbid it.
+//!   here would surface as `XP_ERR_INTERNAL` at the FFI boundary, so we forbid it.
 //!
 //! The strategies deliberately bias toward the bytes that break naive line/case/
 //! whitespace handling: newlines, carriage returns, tabs, `@`, `.`, `http`, quotes,
 //! and multi-byte / case-expanding Unicode (`ß`, `İ`, `Σ`).
 
 use proptest::prelude::*;
-use safetystrip_core::{
+use xpare_core::{
     ops, transform, BracketStyle, CaseKind, Config, Operation, Ordering, CONFIG_VERSION,
 };
 

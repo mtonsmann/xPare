@@ -21,5 +21,5 @@ fuzz_target!(|data: &[u8]| {
     // Lossy decode mirrors the FFI boundary: the core only ever sees valid UTF-8,
     // and invalid byte sequences become U+FFFD rather than being rejected.
     let text = String::from_utf8_lossy(data);
-    let _ = safetystrip_core::ops::html::strip_html(&text);
+    let _ = xpare_core::ops::html::strip_html(&text);
 });

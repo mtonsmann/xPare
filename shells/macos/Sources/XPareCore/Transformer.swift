@@ -1,5 +1,5 @@
 import Foundation
-import CSafetyStrip
+import CXPare
 
 /// Errors surfaced by the Swift wrapper around the C ABI. Each ``status`` case
 /// maps 1:1 to a non-OK `SsStatus` from the core; ``encodingFailed`` /
@@ -49,7 +49,7 @@ public enum TransformError: Error, Equatable, CustomStringConvertible {
     }
 }
 
-/// Safe, memory-correct Swift facade over the SafetyStrip C ABI.
+/// Safe, memory-correct Swift facade over the xPare C ABI.
 ///
 /// Responsibilities:
 /// * encode a ``TransformConfig`` to JSON,
@@ -67,10 +67,10 @@ public struct Transformer: Sendable {
         ss_abi_version()
     }
 
-    /// The core's hard input ceiling in bytes (`SS_MAX_INPUT_BYTES`). Exposed so the
+    /// The core's hard input ceiling in bytes (`XP_MAX_INPUT_BYTES`). Exposed so the
     /// shell can clamp its own RAM-proportional limit to the core's backstop without
     /// importing the C module itself.
-    public static var coreMaxInputBytes: Int { Int(SS_MAX_INPUT_BYTES) }
+    public static var coreMaxInputBytes: Int { Int(XP_MAX_INPUT_BYTES) }
 
     /// The core's self-describing capabilities JSON (`ss_capabilities_json`).
     /// The returned pointer is process-static and must not be freed, so we copy

@@ -1,4 +1,4 @@
-# SafetyStrip — Windows shell (reserved)
+# xPare — Windows shell (reserved)
 
 This directory is a **reserved sibling**. There is no Windows shell yet; this
 note records what adding one entails. The macOS shell (`shells/macos`) is the
@@ -7,7 +7,7 @@ reference implementation.
 ## Adding this platform = implement the shell contract
 
 A platform shell owns all OS integration and calls the Rust core through the
-**same frozen C ABI** (`core-ffi/include/safetystrip.h`). **Zero core changes
+**same frozen C ABI** (`core-ffi/include/xpare.h`). **Zero core changes
 are required** — feature selection crosses the boundary as a JSON config string,
 so a new transform is never an ABI or shell-contract change.
 
@@ -37,8 +37,8 @@ Implement the full per-platform checklist (see
 Build the FFI crate for the Windows target and link the resulting library:
 
 ```sh
-cargo build -p safetystrip-ffi --release --target x86_64-pc-windows-msvc
-# -> target/x86_64-pc-windows-msvc/release/safetystrip_ffi.lib (static)
+cargo build -p xpare-ffi --release --target x86_64-pc-windows-msvc
+# -> target/x86_64-pc-windows-msvc/release/xpare_ffi.lib (static)
 #    or the matching .dll for dynamic linking
 ```
 

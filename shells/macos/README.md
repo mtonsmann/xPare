@@ -1,9 +1,9 @@
-# SafetyStrip — macOS shell
+# xPare — macOS shell
 
-The Swift/SwiftUI native shell for SafetyStrip. It owns all OS integration —
+The Swift/SwiftUI native shell for xPare. It owns all OS integration —
 clipboard read/write, rich→plain extraction, change detection, the global
 hotkey, settings, and the menu-bar UI — and calls the platform-neutral Rust
-**core** through the frozen C ABI (`core-ffi/include/safetystrip.h`). No
+**core** through the frozen C ABI (`core-ffi/include/xpare.h`). No
 transform logic lives here; feature selection crosses the boundary as a JSON
 config string.
 
@@ -14,11 +14,11 @@ library/exe targets plus tests:
 
 | Target            | Kind        | Responsibility |
 |-------------------|-------------|----------------|
-| `CSafetyStrip`    | C interop   | Exposes the frozen C ABI to Swift via a `module.modulemap`. Does **not** copy the header — `shim.h` `#include`s the single source of truth at `core-ffi/include/safetystrip.h`. |
-| `SafetyStripCore` | Swift       | Safe `Transformer` wrapping the ABI (`transform`, `capabilities`, `abiVersion`), plus `TransformConfig`/`Operation`/`CaseKind` as `Codable` types that encode **exactly** the Rust JSON schema. The only target that links the staticlib. |
-| `SafetyStripKit`  | Swift, no UI| The testable shell contract: `Pasteboard`, `ClipboardMonitor`, `HotkeyManager`, `Settings`, `StripController`, `PasteFileStore` (the sanctioned paste-as-file writer). |
-| `SafetyStripApp`  | executable  | SwiftUI `MenuBarExtra` app wiring a `StripController`. |
-| `SafetyStripCoreTests`, `SafetyStripKitTests` | test | swift-testing suites (see *Testing* below). |
+| `CXPare`    | C interop   | Exposes the frozen C ABI to Swift via a `module.modulemap`. Does **not** copy the header — `shim.h` `#include`s the single source of truth at `core-ffi/include/xpare.h`. |
+| `XPareCore` | Swift       | Safe `Transformer` wrapping the ABI (`transform`, `capabilities`, `abiVersion`), plus `TransformConfig`/`Operation`/`CaseKind` as `Codable` types that encode **exactly** the Rust JSON schema. The only target that links the staticlib. |
+| `XPareKit`  | Swift, no UI| The testable shell contract: `Pasteboard`, `ClipboardMonitor`, `HotkeyManager`, `Settings`, `StripController`, `PasteFileStore` (the sanctioned paste-as-file writer). |
+| `XPareApp`  | executable  | SwiftUI `MenuBarExtra` app wiring a `StripController`. |
+| `XPareCoreTests`, `XPareKitTests` | test | swift-testing suites (see *Testing* below). |
 
 ## Building
 
@@ -26,7 +26,7 @@ The Swift package links a **prebuilt** Rust staticlib, so build the core first:
 
 ```sh
 # from the repo root
-cargo build -p safetystrip-ffi --release      # -> target/release/libsafetystrip_ffi.a
+cargo build -p xpare-ffi --release      # -> target/release/libxpare_ffi.a
 cd shells/macos
 swift build                                    # compiles + links the app
 ```
@@ -45,7 +45,7 @@ cd shells/macos
 `Package.swift` links the staticlib with:
 
 ```swift
-.unsafeFlags(["-L../../target/release", "-lsafetystrip_ffi"])
+.unsafeFlags(["-L../../target/release", "-lxpare_ffi"])
 ```
 
 `-L../../target/release` is **relative to the package root** (`shells/macos`),
@@ -70,8 +70,8 @@ SwiftPM build — **no full Xcode required**:
 cd shells/macos
 ./package-app.sh --run        # build core + app, bundle it, sign, and open it
 # or build without launching:
-./package-app.sh              # -> dist/SafetyStrip.app
-open dist/SafetyStrip.app
+./package-app.sh              # -> dist/xPare.app
+open dist/xPare.app
 ```
 
 A ✂ **scissors** icon appears in the menu bar (no Dock icon — it's an
@@ -85,7 +85,7 @@ A ✂ **scissors** icon appears in the menu bar (no Dock icon — it's an
   whitespace. Toggle individual operations from the menu.
 - **Continuous mode (opt-in):** enable "Continuous monitoring" to strip
   automatically whenever the clipboard changes (500 ms poll). Off by default.
-- **Quit:** the menu's "Quit SafetyStrip" (⌘Q).
+- **Quit:** the menu's "Quit xPare" (⌘Q).
 
 Notes:
 
@@ -170,7 +170,7 @@ or extend the script, with a real signing identity:
    "Application is agent") to `true` in `Info.plist` so it runs as a menu-bar
    accessory with no Dock icon or main window. The `MenuBarExtra` scene is the
    entire UI.
-2. **Embed entitlements.** Use the checked-in `SafetyStrip.entitlements` as the
+2. **Embed entitlements.** Use the checked-in `xPare.entitlements` as the
    target's *Code Signing Entitlements*. Its contents are intentionally minimal
    (see below) and a CI check (`cargo xtask check-entitlements`) fails on any
    additional key.
@@ -184,7 +184,7 @@ or extend the script, with a real signing identity:
 
 ## Entitlements — minimal by design
 
-`SafetyStrip.entitlements` contains **only**:
+`xPare.entitlements` contains **only**:
 
 ```xml
 <key>com.apple.security.app-sandbox</key>
@@ -226,7 +226,7 @@ absent, if app-sandbox is missing/false, or if any banned key appears.
 **Real (compiles, links, and — where runnable — tested):**
 
 - The entire Swift source: C interop, the safe `Transformer`, the full shell
-  contract in `SafetyStripKit`, and the `MenuBarExtra` app. `swift build`
+  contract in `XPareKit`, and the `MenuBarExtra` app. `swift build`
   produces a working linked executable.
 - The FFI link against the real Rust staticlib, verified by passing integration
   tests that call the core and round-trip buffers.

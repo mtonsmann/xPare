@@ -1,5 +1,5 @@
 import Foundation
-import SafetyStripCore
+import XPareCore
 
 /// How the shell decides *when* to strip the clipboard.
 public enum StripMode: String, Codable, Sendable, CaseIterable {
@@ -41,7 +41,7 @@ public struct Settings: Codable, Equatable, Sendable {
     public var mode: StripMode
     /// The ordered pipeline of operations to apply, in execution order.
     /// Fully qualified to disambiguate from Foundation's `Operation` (NSOperation).
-    public var operations: [SafetyStripCore.Operation]
+    public var operations: [XPareCore.Operation]
     /// The global hotkey used in on-demand mode.
     public var hotkey: HotkeyCombo
     /// Poll interval (milliseconds) for continuous mode's change detection.
@@ -66,7 +66,7 @@ public struct Settings: Codable, Equatable, Sendable {
 
     public init(
         mode: StripMode = .onDemand,
-        operations: [SafetyStripCore.Operation] = Settings.defaultOperations,
+        operations: [XPareCore.Operation] = Settings.defaultOperations,
         hotkey: HotkeyCombo = .defaultCombo,
         pollIntervalMs: Int = 500,
         ordering: Ordering = .canonical,
@@ -101,7 +101,7 @@ public struct Settings: Codable, Equatable, Sendable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         mode = try c.decodeIfPresent(StripMode.self, forKey: .mode) ?? .onDemand
         operations =
-            try c.decodeIfPresent([SafetyStripCore.Operation].self, forKey: .operations)
+            try c.decodeIfPresent([XPareCore.Operation].self, forKey: .operations)
             ?? Settings.defaultOperations
         hotkey = try c.decodeIfPresent(HotkeyCombo.self, forKey: .hotkey) ?? .defaultCombo
         pollIntervalMs = try c.decodeIfPresent(Int.self, forKey: .pollIntervalMs) ?? 500
@@ -116,7 +116,7 @@ public struct Settings: Codable, Equatable, Sendable {
     /// A sensible starting pipeline: coerce rich text to plain (HTML strip is
     /// applied to the HTML representation during pasteboard read) and tidy
     /// whitespace. Order is significant.
-    public static let defaultOperations: [SafetyStripCore.Operation] = [
+    public static let defaultOperations: [XPareCore.Operation] = [
         .stripHtml,
         .collapseWhitespace,
         .trimTrailingWhitespace,
@@ -132,7 +132,7 @@ public struct Settings: Codable, Equatable, Sendable {
 
 extension Settings {
     /// The single `UserDefaults` key under which settings JSON is stored.
-    public static let defaultsKey = "com.safetystrip.settings"
+    public static let defaultsKey = "com.xpare.settings"
 
     /// Load settings from `UserDefaults`, falling back to defaults if absent or
     /// corrupt. Never throws — a bad stored blob degrades to defaults.

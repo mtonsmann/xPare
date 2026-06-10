@@ -1,15 +1,15 @@
 //! Performance benchmarks for the transformation core.
 //!
-//! Run with `cargo bench -p safetystrip-core` (or `make bench`). These measure
+//! Run with `cargo bench -p xpare-core` (or `make bench`). These measure
 //! throughput of the untrusted-input parsers (`strip_html` / `strip_markdown`), the
 //! default rich→plain pipeline, and the case transforms across input sizes and
 //! shapes — including the adversarial shapes whose *linear-time* behavior
 //! `core/tests/perf_guard.rs` asserts in CI. Benchmarks measure; the guard fails.
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use safetystrip_core::ops::html::strip_html;
-use safetystrip_core::ops::markdown::strip_markdown;
-use safetystrip_core::{transform, CaseKind, Config, Operation};
+use xpare_core::ops::html::strip_html;
+use xpare_core::ops::markdown::strip_markdown;
+use xpare_core::{transform, CaseKind, Config, Operation};
 
 /// A representative rich HTML fragment (headings, inline marks, link, list).
 fn html_block() -> &'static str {

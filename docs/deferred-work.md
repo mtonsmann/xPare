@@ -82,7 +82,7 @@ Nothing here is committed scope; it's a memory aid for the next maintainer.
 - ~~**Anti-slop parity for the Swift macOS shell.**~~ Largely delivered via
   `cargo xtask check-swift` (`make swift`): a **best-effort, macOS-only** tier that fronts
   `swift format lint --strict` (config in `shells/macos/.swift-format`), a `cargo build -p
-  safetystrip-ffi --release` + `swift test`, and a Sources-only line-coverage floor via
+  xpare-ffi --release` + `swift test`, and a Sources-only line-coverage floor via
   `llvm-cov` (`SWIFT_COVERAGE_FLOOR_PCT`, 95% — matching the Rust product floor; measured
   baseline ~96.0%). It runs in the `continue-on-error` `macos-shell` CI job (replacing the
   old `swift build` smoke), so the shell's tests now run in CI rather than only locally, and
@@ -90,7 +90,7 @@ Nothing here is committed scope; it's a memory aid for the next maintainer.
   with `swift format` so the strict lint passes; the coverage floor is a ratchet (raise,
   never lower). The OS-facing layers are tested headlessly — `SystemPasteboard` against an
   app-private `NSPasteboard(name:)`, the Carbon hot-key trampoline via a synthesized
-  `kEventHotKeyPressed` event — leaving only the `SafetyStripApp` SwiftUI executable
+  `kEventHotKeyPressed` event — leaving only the `XPareApp` SwiftUI executable
   unmeasured (it isn't linked into the test bundle; the analog of the Rust binary crates the
   workspace floor doesn't gate).
   SwiftLint (style/complexity, config in `shells/macos/.swiftlint.yml`) is wired as a

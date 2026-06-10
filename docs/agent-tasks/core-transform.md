@@ -51,7 +51,7 @@ pipeline, or the config schema. Copy the relevant parts into your working brief.
 
 ## Required evidence
 
-- `cargo test -p safetystrip-core`, `cargo clippy -p safetystrip-core --all-targets
+- `cargo test -p xpare-core`, `cargo clippy -p xpare-core --all-targets
   -- -D warnings`, `cargo fmt --all --check`, and `cargo xtask ci`.
 - The fuzz smoke command and its result if a hand-rolled parser changed.
 - Explicit statement: no ABI change, no new dependency, output behavior change (if

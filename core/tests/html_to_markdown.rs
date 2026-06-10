@@ -1,6 +1,6 @@
 use proptest::prelude::*;
-use safetystrip_core::ops::html_to_markdown::html_to_markdown;
-use safetystrip_core::{transform, Config, Operation};
+use xpare_core::ops::html_to_markdown::html_to_markdown;
+use xpare_core::{transform, Config, Operation};
 
 #[test]
 fn converts_common_web_structure() {

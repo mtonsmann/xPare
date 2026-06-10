@@ -1,5 +1,5 @@
 [package]
-name = "safetystrip-cli"
+name = "xpare-cli"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,10 +9,10 @@ repository.workspace = true
 # release. Marking it private (like xtask) keeps its `path` dep on core off the
 # cargo-deny wildcard check and prevents an accidental `cargo publish`.
 publish = false
-description = "Headless harness over safetystrip-core: read stdin, apply a JSON config, write stdout. The agent's own validation/fuzz driver."
+description = "Headless harness over xpare-core: read stdin, apply a JSON config, write stdout. The agent's own validation/fuzz driver."
 
 [[bin]]
-name = "safetystrip"
+name = "xpare"
 path = "src/main.rs"
 
 # Inherit the workspace lint policy. As a CLI, this binary legitimately writes to
@@ -23,4 +23,4 @@ workspace = true
 [dependencies]
 # Intentionally dependency-light: arguments are parsed by hand to keep the
 # harness boring and the dependency surface minimal. Config parsing lives in core.
-safetystrip-core = { path = "../core" }
+xpare-core = { path = "../core" }

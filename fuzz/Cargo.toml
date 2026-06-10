@@ -1,5 +1,5 @@
 [package]
-name = "safetystrip-fuzz"
+name = "xpare-fuzz"
 version = "0.0.0"
 publish = false
 edition = "2021"
@@ -14,7 +14,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
-safetystrip-core = { path = "../core" }
+xpare-core = { path = "../core" }
 
 [profile.release]
 debug = 1

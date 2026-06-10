@@ -5,7 +5,7 @@
 //! exact spelling (including percent-encoding) of every surviving parameter.
 //!
 //! These exercise the public function directly
-//! ([`safetystrip_core::ops::urls::clean_urls`]) — the load-bearing contract is the
+//! ([`xpare_core::ops::urls::clean_urls`]) — the load-bearing contract is the
 //! token-oriented, panic-free, idempotent transform documented on that function.
 //!
 //! NOTE: at the time these tests were written there is no `Operation::CleanUrls`
@@ -13,7 +13,7 @@
 //! function directly rather than routing through `transform`. The property
 //! strategies mirror `core/tests/determinism.rs`.
 
-use safetystrip_core::ops::urls::{clean_urls, TRACKING_PARAMS};
+use xpare_core::ops::urls::{clean_urls, TRACKING_PARAMS};
 
 use proptest::prelude::*;
 

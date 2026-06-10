@@ -4,7 +4,7 @@
 
 ## Goal
 
-Make SafetyStrip a repository where an agent cannot submit a plausible patch
+Make xPare a repository where an agent cannot submit a plausible patch
 without also submitting the evidence needed to trust it. Encode the
 verification-guided development loop (correctness brief → reference model /
 tests / properties / fuzz → implementation → deterministic gates → evidence

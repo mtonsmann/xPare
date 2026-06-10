@@ -1,6 +1,6 @@
 import Foundation
 import AppKit
-import SafetyStripCore
+import XPareCore
 
 /// What we read off the pasteboard before stripping: the best available
 /// representation plus a hint about which one it was, so the controller can

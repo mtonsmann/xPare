@@ -4,16 +4,16 @@ Status: **active** · Started: 2026-06-05
 
 ## Goal
 
-Add the repository plumbing for SafetyStrip's open-source macOS release model
+Add the repository plumbing for xPare's open-source macOS release model
 **without** claiming official downloadable binaries before Developer ID signing and
 notarization credentials exist. Ported and adapted from the upstream FormatStripper
-release track onto the SafetyStrip tree.
+release track onto the xPare tree.
 
 ## Key adaptation vs. upstream
 
 The upstream shell loaded a **dynamic** `libformatstripper_ffi.dylib` and embedded
 it under `Contents/Frameworks`, with a Makefile `abi-symbols` check over the dylib's
-exports. The SafetyStrip shell **statically links** `libsafetystrip_ffi.a` into the
+exports. The xPare shell **statically links** `libxpare_ffi.a` into the
 Swift executable, so:
 
 - There is **no embedded dylib** to copy, relocate, or sign separately.
@@ -67,7 +67,7 @@ Swift executable, so:
 - 2026-06-05: Adapt the upstream pipeline to **static linking** — drop the embedded
   dylib + `abi-symbols` steps; the single Mach-O is signed in place.
 - 2026-06-05: Keep official publication gated behind
-  `SAFETYSTRIP_ENABLE_OFFICIAL_RELEASE=true` + Apple secrets. Tag runs always build
+  `XPARE_ENABLE_OFFICIAL_RELEASE=true` + Apple secrets. Tag runs always build
   an unsigned preview artifact; they never publish it as an official download.
 - 2026-06-05: Put the release logic in `release.sh` (not the Makefile) to preserve
   the local "Makefile delegates; xtask/scripts are authoritative" convention.
@@ -77,7 +77,7 @@ Swift executable, so:
 
 ## Acceptance criteria
 
-- `make app` builds `shells/macos/dist/SafetyStrip.app`. **Verifiable locally.**
+- `make app` builds `shells/macos/dist/xPare.app`. **Verifiable locally.**
 - `make preview` writes an explicitly unsigned preview zip + checksum under
   `dist/release/`. **Verifiable locally (ad-hoc signing; no Apple account).**
 - `make dist` refuses without an exact `vX.Y.Z` (or `VERSION=`) and `CERT_NAME`.

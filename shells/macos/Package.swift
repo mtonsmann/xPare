@@ -1,13 +1,13 @@
 // swift-tools-version: 6.0
 import PackageDescription
 
-// SafetyStrip — macOS shell.
+// xPare — macOS shell.
 //
 // LINK-PATH ASSUMPTION
 // --------------------
 // The Rust core is built (out of tree) into the workspace target dir:
 //
-//     cargo build -p safetystrip-ffi --release   ->   target/release/libsafetystrip_ffi.a
+//     cargo build -p xpare-ffi --release   ->   target/release/libxpare_ffi.a
 //
 // This package lives at `shells/macos`, so the staticlib sits two directories
 // up at `../../target/release`. The linker flags below encode exactly that.
@@ -15,62 +15,62 @@ import PackageDescription
 //
 //     swift build -Xlinker -L/abs/path/to/dir
 //
-// We link the *static* archive (`-lsafetystrip_ffi`) so the shipping binary has
-// no runtime dependency on a SafetyStrip dylib. The Rust staticlib's own system
+// We link the *static* archive (`-lxpare_ffi`) so the shipping binary has
+// no runtime dependency on a xPare dylib. The Rust staticlib's own system
 // dependencies (-lSystem -lc -lm) are provided automatically by the macOS SDK
 // that SwiftPM already links, so no extra system libraries are required here.
 let coreLinkerSettings: [LinkerSetting] = [
     .unsafeFlags([
         "-L../../target/release",
-        "-lsafetystrip_ffi",
+        "-lxpare_ffi",
     ])
 ]
 
 let package = Package(
-    name: "SafetyStrip",
+    name: "xPare",
     platforms: [
         .macOS(.v14)
     ],
     products: [
-        .executable(name: "SafetyStripApp", targets: ["SafetyStripApp"]),
-        .library(name: "SafetyStripKit", targets: ["SafetyStripKit"]),
-        .library(name: "SafetyStripCore", targets: ["SafetyStripCore"]),
+        .executable(name: "XPareApp", targets: ["XPareApp"]),
+        .library(name: "XPareKit", targets: ["XPareKit"]),
+        .library(name: "XPareCore", targets: ["XPareCore"]),
     ],
     targets: [
-        // C interop: surfaces the frozen `core-ffi/include/safetystrip.h` to Swift.
+        // C interop: surfaces the frozen `core-ffi/include/xpare.h` to Swift.
         .target(
-            name: "CSafetyStrip"
+            name: "CXPare"
         ),
 
         // Safe Swift wrapper over the C ABI. This is the only target that links
         // the Rust staticlib, so its dependents inherit the linker settings.
         .target(
-            name: "SafetyStripCore",
-            dependencies: ["CSafetyStrip"],
+            name: "XPareCore",
+            dependencies: ["CXPare"],
             linkerSettings: coreLinkerSettings
         ),
 
         // Headless shell logic (no UI): pasteboard, monitor, hotkey, settings,
         // controller. Unit-testable without a running app.
         .target(
-            name: "SafetyStripKit",
-            dependencies: ["SafetyStripCore"]
+            name: "XPareKit",
+            dependencies: ["XPareCore"]
         ),
 
         // SwiftUI MenuBarExtra app. Wires a StripController to the menu UI.
         .executableTarget(
-            name: "SafetyStripApp",
-            dependencies: ["SafetyStripKit", "SafetyStripCore"]
+            name: "XPareApp",
+            dependencies: ["XPareKit", "XPareCore"]
         ),
 
         // Tests.
         .testTarget(
-            name: "SafetyStripCoreTests",
-            dependencies: ["SafetyStripCore"]
+            name: "XPareCoreTests",
+            dependencies: ["XPareCore"]
         ),
         .testTarget(
-            name: "SafetyStripKitTests",
-            dependencies: ["SafetyStripKit", "SafetyStripCore"]
+            name: "XPareKitTests",
+            dependencies: ["XPareKit", "XPareCore"]
         ),
     ]
 )

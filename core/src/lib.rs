@@ -1,4 +1,4 @@
-//! SafetyStrip transformation core.
+//! xPare transformation core.
 //!
 //! Pure, deterministic text transforms: `String` in, `String` out, selected by a
 //! [`Config`]. This crate is the untrusted-input path — it is fed arbitrary,
@@ -38,7 +38,7 @@ pub use pipeline::transform;
 /// and no matching free. `config_version` is asserted against [`CONFIG_VERSION`]
 /// by a unit test so the two cannot silently diverge.
 pub const CAPABILITIES_JSON: &str = concat!(
-    r#"{"name":"safetystrip-core","version":""#,
+    r#"{"name":"xpare-core","version":""#,
     env!("CARGO_PKG_VERSION"),
     r#"","config_version":2,"ordering":["canonical","as_given"],"operations":["#,
     r#"{"op":"strip_html"},"#,

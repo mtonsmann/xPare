@@ -8,7 +8,7 @@
 # re-running it on unchanged code proves nothing new and it is never scheduled.
 #
 # A *surviving* mutant means a line was changed and NO test failed — i.e. dead code or an
-# under-asserted test. SafetyStrip's oracles (the reference interpreter in
+# under-asserted test. xPare's oracles (the reference interpreter in
 # tests/reference_transform.rs, proptest, the corpus, golden tests) make the score
 # high-signal: most product logic should be load-bearing.
 

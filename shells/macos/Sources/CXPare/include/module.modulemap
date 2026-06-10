@@ -1,10 +1,10 @@
-// Exposes the frozen SafetyStrip C ABI to Swift as the `CSafetyStrip` module.
+// Exposes the frozen xPare C ABI to Swift as the `CXPare` module.
 //
 // We do NOT copy the header into this tree: `shim.h` re-includes the single
-// source-of-truth header checked in at `core-ffi/include/safetystrip.h` (six
+// source-of-truth header checked in at `core-ffi/include/xpare.h` (six
 // directories up from this file). Keeping one header avoids ABI drift between
 // the Rust-generated header and what Swift sees.
-module CSafetyStrip {
+module CXPare {
     header "shim.h"
     export *
 }

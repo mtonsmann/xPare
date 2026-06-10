@@ -1,4 +1,4 @@
-# SafetyStrip release fuzz.
+# xPare release fuzz.
 #
 # Manually dispatched on a release-candidate ref. The release workflow checks for a
 # successful run on the exact tag SHA before it packages or publishes release assets.
@@ -45,7 +45,7 @@ jobs:
             echo "minutes_per_target must be between 1 and 45."
             exit 1
           fi
-          echo "SS_FUZZ_SMOKE_SECONDS=$(( MINUTES_PER_TARGET * 60 ))" >> "${GITHUB_ENV}"
+          echo "XP_FUZZ_SMOKE_SECONDS=$(( MINUTES_PER_TARGET * 60 ))" >> "${GITHUB_ENV}"
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable

@@ -28,7 +28,7 @@ sanctioned, opt-in exception — the paste-as-file feature — bounded by rule 2
    owner-only, sandbox-container temp dir, Spotlight/backup-excluded, deleted when
    the pasteboard moves on / on launch / on quit) are documented in `SECURITY.md`
    ("Opt-in paste-as-file exception") and enforced by `check-no-content-logging`,
-   which honors the `safetystrip:allow-content-persistence` marker **only** in
+   which honors the `xpare:allow-content-persistence` marker **only** in
    `PasteFileStore.swift`. No other content persistence is permitted, and the
    exception must never grow a second writer without repeating this whole
    posture-change exercise.
@@ -57,7 +57,7 @@ sanctioned, opt-in exception — the paste-as-file feature — bounded by rule 2
    personal-info, file, automation, or accessibility grants. See
    [macos-posture](macos-posture.md).
 8. **Local pasteboard writers are out of the confidentiality boundary.** A same-user
-   process that can write the system pasteboard can race SafetyStrip or feed huge
+   process that can write the system pasteboard can race xPare or feed huge
    rich data. That can cause missed intermediate states or local DoS pressure; it
    must not create exfiltration, persistence, logging, or memory-unsafety.
 9. **Resource limits apply before the core transform, after platform extraction.**

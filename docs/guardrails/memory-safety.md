@@ -55,7 +55,7 @@ The model is split deliberately:
 - `cargo clippy --workspace --all-targets -- -D warnings` — the FFI's
   `deny(unsafe_op_in_unsafe_fn)` and the workspace `-D warnings` catch unjustified or
   sloppy unsafe.
-- `cargo test -p safetystrip-ffi` — ABI round-trip and ownership tests.
+- `cargo test -p xpare-ffi` — ABI round-trip and ownership tests.
 - The fuzz suite (`fuzz/`) backs the "no panic to catch in the first place" half.
 
 ## What a PR must call out

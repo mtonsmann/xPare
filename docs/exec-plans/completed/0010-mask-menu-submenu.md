@@ -63,14 +63,14 @@ git diff --check
 If Swift build lacks the Rust staticlib, first run:
 
 ```sh
-cargo build -p safetystrip-ffi --release
+cargo build -p xpare-ffi --release
 ```
 
 ## Verification Result
 
 Completed on 2026-06-06:
 
-- `cargo build -p safetystrip-ffi --release`
+- `cargo build -p xpare-ffi --release`
 - `swift build --package-path shells/macos`
 - `cargo run -p xtask -- check-no-content-logging`
 - `cargo run -p xtask -- check-clipboard-safety`

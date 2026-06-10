@@ -1,4 +1,4 @@
-# SafetyStrip CI.
+# xPare CI.
 #
 # The portable gate is `cargo xtask ci` (see xtask/src/main.rs): fmt --check,
 # clippy -D warnings, the full test suite, every structural invariant check
@@ -193,7 +193,7 @@ jobs:
       # campaign.
       - name: Run fuzz targets briefly
         env:
-          SS_FUZZ_SMOKE_SECONDS: "30"
+          XP_FUZZ_SMOKE_SECONDS: "30"
         run: cargo run -p xtask -- check-fuzz
 
   # ----------------------------------------------------------------------------
