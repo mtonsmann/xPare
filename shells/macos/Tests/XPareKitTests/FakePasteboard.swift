@@ -11,6 +11,16 @@ final class FakePasteboard: PasteboardProtocol {
     private(set) var materializedReadCount: Int = 0
     var snapshot: PasteboardSnapshot?
     var rawRepresentationBytes: Int?
+    /// Simulates the nspasteboard.org "do not process" marker types
+    /// (concealed/transient/auto-generated) being declared by the writer.
+    var hasDoNotProcessMarker: Bool = false
+    /// When true, the next `writePlain` simulates the system rejecting the
+    /// string write AFTER `clearContents` already ran (mirroring
+    /// `SystemPasteboard`): the old contents are gone, the new string never
+    /// landed, and the generation still advanced (the clear bumps it).
+    var failNextPlainWrite = false
+    /// Same simulation for `writeFileURL`.
+    var failNextFileURLWrite = false
 
     init(snapshot: PasteboardSnapshot? = nil, rawRepresentationBytes: Int? = nil) {
         self.snapshot = snapshot
@@ -33,23 +43,32 @@ final class FakePasteboard: PasteboardProtocol {
         return .content(PasteboardRead(snapshot: snapshot, changeCount: generation))
     }
 
-    @discardableResult
-    func writePlain(_ text: String) -> Int {
+    func writePlain(_ text: String) -> Int? {
+        // The clear half of the in-place rewrite always runs: it empties the
+        // pasteboard and bumps the generation even when the set half fails.
+        changeCount += 1
+        snapshot = nil
+        rawRepresentationBytes = nil
+        if failNextPlainWrite {
+            failNextPlainWrite = false
+            return nil
+        }
         writes.append(text)
         snapshot = PasteboardSnapshot(text: text, kind: .plain)
-        rawRepresentationBytes = nil
-        changeCount += 1
         return changeCount
     }
 
-    @discardableResult
-    func writeFileURL(_ url: URL) -> Int {
-        fileURLWrites.append(url)
+    func writeFileURL(_ url: URL) -> Int? {
         // A file-URL pasteboard has no text-like representation to read back,
         // mirroring SystemPasteboard.writeFileURL (which writes only the URL type).
+        changeCount += 1
         snapshot = nil
         rawRepresentationBytes = nil
-        changeCount += 1
+        if failNextFileURLWrite {
+            failNextFileURLWrite = false
+            return nil
+        }
+        fileURLWrites.append(url)
         return changeCount
     }
 

@@ -12,10 +12,10 @@ import Carbon.HIToolbox
 /// dispatcher and the fire callback drives UI/clipboard work.
 @MainActor
 public final class HotkeyManager {
-    /// Carbon constants for the default ⌥⌘V combo, re-derived from the headers so
+    /// Carbon constants for the default ⌃⌥⌘V combo, re-derived from the headers so
     /// they always match the platform's real key/modifier values.
     public static var defaultKeyCode: UInt32 { UInt32(kVK_ANSI_V) }
-    public static var defaultModifiers: UInt32 { UInt32(cmdKey | optionKey) }
+    public static var defaultModifiers: UInt32 { UInt32(cmdKey | optionKey | controlKey) }
 
     /// Called on the main actor each time the hotkey fires.
     private let onFire: () -> Void
@@ -47,8 +47,12 @@ public final class HotkeyManager {
 
         // Install one process-wide handler for hot-key-pressed events the first
         // time any manager registers; route fires through the shared dispatch
-        // table keyed by our id.
-        HotkeyDispatch.shared.ensureHandlerInstalled(into: &eventHandlerRef)
+        // table keyed by our id. A failed install means the hotkey would never
+        // fire even if RegisterEventHotKey succeeded — treat it as a
+        // registration failure so the caller can surface a dead hotkey.
+        guard HotkeyDispatch.shared.ensureHandlerInstalled(into: &eventHandlerRef) else {
+            return false
+        }
         HotkeyDispatch.shared.register(id: hotKeyID) { [weak self] in
             self?.onFire()
         }
@@ -93,9 +97,9 @@ public final class HotkeyManager {
 final class HotkeyDispatch {
     static let shared = HotkeyDispatch()
 
-    /// Four-char signature identifying our hot keys (`'SfSt'`).
+    /// Four-char signature identifying our hot keys (`'xPar'`).
     static let signature: OSType = {
-        let chars: [UInt8] = Array("SfSt".utf8)
+        let chars: [UInt8] = Array("xPar".utf8)
         return chars.reduce(OSType(0)) { ($0 << 8) | OSType($1) }
     }()
 
@@ -128,10 +132,16 @@ final class HotkeyDispatch {
     }
 
     /// Install the single Carbon event handler for `kEventHotKeyPressed` once.
-    /// `outRef` receives the per-call handler ref so the owning manager can keep
-    /// it alive; in practice all managers share one installed handler.
-    func ensureHandlerInstalled(into outRef: inout EventHandlerRef?) {
-        guard !handlerInstalled else { return }
+    /// `outRef` receives the shared handler ref so the owning manager can keep
+    /// it alive; in practice all managers share one installed handler. Returns
+    /// whether a handler is installed — `false` propagates an
+    /// `InstallEventHandler` failure so registration can report a dead hotkey
+    /// instead of silently never firing.
+    func ensureHandlerInstalled(into outRef: inout EventHandlerRef?) -> Bool {
+        if handlerInstalled {
+            outRef = eventHandlerRef
+            return true
+        }
 
         var eventType = EventTypeSpec(
             eventClass: OSType(kEventClassKeyboard),
@@ -147,11 +157,11 @@ final class HotkeyDispatch {
             nil,
             &ref
         )
-        if status == noErr {
-            handlerInstalled = true
-            eventHandlerRef = ref
-            outRef = ref
-        }
+        guard status == noErr else { return false }
+        handlerInstalled = true
+        eventHandlerRef = ref
+        outRef = ref
+        return true
     }
 
     /// Held so the installed handler is never released for the process lifetime.

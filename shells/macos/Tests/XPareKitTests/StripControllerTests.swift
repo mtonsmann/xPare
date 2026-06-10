@@ -191,7 +191,7 @@ struct StripControllerTests {
         )
 
         let outcome = await controller.stripNow(trigger: .manual)
-        #expect(outcome == .tooLarge(bytes: 1000))
+        #expect(outcome == .tooLarge(bytes: 1000, rich: false))
         #expect(pb.writes.isEmpty, "oversized clipboard must be left untouched")
     }
 
@@ -215,7 +215,9 @@ struct StripControllerTests {
         )
 
         let outcome = await controller.stripNow(trigger: .manual)
-        #expect(outcome == .tooLarge(bytes: 1_000))
+        // The refusal must name the rich representation so the surfaced status
+        // explains why a small-looking selection was refused.
+        #expect(outcome == .tooLarge(bytes: 1_000, rich: true))
         #expect(
             pb.materializedReadCount == 0,
             "oversized rich representations must be rejected before decode")
@@ -757,6 +759,110 @@ struct StripControllerTests {
         let outcome = await controller.stripNow(trigger: .manual)
         #expect(outcome == .failed)
         #expect(pb.writes.isEmpty)
+    }
+
+    /// A pasteboard write the system rejects must surface `.writeFailed` and
+    /// must NOT be recorded as a self-write: the cleared generation is someone
+    /// else's to process, so a later continuous-mode change report for it is
+    /// still read instead of being suppressed as our own.
+    @Test func failedPlainWriteSurfacesWriteFailedAndRecordsNoSelfWrite() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let pb = FakePasteboard(
+            snapshot:
+                PasteboardSnapshot(text: "<p>hi</p>", kind: .html))
+        pb.failNextPlainWrite = true
+        let controller = StripController(
+            settings: Settings(mode: .onDemand, operations: [.stripHtml]),
+            pasteboard: pb,
+            defaults: defaults
+        )
+
+        let outcome = await controller.stripNow(trigger: .manual)
+        #expect(outcome == .writeFailed)
+        #expect(pb.writes.isEmpty, "the failed write must not appear as a success")
+
+        // The post-clear generation must not be suppressed as a self-write: a
+        // continuous-mode report for it still attempts a read (and finds the
+        // pasteboard empty, because the clear destroyed the old contents).
+        let readsBefore = pb.readBestCalls
+        let followUp = await controller.stripNow(trigger: .clipboardChanged)
+        #expect(followUp == .empty)
+        #expect(
+            pb.readBestCalls == readsBefore + 1,
+            "a failed write must not register a self-write generation")
+    }
+
+    /// nspasteboard.org convention: continuous mode must leave content marked
+    /// concealed/transient/auto-generated untouched — without even reading it.
+    @Test func continuousTriggerSkipsDoNotProcessMarkedContent() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let transformer = RecordingTransformer(output: "should not run")
+        let pb = FakePasteboard(
+            snapshot:
+                PasteboardSnapshot(text: "hunter2  ", kind: .plain))
+        pb.hasDoNotProcessMarker = true
+        let controller = StripController(
+            settings: Settings(mode: .continuous, operations: [.collapseWhitespace]),
+            pasteboard: pb,
+            transformer: transformer,
+            defaults: defaults
+        )
+
+        let outcome = await controller.stripNow(trigger: .clipboardChanged)
+        #expect(outcome == .skippedConcealed)
+        #expect(pb.readBestCalls == 0, "marked content must be skipped before any read")
+        #expect(transformer.callCount == 0)
+        #expect(pb.writes.isEmpty)
+    }
+
+    /// The marker only gates *automatic* processing: a manual trigger is a
+    /// deliberate user action and still strips marked content.
+    @Test func manualTriggerStillProcessesMarkedContent() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let pb = FakePasteboard(
+            snapshot:
+                PasteboardSnapshot(text: "spaced  out", kind: .plain))
+        pb.hasDoNotProcessMarker = true
+        let controller = StripController(
+            settings: Settings(mode: .onDemand, operations: [.collapseWhitespace]),
+            pasteboard: pb,
+            defaults: defaults
+        )
+
+        let outcome = await controller.stripNow(trigger: .manual)
+        #expect(outcome == .stripped(changed: true))
+        #expect(pb.writes == ["spaced out"])
+    }
+
+    /// The hotkey registration result is surfaced as observable state plus a
+    /// callback (the success path is what's drivable headlessly; the failure
+    /// path shares the same single `setHotkeyActive` funnel).
+    @Test func activateSurfacesHotkeyRegistrationState() throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let controller = StripController(
+            settings: Settings(mode: .onDemand, operations: [.stripHtml]),
+            pasteboard: FakePasteboard(),
+            defaults: defaults
+        )
+        var reported: [Bool] = []
+        controller.onHotkeyStateChange = { reported.append($0) }
+
+        #expect(controller.isHotkeyActive == false, "inactive before activate()")
+        controller.activate()
+        #expect(controller.isHotkeyActive == true)
+        #expect(reported == [true])
+
+        controller.deactivate()
+        #expect(controller.isHotkeyActive == false, "deactivate() reports the hotkey gone")
+        #expect(reported == [true, false])
     }
 }
 

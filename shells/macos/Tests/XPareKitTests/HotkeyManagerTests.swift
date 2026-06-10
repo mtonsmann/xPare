@@ -14,17 +14,40 @@ import Testing
 @Suite struct HotkeyManagerTests {
 
     @Test func defaultComboMatchesCarbonConstants() {
+        // The default chord is ⌃⌥⌘V — Control included so it cannot shadow
+        // apps' common in-app ⌥⌘V ("Paste and Match Style") bindings.
         #expect(HotkeyManager.defaultKeyCode == UInt32(kVK_ANSI_V))
-        #expect(HotkeyManager.defaultModifiers == UInt32(cmdKey | optionKey))
+        #expect(HotkeyManager.defaultModifiers == UInt32(cmdKey | optionKey | controlKey))
         // And the Carbon-free Settings mirror agrees with the Carbon-derived values.
         #expect(HotkeyCombo.defaultCombo.keyCode == HotkeyManager.defaultKeyCode)
         #expect(HotkeyCombo.defaultCombo.modifiers == HotkeyManager.defaultModifiers)
     }
 
-    @Test func dispatchSignatureIsTheFourCharCodeSfSt() {
-        // 'SfSt' packed big-endian into an OSType.
-        let expected: OSType = Array("SfSt".utf8).reduce(OSType(0)) { ($0 << 8) | OSType($1) }
+    /// The display/recorder masks mirrored in the Carbon-free settings model
+    /// must stay pinned to the real Carbon header values.
+    @Test func displayMasksMatchCarbonConstants() {
+        #expect(HotkeyCombo.commandMask == UInt32(cmdKey))
+        #expect(HotkeyCombo.shiftMask == UInt32(shiftKey))
+        #expect(HotkeyCombo.optionMask == UInt32(optionKey))
+        #expect(HotkeyCombo.controlMask == UInt32(controlKey))
+    }
+
+    @Test func dispatchSignatureIsTheFourCharCodeXPar() {
+        // 'xPar' packed big-endian into an OSType.
+        let expected: OSType = Array("xPar".utf8).reduce(OSType(0)) { ($0 << 8) | OSType($1) }
         #expect(HotkeyDispatch.signature == expected)
+    }
+
+    /// `ensureHandlerInstalled` reports success (it installs headlessly) and
+    /// hands back the shared ref on repeat calls — the Bool is what `register`
+    /// uses to refuse a hotkey whose events could never be delivered.
+    @Test func ensureHandlerInstalledReportsSuccessAndSharesTheRef() {
+        var first: EventHandlerRef?
+        #expect(HotkeyDispatch.shared.ensureHandlerInstalled(into: &first))
+
+        var second: EventHandlerRef?
+        #expect(HotkeyDispatch.shared.ensureHandlerInstalled(into: &second))
+        #expect(second == first, "repeat installs must share the one live handler")
     }
 
     @Test func allocatedIdsAreProcessUnique() {

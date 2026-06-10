@@ -26,9 +26,22 @@ public enum StripOutcome: Equatable, Sendable {
     /// The requested one-shot command does not apply to the current clipboard
     /// representation. Carries no clipboard content.
     case notApplicable
+    /// The transformed result could not be written back: the system rejected
+    /// the pasteboard write *after* the in-place rewrite had already cleared
+    /// the old contents. Surfaced (instead of being recorded as a successful
+    /// self-write) so the user learns the clipboard may now be empty.
+    case writeFailed
+    /// Continuous mode saw content carrying an nspasteboard.org "do not
+    /// process" marker (concealed/transient/auto-generated — password managers
+    /// and the like) and left it untouched without even reading it. Manual
+    /// triggers never produce this: an explicit user action still runs.
+    case skippedConcealed
     /// The clipboard exceeded the shell's safe size ceiling and was left untouched
-    /// (no transform attempted). Carries only the byte count, never content.
-    case tooLarge(bytes: Int)
+    /// (no transform attempted). `rich` records WHY for an honest status line:
+    /// `true` when a rich representation (raw HTML/RTF bytes, or their extracted
+    /// text) blew the ceiling, `false` for an oversized plain string. Carries
+    /// only the byte count, never content.
+    case tooLarge(bytes: Int, rich: Bool)
 }
 
 /// Ties the pieces together: read the pasteboard → build a ``TransformConfig``
@@ -70,6 +83,17 @@ public final class StripController {
     /// Called on the main actor when the controller starts (`true`) or stops
     /// (`false`) showing the threshold-gated "Stripping…" indicator. Set by the UI.
     public var onStrippingChange: ((Bool) -> Void)?
+
+    /// Called on the main actor each time a hotkey (re)registration attempt
+    /// resolves, with the resulting active state. Set by the UI so a failed
+    /// Carbon registration is surfaced (e.g. a menu "hotkey inactive" line)
+    /// instead of leaving a silently dead hotkey.
+    public var onHotkeyStateChange: ((Bool) -> Void)?
+
+    /// Whether the global hotkey is currently registered with the OS. `false`
+    /// before ``activate()``, after ``deactivate()``, and after a failed
+    /// registration attempt.
+    public private(set) var isHotkeyActive = false
 
     /// Current settings. Mutating via ``update(_:)`` re-applies side effects
     /// (monitor/hotkey) and persists.
@@ -130,6 +154,7 @@ public final class StripController {
         continuousStripPending = false
         hotkey?.unregister()
         hotkey = nil
+        setHotkeyActive(false)
         pasteFileStore.removeAll()
         pasteFileChangeCount = nil
     }
@@ -206,6 +231,15 @@ public final class StripController {
             return .stripped(changed: false)
         }
 
+        // nspasteboard.org convention (privacy): password managers and similar
+        // tools mark secrets/ephemeral buffers with a "do not process" type.
+        // An automatic continuous-mode pass must honor the marker and leave the
+        // content untouched — before reading it at all. A manual trigger
+        // (hotkey / menu) is a deliberate user action and still runs.
+        if trigger == .clipboardChanged, pasteboard.hasDoNotProcessMarker {
+            return .skippedConcealed
+        }
+
         let read: PasteboardRead
         switch readWithinCeiling() {
         case .ok(let content):
@@ -275,7 +309,15 @@ public final class StripController {
         if let priorPlain, priorPlain == output {
             return .stripped(changed: false)
         }
-        lastSelfWriteChangeCount = pasteboard.writePlain(output)
+        guard let generation = pasteboard.writePlain(output) else {
+            // The system rejected the write after the old contents were already
+            // cleared. Do NOT record a self-write generation — the clipboard
+            // holds the cleared generation, not our output, and suppressing it
+            // would hide the very change the user needs to notice. Surface the
+            // (content-free) failure instead.
+            return .writeFailed
+        }
+        lastSelfWriteChangeCount = generation
         return .stripped(changed: true)
     }
 
@@ -295,11 +337,14 @@ public final class StripController {
         case .empty:
             return .bail(.empty)
         case .tooLarge(let bytes, _):
-            return .bail(.tooLarge(bytes: bytes))
+            // `readBest` size-checks only raw *rich* representations (HTML/RTF
+            // bytes), so this refusal is always about rich content.
+            return .bail(.tooLarge(bytes: bytes, rich: true))
         case .content(let content):
             let byteCount = content.snapshot.text.utf8.count
             if byteCount > maxInputBytes {
-                return .bail(.tooLarge(bytes: byteCount))
+                return .bail(
+                    .tooLarge(bytes: byteCount, rich: content.snapshot.kind != .plain))
             }
             return .ok(content)
         }
@@ -321,14 +366,21 @@ public final class StripController {
     /// Opt-in paste-as-file: when enabled and the transformed result exceeds the
     /// user's threshold, persist it via the (sanctioned) ``PasteFileStore`` and
     /// put a file reference on the pasteboard instead of the raw string. Returns
-    /// `nil` — including on a failed file write — to let the caller degrade to
-    /// the normal in-place plain write so the strip result is never lost.
+    /// `nil` — including on a failed file write or a failed pasteboard write —
+    /// to let the caller degrade to the normal in-place plain write so the strip
+    /// result is never lost.
     private func writeAsFileIfLarge(_ output: String) -> StripOutcome? {
         guard settings.pasteLargeAsFile,
             output.utf8.count > settings.pasteAsFileThresholdBytes,
             let fileURL = pasteFileStore.write(output)
         else { return nil }
-        let generation = pasteboard.writeFileURL(fileURL)
+        guard let generation = pasteboard.writeFileURL(fileURL) else {
+            // The system rejected the URL write: nothing references the file
+            // just persisted, so delete it (lifetime minimization) and degrade
+            // to the plain write path.
+            pasteFileStore.removeAll()
+            return nil
+        }
         lastSelfWriteChangeCount = generation
         pasteFileChangeCount = generation
         return .strippedToFile
@@ -360,7 +412,20 @@ public final class StripController {
                 Task { @MainActor in _ = await self.stripNow(trigger: .manual) }
             }
         }
-        hotkey?.register(keyCode: combo.keyCode, modifiers: combo.modifiers)
+        // Registration can fail (Carbon error, chord taken by another app). The
+        // result must reach the UI — a silently dead hotkey looks identical to
+        // a working one until the user needs it.
+        let registered =
+            hotkey?.register(keyCode: combo.keyCode, modifiers: combo.modifiers) ?? false
+        setHotkeyActive(registered)
+    }
+
+    /// Record the hotkey's registration state and notify the UI. Always fires
+    /// the callback (even when unchanged) so a re-registration attempt after a
+    /// failure refreshes the surfaced state.
+    private func setHotkeyActive(_ active: Bool) {
+        isHotkeyActive = active
+        onHotkeyStateChange?(active)
     }
 
     private func applyMonitorForCurrentMode() {
