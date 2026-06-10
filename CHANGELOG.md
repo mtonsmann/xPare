@@ -6,6 +6,15 @@ follow semver over the public surface — the C ABI, the config schema, and the
 CLI flags (see [`docs/release-model.md`](docs/release-model.md), "Versioning
 and stability").
 
+## 1.0.0 — 2026-06-10
+
+First stable release. Content-identical to 1.0.0-rc.3, which passed the full
+release gauntlet: the SHA-exact fuzz gate, a clean cross-machine launch test,
+and the first end-to-end Developer ID sign -> notarize (Accepted) -> staple ->
+Gatekeeper-accepted run. From this release the public surface is frozen under
+semver: the C ABI (v3), the config schema (v2), and the CLI flags. See the
+release-candidate entries below for everything that landed on the way here.
+
 ## 1.0.0-rc.3 — 2026-06-10 (release candidate)
 
 ### Fixed
