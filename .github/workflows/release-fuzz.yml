@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       minutes_per_target:
-        description: "Minutes per cargo-fuzz target (1-45)."
+        description: "Minutes per cargo-fuzz target (1-40)."
         required: true
         default: "30"
         type: number
@@ -45,8 +45,12 @@ jobs:
             echo "minutes_per_target must be an integer."
             exit 1
           fi
-          if (( MINUTES_PER_TARGET < 1 || MINUTES_PER_TARGET > 45 )); then
-            echo "minutes_per_target must be between 1 and 45."
+          # Upper bound derives from the job timeout: 8 sequential targets +
+          # ~10 min of toolchain/build/upload overhead must fit timeout-minutes
+          # (330), so floor((330 - 10) / 8) = 40. A 45m/target run is 360 min of
+          # fuzzing alone — guaranteed to be timeout-killed with nothing to show.
+          if (( MINUTES_PER_TARGET < 1 || MINUTES_PER_TARGET > 40 )); then
+            echo "minutes_per_target must be between 1 and 40 (8 sequential targets must fit the 330-minute job timeout)."
             exit 1
           fi
           echo "XP_FUZZ_SMOKE_SECONDS=$(( MINUTES_PER_TARGET * 60 ))" >> "${GITHUB_ENV}"
