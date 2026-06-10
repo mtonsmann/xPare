@@ -5,13 +5,20 @@
 # final >= 30m/target — see the gate step), then runs the full gate, builds the
 # app bundle, and uploads an explicitly UNSIGNED preview artifact — it needs no
 # Apple secrets, so it works on every tag and every fork. `publish-official`
-# runs whenever the repo variable XPARE_ENABLE_OFFICIAL_RELEASE == 'true'; it
-# does NOT silently skip on missing credentials — a validation step FAILS the
-# job if any Apple Developer ID / notary secret is absent. It signs with the
-# checked App Sandbox entitlements, notarizes, publishes the GitHub Release,
-# then attaches a build-provenance attestation and an SPDX SBOM to the assets.
-# Signing/notary credentials are NEVER required for pull-request CI (see
-# .github/workflows/ci.yml).
+# runs whenever the repo variable XPARE_ENABLE_OFFICIAL_RELEASE == 'true' AND a
+# required reviewer approves the `release` environment deployment (the human
+# gate sits BEFORE signing, so a stolen tag push cannot mint a signed binary);
+# it does NOT silently skip on missing credentials — a validation step FAILS
+# the job if any Apple secret is absent. All five Apple secrets live in the
+# `release` environment (tag-scoped, approval-gated), not at repo level:
+# the Developer ID Application cert (MACOS_CERTIFICATE_P12_BASE64 + _PASSWORD)
+# and an App Store Connect API key for notarization (MACOS_NOTARY_KEY_P8_BASE64
+# + MACOS_NOTARY_KEY_ID + MACOS_NOTARY_ISSUER_ID — a per-key-revocable,
+# Developer-role key; no personal Apple ID credential ever reaches CI). It
+# signs with the checked App Sandbox entitlements, notarizes, publishes the
+# GitHub Release, then attaches a build-provenance attestation and an SPDX
+# SBOM to the assets. Signing/notary credentials are NEVER required for
+# pull-request CI (see .github/workflows/ci.yml).
 name: Release
 
 on:
@@ -239,7 +246,14 @@ jobs:
   publish-official:
     name: sign, notarize, and publish
     needs: validate
+    # The job-level `if` is evaluated BEFORE environment protection, so when the
+    # variable is unset (signing not configured) the job skips cleanly without
+    # parking a deployment-approval request nobody can satisfy.
     if: ${{ vars.XPARE_ENABLE_OFFICIAL_RELEASE == 'true' }}
+    # Approval-gated, tag-scoped home of the five Apple secrets. A required
+    # reviewer must approve each run before the secrets resolve — the human gate
+    # sits before signing, not just before publishing the draft release.
+    environment: release
     # Pinned runner image, NOT macos-latest: this job signs and notarizes the
     # shipped artifacts, so the Xcode/codesign/notarytool toolchain must not
     # drift silently when GitHub repoints the -latest alias.
@@ -286,21 +300,24 @@ jobs:
       # paths from $RUNNER_TEMP here and export them for the later steps.
       - name: Prepare signing paths
         run: |
-          echo "KEYCHAIN_PATH=${RUNNER_TEMP}/xpare-signing.keychain-db" >> "${GITHUB_ENV}"
-          echo "CERTIFICATE_PATH=${RUNNER_TEMP}/developer-id.p12" >> "${GITHUB_ENV}"
+          {
+            echo "KEYCHAIN_PATH=${RUNNER_TEMP}/xpare-signing.keychain-db"
+            echo "CERTIFICATE_PATH=${RUNNER_TEMP}/developer-id.p12"
+            echo "NOTARY_KEY_PATH=${RUNNER_TEMP}/notary-authkey.p8"
+          } >> "${GITHUB_ENV}"
 
       - name: Validate required Apple secrets
         env:
           MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-          MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
-          MACOS_NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
-          MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+          MACOS_NOTARY_KEY_P8_BASE64: ${{ secrets.MACOS_NOTARY_KEY_P8_BASE64 }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
         run: |
           set -euo pipefail
           for name in \
             MACOS_CERTIFICATE_P12_BASE64 MACOS_CERTIFICATE_PASSWORD \
-            MACOS_NOTARY_APPLE_ID MACOS_NOTARY_TEAM_ID MACOS_NOTARY_PASSWORD; do
+            MACOS_NOTARY_KEY_P8_BASE64 MACOS_NOTARY_KEY_ID MACOS_NOTARY_ISSUER_ID; do
             if [ -z "${!name}" ]; then echo "Missing required secret: ${name}"; exit 1; fi
           done
 
@@ -329,16 +346,25 @@ jobs:
           echo "CERT_NAME=${identity}" >> "${GITHUB_ENV}"
 
       - name: Store notary credentials
+        # App Store Connect API key, not an Apple ID + app-specific password:
+        # per-key revocable, immune to interactive 2FA churn, and no personal
+        # account credential ever reaches the runner. `store-credentials` wraps
+        # the key in the same keychain profile `release.sh dist` already
+        # consumes, so the local NOTARY_PROFILE flow is identical. The .p8 stays
+        # on disk in RUNNER_TEMP for the job's lifetime (notarytool may read it
+        # through the stored profile) and is shredded in the cleanup step.
         env:
-          MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
-          MACOS_NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
-          MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+          MACOS_NOTARY_KEY_P8_BASE64: ${{ secrets.MACOS_NOTARY_KEY_P8_BASE64 }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
         run: |
           set -euo pipefail
+          echo "${MACOS_NOTARY_KEY_P8_BASE64}" | base64 -d > "${NOTARY_KEY_PATH}"
+          chmod 0600 "${NOTARY_KEY_PATH}"
           xcrun notarytool store-credentials "${NOTARY_PROFILE}" \
-            --apple-id "${MACOS_NOTARY_APPLE_ID}" \
-            --team-id "${MACOS_NOTARY_TEAM_ID}" \
-            --password "${MACOS_NOTARY_PASSWORD}"
+            --key "${NOTARY_KEY_PATH}" \
+            --key-id "${MACOS_NOTARY_KEY_ID}" \
+            --issuer "${MACOS_NOTARY_ISSUER_ID}"
 
       - name: Sign and notarize (make dist)
         run: make dist VERSION="${RELEASE_VERSION}" CERT_NAME="${CERT_NAME}" NOTARY_PROFILE="${NOTARY_PROFILE}" SIGN_ENTITLEMENTS="${GITHUB_WORKSPACE}/shells/macos/xPare.entitlements"
@@ -380,4 +406,4 @@ jobs:
         if: ${{ always() }}
         run: |
           security delete-keychain "${KEYCHAIN_PATH}" >/dev/null 2>&1 || true
-          rm -f "${CERTIFICATE_PATH}"
+          rm -f "${CERTIFICATE_PATH}" "${NOTARY_KEY_PATH}"

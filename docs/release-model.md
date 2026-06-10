@@ -82,13 +82,23 @@ equals the workspace version in `Cargo.toml`; a mismatch fails the release.
    `cargo run --locked -p xtask -- ci` (the full gate) → build the FFI staticlib +
    `swift build -c release` → `make preview` → upload the unsigned preview as a
    workflow artifact.
-2. **publish-official** (gated): only when repo variable
-   `XPARE_ENABLE_OFFICIAL_RELEASE == 'true'` **and** the Apple secrets are
-   present (it must also export `NOTARY_PROFILE` — `dist` refuses to run without
-   it). It re-checks `shells/macos/xPare.entitlements`, imports the Developer ID
-   cert into a temp keychain, stores notary credentials, runs `make dist` and
-   `make github-release` (the fail-closed signing/notarization flow below),
-   attaches the provenance attestation and SBOM, then wipes the signing material.
+2. **publish-official** (gated three ways): the repo variable
+   `XPARE_ENABLE_OFFICIAL_RELEASE == 'true'` (evaluated first, so unconfigured
+   repos and forks skip cleanly), then a **required-reviewer approval of the
+   `release` environment deployment** (the human gate sits *before* signing — a
+   stolen tag push cannot mint a signed binary), and finally a validation step
+   that fails on any missing Apple secret. The five secrets live in the
+   `release` environment (reachable only from `v*` tag runs, never repo-wide):
+   the Developer ID Application cert (`MACOS_CERTIFICATE_P12_BASE64`,
+   `MACOS_CERTIFICATE_PASSWORD`) and an App Store Connect API key for
+   notarization (`MACOS_NOTARY_KEY_P8_BASE64`, `MACOS_NOTARY_KEY_ID`,
+   `MACOS_NOTARY_ISSUER_ID`) — per-key revocable; no personal Apple ID
+   credential ever reaches CI. The job re-checks
+   `shells/macos/xPare.entitlements`, imports the cert into a temp keychain,
+   wraps the API key in the `NOTARY_PROFILE` keychain profile `dist` requires,
+   runs `make dist` and `make github-release` (the fail-closed
+   signing/notarization flow below), attaches the provenance attestation and
+   SBOM, then wipes the signing material.
 
 Releases are created with `--draft` (and `--prerelease` for any hyphenated
 version such as `1.0.0-rc.1`); a maintainer publishes the draft manually after
@@ -151,8 +161,10 @@ wired:
 On an exact `vX.Y.Z` tag, with full Xcode + a Developer ID identity:
 
 ```sh
+# App Store Connect API key auth (what CI uses; an Apple ID + app-specific
+# password also works locally, but keep personal credentials out of automation):
 xcrun notarytool store-credentials xpare-notary \
-  --apple-id you@example.com --team-id TEAMID --password app-specific-password
+  --key /path/to/AuthKey_KEYID.p8 --key-id KEYID --issuer ISSUER-UUID
 
 make dist VERSION=1.0.0 \
   CERT_NAME="Developer ID Application: Your Name (TEAMID)" \
@@ -199,7 +211,12 @@ in the menu (`xPare vX.Y.Z`) so users can compare against the latest release.
   (currently `com.xpare.app`). Notarization history and Gatekeeper identity attach
   to the identifier — treat it as frozen once the first official build is
   notarized. **Must be confirmed before the first notarization run.**
-- Add Developer ID signing + notarization secrets (kept **out** of the repo).
+- Add the five Apple secrets to the **`release` environment** (Settings →
+  Environments → release), not as repo-level secrets: the Developer ID cert
+  pair plus an App Store Connect API key (App Store Connect → Users and Access
+  → Integrations → App Store Connect API; "Developer" role is the minimum that
+  can notarize). The `.p8` downloads exactly once — keep an offline copy.
+  Then set the repo variable `XPARE_ENABLE_OFFICIAL_RELEASE=true`.
 - Keep official signing tied to `shells/macos/xPare.entitlements`; a signed
   app without the minimal App Sandbox-only payload is not an official xPare
   release.
