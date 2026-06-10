@@ -15,14 +15,16 @@ import PackageDescription
 //
 //     swift build -Xlinker -L/abs/path/to/dir
 //
-// We link the *static* archive (`-lxpare_ffi`) so the shipping binary has
-// no runtime dependency on a xPare dylib. The Rust staticlib's own system
-// dependencies (-lSystem -lc -lm) are provided automatically by the macOS SDK
-// that SwiftPM already links, so no extra system libraries are required here.
+// The static archive is passed as an EXPLICIT linker input, never via
+// `-L… -lxpare_ffi`: with `-l`, macOS ld prefers a libxpare_ffi.dylib over the
+// .a in the same directory, and cargo used to emit both — which is how the
+// rc.2 preview shipped a binary whose dylib install_name pointed into the
+// build machine's target/ tree. An explicit path cannot be ambushed by stale
+// dylibs. The staticlib's own system dependencies (-lSystem -lc -lm) come from
+// the macOS SDK that SwiftPM already links.
 let coreLinkerSettings: [LinkerSetting] = [
     .unsafeFlags([
-        "-L../../target/release",
-        "-lxpare_ffi",
+        "../../target/release/libxpare_ffi.a"
     ])
 ]
 

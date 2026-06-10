@@ -13,8 +13,13 @@ description = "Thin, language-neutral C ABI shim over xpare-core. The only crate
 
 [lib]
 name = "xpare_ffi"
-# staticlib for static-linking into the native shells; cdylib for dynamic consumers.
-crate-type = ["staticlib", "cdylib", "rlib"]
+# staticlib ONLY for the C surface: every shell statically links libxpare_ffi.a by
+# policy (no runtime dylib dependency, nothing to relocate or sign separately). A
+# cdylib here is not just unused — it is the artifact that broke the rc.2 preview:
+# with both lib types in target/release, `ld -lxpare_ffi` silently prefers the
+# dylib, whose install_name is an absolute build-tree path, so the app only ran on
+# the machine that built it. rlib stays for the Rust-side tests.
+crate-type = ["staticlib", "rlib"]
 
 # Inherit the workspace lint policy. core-ffi also carries `#![deny(unsafe_op_in_unsafe_fn)]`
 # and the `print_*` denies as source attributes (the unsafe boundary is FFI-specific).

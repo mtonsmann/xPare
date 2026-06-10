@@ -80,6 +80,21 @@ swift build -c release --product "${PRODUCT_NAME}"
 BIN="$(swift build -c release --product "${PRODUCT_NAME}" --show-bin-path)/${PRODUCT_NAME}"
 [ -f "${BIN}" ] || { echo "ERROR: built binary not found at ${BIN}" >&2; exit 1; }
 
+# Fail closed if the binary dynamically links anything outside the OS itself.
+# A load command pointing into a build tree means the app runs ONLY on the
+# machine that built it (dyld aborts everywhere else) — exactly how the rc.2
+# preview shipped broken: ld preferred a stale libxpare_ffi.dylib over the
+# static archive. The FFI core must be statically linked; OS frameworks and
+# /usr/lib are the only legitimate dynamic dependencies.
+NON_SYSTEM_DEPS="$(otool -L "${BIN}" | tail -n +2 | grep -vE '^[[:space:]]+(/usr/lib/|/System/)' || true)"
+if [ -n "${NON_SYSTEM_DEPS}" ]; then
+    echo "ERROR: ${BIN} has non-system dynamic library dependencies:" >&2
+    echo "${NON_SYSTEM_DEPS}" >&2
+    echo "The Rust core must be statically linked (see Package.swift coreLinkerSettings)." >&2
+    exit 1
+fi
+echo ">>> verified: no non-system dynamic library dependencies"
+
 # --- 3. Assemble the .app bundle -----------------------------------------------
 echo ">>> assembling ${APP}"
 rm -rf "${APP}"
