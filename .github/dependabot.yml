@@ -3,9 +3,12 @@
 # clean and a moved tag can't change what runs. Dependabot understands that pin
 # format and bumps both the hash and the comment, so pinning doesn't rot.
 #
-# Only the github-actions ecosystem is managed here on purpose: Rust dependencies
-# are governed by the strict core-deps allowlist (cargo xtask check-core-deps) and
-# are updated deliberately, not automatically.
+# Rust dependencies get a deliberately narrower treatment: routine version bumps
+# stay manual because crate updates are governed by the strict core-deps
+# allowlist (cargo xtask check-core-deps) and reviewed deliberately, not
+# automatically. The cargo entry below exists ONLY to turn on Dependabot
+# SECURITY updates for Cargo.lock — `open-pull-requests-limit: 0` is GitHub's
+# documented switch for "security fixes yes, version bumps no".
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -23,3 +26,16 @@ updates:
       actions:
         patterns:
           - "*"
+
+  # Security updates only — see the header comment. Version-update PRs are
+  # disabled by the 0 limit; known-vulnerability fixes still arrive as PRs.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    # Same day-zero supply-chain cooldown convention as the actions entry.
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: deps
