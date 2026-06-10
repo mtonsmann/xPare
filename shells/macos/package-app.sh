@@ -45,6 +45,11 @@ while [ "$#" -gt 0 ]; do
 done
 
 APP_NAME="xPare"
+# SwiftPM product (Package.swift `.executable(name: "XPareApp", ...)`). Distinct
+# from APP_NAME on purpose: the bundle/display name is branded lowercase-x while
+# the Swift product/target keeps the type-style capital — do not derive one from
+# the other (deriving "${APP_NAME}App" is what broke the first rc.1 release run).
+PRODUCT_NAME="XPareApp"
 BUNDLE_ID="com.xpare.app"
 APP="${SCRIPT_DIR}/dist/${APP_NAME}.app"
 CONTENTS="${APP}/Contents"
@@ -69,10 +74,10 @@ fi
 ( cd "${REPO_ROOT}" && cargo build -p xpare-ffi --release --locked )
 
 # --- 2. Build the Swift app (release) ------------------------------------------
-echo ">>> swift build -c release --product ${APP_NAME}App"
+echo ">>> swift build -c release --product ${PRODUCT_NAME}"
 cd "${SCRIPT_DIR}"
-swift build -c release --product "${APP_NAME}App"
-BIN="$(swift build -c release --product "${APP_NAME}App" --show-bin-path)/${APP_NAME}App"
+swift build -c release --product "${PRODUCT_NAME}"
+BIN="$(swift build -c release --product "${PRODUCT_NAME}" --show-bin-path)/${PRODUCT_NAME}"
 [ -f "${BIN}" ] || { echo "ERROR: built binary not found at ${BIN}" >&2; exit 1; }
 
 # --- 3. Assemble the .app bundle -----------------------------------------------
