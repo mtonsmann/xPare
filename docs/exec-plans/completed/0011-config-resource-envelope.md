@@ -1,6 +1,12 @@
 # Exec Plan 0011 - Config resource envelope
 
-Status: **active** - Started: 2026-06-06
+Status: **completed**. Started: 2026-06-06. Completed: 2026-06-09.
+
+> Completion note: the validation envelope (op count, param byte length,
+> single-line params, multiplicative growth factor with saturating arithmetic)
+> shipped in `core/src/config.rs` and the fuzz target now generates only valid
+> configs. The documented proof gap stands: accepted configs are bounded, but
+> `transform` is not a general output-budgeted API.
 
 ## Goal
 

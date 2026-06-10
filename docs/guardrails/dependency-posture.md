@@ -14,12 +14,13 @@ capability-constrained**, and the constraint is enforced mechanically.
 1. **Prefer boring, audited, API-stable crates.** Favor ubiquitous, well-reviewed
    libraries over novel ones. Justify every new dependency.
 2. **The core's dependency tree is a tiny allowlist of pure-data crates.** The full
-   transitive *normal* dependency closure of `xpare-core` must stay on
+   transitive *normal-and-build* dependency closure of `xpare-core` must stay on
    `CORE_DEP_ALLOWLIST` in `xtask/src/main.rs`. Today that is: `serde` family +
    `serde_json` (config), `pulldown-cmark` (Markdown), the proc-macro toolchain
-   `serde_derive` needs (`proc-macro2`, `quote`, `syn`, `unicode-ident`,
-   `unicode-xid`), and pure formatting/data helpers (`itoa`, `ryu`, `zmij`, `memchr`,
-   `bitflags`, `unicase`). **No OS, filesystem, or network crate may enter the core's
+   `serde_derive` needs (`proc-macro2`, `quote`, `syn`, `unicode-ident`),
+   pure formatting/data helpers (`itoa`, `zmij`, `memchr`,
+   `bitflags`, `unicase`), and `zeroize` (best-effort wiping of clipboard-derived
+   intermediates). **No OS, filesystem, or network crate may enter the core's
    tree.**
 3. **No network/OS-capable crate anywhere in the workspace.** `NETWORK_BANLIST` in
    `xtask/src/main.rs` bans async runtimes, HTTP/TLS stacks, websocket/RPC libs, and
@@ -32,8 +33,10 @@ capability-constrained**, and the constraint is enforced mechanically.
    are dev-only; `libfuzzer-sys`/`arbitrary` live in the **separate `fuzz/` workspace**
    so libFuzzer and the nightly toolchain never leak into the stable build. None of
    these may be a *normal* dependency of the core: the `check-core-deps` **and**
-   `check-no-network` closures skip dev/build deps, so e.g. `proptest` and `criterion`
-   (and their larger trees) do not pollute or trip them.
+   `check-no-network` closures follow normal **and build** dependency edges but skip
+   **dev** deps, so e.g. `proptest` and `criterion` (and their larger trees) do not
+   pollute or trip them — while a build-script dependency cannot smuggle capability
+   past the check either.
 5. **Pin and constrain.** Shared versions live in `[workspace.dependencies]`
    (`Cargo.toml`); `pulldown-cmark` uses `default-features = false` to drop the
    unused bundled-binary feature and keep the surface minimal.
@@ -70,10 +73,10 @@ capability-constrained**, and the constraint is enforced mechanically.
 ## How the checks work
 
 - `check-core-deps` runs `cargo metadata`, walks `xpare-core`'s transitive
-  **normal** dependency closure (dev/build deps excluded), and fails if any crate is
-  not on `CORE_DEP_ALLOWLIST`.
-- `check-no-network` walks the closure of **every** workspace member and fails if any
-  crate on `NETWORK_BANLIST` appears anywhere.
+  **normal + build** dependency closure (dev deps excluded), and fails if any crate
+  is not on `CORE_DEP_ALLOWLIST`.
+- `check-no-network` walks the same normal + build closure of **every** workspace
+  member and fails if any crate on `NETWORK_BANLIST` appears anywhere.
 - `check-supply-chain` runs `cargo-deny check` (advisories + licenses + bans + sources)
   against `deny.toml`.
 - `check-shell` runs `shellcheck` over every shell script; `check-workflows` runs
@@ -81,7 +84,7 @@ capability-constrained**, and the constraint is enforced mechanically.
   `.github/workflows/`.
 - `check-fuzz` is the optional fuzz/tooling gate: it installs the nightly toolchain
   and pinned `cargo-fuzz` on demand, discovers targets with `cargo fuzz list`, builds
-  all targets, and smoke-runs them when `SS_FUZZ_SMOKE_SECONDS=N` is set. The
+  all targets, and smoke-runs them when `XP_FUZZ_SMOKE_SECONDS=N` is set. The
   manual Release Fuzz workflow uses this same path as the required pre-release
   in-depth fuzz gate.
 

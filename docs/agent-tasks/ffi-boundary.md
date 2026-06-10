@@ -13,11 +13,11 @@ serialization, the capabilities/version query, or the generated header.
 
 ## Hard constraints
 
-- The C ABI is **frozen**. The four symbols are `ss_abi_version`,
-  `ss_capabilities_json`, `ss_transform`, `ss_buffer_free` — and nothing more.
+- The C ABI is **frozen**. The four symbols are `xp_abi_version`,
+  `xp_capabilities_json`, `xp_transform`, `xp_buffer_free` — and nothing more.
 - **Adding or changing a transform is NOT an ABI change** — feature selection
   crosses as the `config_json` string. Do not bump the ABI for a transform.
-- A real ABI change is a **compatibility event**: bump `SS_ABI_VERSION`, run
+- A real ABI change is a **compatibility event**: bump `XP_ABI_VERSION`, run
   `cargo xtask gen-header`, call it out in the PR, and confirm a non-Swift shell
   could still consume the boundary. The checked-in header is the source of truth;
   `check-abi` fails on drift.
@@ -31,7 +31,7 @@ serialization, the capabilities/version query, or the generated header.
   input *before* reading/allocating, and wraps the core call in `catch_unwind` so a
   panic becomes a status code, never an unwind across the boundary.
 - Returned buffers are owned by the caller and freed (and zeroized) via
-  `ss_buffer_free`; `ss_buffer_free(null, len)` is a no-op.
+  `xp_buffer_free`; `xp_buffer_free(null, len)` is a no-op.
 - Error paths must set `*out = null` and `*out_len = 0`.
 
 ## Required tests
@@ -39,7 +39,7 @@ serialization, the capabilities/version query, or the generated header.
 - Extend `core-ffi/tests/abi_roundtrip.rs`: status code, out-param clearing, and the
   ownership/free protocol for any new path. Compare output against
   `xpare_core::transform` rather than hardcoding brittle strings.
-- If the ABI version changed, assert `ss_abi_version()` and the header `#define` agree.
+- If the ABI version changed, assert `xp_abi_version()` and the header `#define` agree.
 
 ## Required evidence
 

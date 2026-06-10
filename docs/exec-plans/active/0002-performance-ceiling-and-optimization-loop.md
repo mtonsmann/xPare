@@ -114,9 +114,10 @@ current tree (see the decision log); they are listed for continuity.
   punctuation trimming; tracker-key checks dispatch by first byte.)*
 - **W6 — Shell responsiveness** (macOS): measure Swift↔Rust copies separately; move
   large transforms off the main actor while keeping pasteboard reads/writes on it;
-  re-check `changeCount` before commit; keep `NSPasteboard.general` opt-in. Land the
-  off-main-actor transform together with the ABI-v3 shell-integration pass (below) so
-  the shell's transform path is touched once. Off-thread transform is a per-shell
+  re-check `changeCount` before commit; keep `NSPasteboard.general` opt-in.
+  *(Banked: the shell runs the transform off the main actor with a threshold-gated
+  busy indicator — see [macos-posture](../../guardrails/macos-posture.md) rule 12.
+  Swift↔Rust copy measurement remains open.)* Off-thread transform is a per-shell
   requirement — see the [shell-contract guardrail](../../guardrails/shell-contract.md).
 - **W7 — Release profile & docs.** Update `docs/performance.md` each wave; add
   `PERF_MIN_MIB_PER_SEC` guidance only for calibrated same-machine checks. Release
@@ -152,10 +153,10 @@ Declare done only when all hold, and record it in the decision log:
 
 Absolute MiB/s thresholds are **not** mandatory in general CI — shared runners are
 too noisy. The always-on gate is `perf_guard.rs` (complexity, not speed). A floor
-via `SS_PERF_MIN_MIB_PER_SEC` is meaningful only on a calibrated, dedicated runner
+via `XP_PERF_MIN_MIB_PER_SEC` is meaningful only on a calibrated, dedicated runner
 or in a local same-machine regression check.
 
-## Deferred zeroization — the ABI-v3 arena design (planned; coordinate with the FFI/ABI owner)
+## Deferred zeroization — the caller-arena design (planned; a future ABI bump, coordinate with the FFI/ABI owner)
 
 Synchronous intermediate zeroization costs ~31% on 128 MiB end-to-end pipelines (see
 `docs/performance.md`). The cost is **not** memory bandwidth — at ~2 GiB/s of traffic
@@ -178,9 +179,12 @@ is the foundation of the security argument. The clean design is at the **FFI lay
   arena can also use a faster wipe than scattered per-op volatile drops.
 
 Costs/caveats: peak memory rises (intermediates held until the deferred wipe — bounded
-while the wiper keeps up, which it does here), and it is an **ABI change** → **ABI v3**,
-to be **coordinated with the FFI/ABI owner**, not landed unilaterally. Until then the
-shipped core zeroizes synchronously (correct by default).
+while the wiper keeps up, which it does here), and it is an **ABI change** — a future
+ABI version bump (v4 or later; v3 was consumed by the pre-1.0 `ss_*` → `xp_*` rename
+event), to be **coordinated with the FFI/ABI owner**, not landed unilaterally. Since
+the ABI is frozen from 1.0 onward, this is also a **major-version** event under the
+semver commitment in `docs/release-model.md`. Until then the shipped core zeroizes
+synchronously (correct by default).
 
 Do **not** "fix" the cost by making the C ABI asynchronous (callback/handle-based): it
 bloats the deliberately tiny, auditable FFI surface and still would not remove the
@@ -199,7 +203,7 @@ make perf PERF_MIB=128 PERF_SAMPLES=5
 Core transform change:
 
 ```sh
-cargo run -p xtask -- ci        # fmt + clippy -D warnings + tests + invariants
+cargo run --locked -p xtask -- ci  # fmt + clippy -D warnings + tests + invariants
 make perf PERF_MIB=128 PERF_SAMPLES=7
 make bench                      # criterion, for statistical confirmation
 ```

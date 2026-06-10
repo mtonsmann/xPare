@@ -25,7 +25,7 @@ differentially tested against.
 - No log sink in the core (`deny(print*/dbg!)`); no content logging/persistence
   (`check-no-content-logging`).
 - Pipeline intermediates + fused scratch wiped (`Zeroizing` + `check-pipeline-zeroization`
-  + `ss_buffer_free` zeroizes output).
+  + `xp_buffer_free` zeroizes output).
 - Deterministic output (property test).
 - Minimal macOS entitlements + release posture (`check-entitlements`, `check-release-posture`).
 - Supply chain / workflow / shell lint (`cargo-deny`, `actionlint`+`zizmor`, `shellcheck`).
@@ -56,7 +56,7 @@ differentially tested against.
   trigger every fusion in `pipeline.rs`.
 - **Phase 3:** add a growth-envelope property (every accepted config keeps
   `out.len() <= in.len() * MAX_PIPELINE_GROWTH_FACTOR`).
-- **Phase 5:** add the one missing FFI test — `ss_buffer_free(null, len)` is a no-op.
+- **Phase 5:** add the one missing FFI test — `xp_buffer_free(null, len)` is a no-op.
 - **Phase 6:** add `cargo xtask check-agent-workflow` (the workflow files exist and
   carry required headings) and wire it into `cargo xtask ci`.
 - **Phase 7:** doc updates — `AGENTS.md` links, `CONTRIBUTING.md` note, `DESIGN.md`

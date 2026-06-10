@@ -25,7 +25,7 @@ Phase 0 freezes the contracts so work parallelizes without merge conflicts:
 
 1. **Phase 0 (done):** workspace, pinned deps, and compiling **frozen interfaces**
    — the `Config`/`Operation` schema, the `ops::*` function signatures, the C ABI
-   (`ss_transform`/`ss_buffer_free`/`ss_abi_version`/`ss_capabilities_json`), and a
+   (`xp_transform`/`xp_buffer_free`/`xp_abi_version`/`xp_capabilities_json` (then `ss_*`; renamed at ABI v3)), and a
    green `build`/`test`/`clippy -D warnings`/`fmt` baseline.
 2. **Phase 1 (parallel agents, disjoint file ownership):**
    - A1 — HTML + Markdown strippers, adversarial corpus, stripper tests
@@ -44,14 +44,14 @@ Phase 0 freezes the contracts so work parallelizes without merge conflicts:
 | # | Decision | Choice | Rationale |
 |---|----------|--------|-----------|
 | D1 | FFI mechanism | cbindgen + C ABI; **two crates** (`core` pure + `core-ffi` shim) | Language-neutral C ABI is the brief's safe default; the split keeps `#![forbid(unsafe_code)]` true for the core while isolating all `unsafe` to a tiny, auditable shim |
-| D2 | ABI surface | `ss_abi_version`, `ss_capabilities_json`, `ss_transform`, `ss_buffer_free` | Narrow + data-driven; a new transform never changes the ABI |
+| D2 | ABI surface | `xp_abi_version`, `xp_capabilities_json`, `xp_transform`, `xp_buffer_free` (originally `ss_*`; renamed at ABI v3) | Narrow + data-driven; a new transform never changes the ABI |
 | D3 | Config format | JSON, versioned, **ordered list of internally-tagged operations** | Brief's default; order explicit; new transform = new enum variant, zero ABI change |
 | D4 | Error model | `repr(C)` status enum; no global error state; input lossy-UTF-8 decoded; `catch_unwind` at the boundary | Stateless + deterministic + trivially consumable; robust on adversarial bytes; a panic becomes an error code, never UB |
 | D5 | HTML stripper | **Hand-rolled** pure-safe-Rust state machine + curated entities | "Reimplement a small subset rather than depend on opaque upstream"; safe Rust ⇒ memory-safe by construction; fuzz proves no panic/hang |
 | D6 | Markdown stripper | **pulldown-cmark** (default-features off) | CommonMark is too irregular to reimplement safely; boring, well-audited standard |
-| D7 | Buffer ownership | `Box<[u8]>` leaked as `(ptr,len)`; freed + **zeroized** by `ss_buffer_free` | Only needs ptr+len (no capacity); zeroization best-effort wipes clipboard bytes |
+| D7 | Buffer ownership | `Box<[u8]>` leaked as `(ptr,len)`; freed + **zeroized** by `xp_buffer_free` | Only needs ptr+len (no capacity); zeroization best-effort wipes clipboard bytes |
 | D8 | Continuous mode | owned poller on `changeCount`, fully invalidated+niled when off, 500 ms default | Satisfies "no loop runs when disabled" |
-| D9 | Global hotkey | Carbon `RegisterEventHotKey` (default ⌥⌘V) | Needs neither Accessibility nor Input Monitoring |
+| D9 | Global hotkey | Carbon `RegisterEventHotKey` (originally default ⌥⌘V; now ⌃⌥⌘V, user-recordable) | Needs neither Accessibility nor Input Monitoring |
 | D10 | CLI deps | none (hand-rolled arg parsing) | Keep the harness boring and the dependency surface minimal |
 | D11 | Enforcement | single portable `xtask` (+ `#![forbid]`, clippy denies, proptest, corpus, fuzz) | No external cargo plugins required; same checks locally and in CI |
 

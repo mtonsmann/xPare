@@ -31,17 +31,17 @@ The model is split deliberately:
 ### In `core-ffi`
 
 3. **Validate every pointer before use.** Null checks first; initialize all
-   out-params to defined values on every return path (the existing `ss_transform`
+   out-params to defined values on every return path (the existing `xp_transform`
    sets `*out = null` / `*out_len = 0` before doing anything else).
 4. **Never let a panic cross the boundary.** Unwinding across the C ABI is undefined
    behavior. Every call into the core is wrapped in `catch_unwind` and converted to
-   `SsStatus::ErrInternal`. Keep it that way; do not call core functions outside the
+   `XpStatus::ErrInternal`. Keep it that way; do not call core functions outside the
    guarded region. (`panic = "unwind"` is kept on purpose so `catch_unwind` works —
    see `Cargo.toml`.)
-5. **Round-trip ownership exactly.** A buffer handed out by `ss_transform` is a
-   leaked `Box<[u8]>` reconstructed only by `ss_buffer_free` with the matching
+5. **Round-trip ownership exactly.** A buffer handed out by `xp_transform` is a
+   leaked `Box<[u8]>` reconstructed only by `xp_buffer_free` with the matching
    `(ptr, len)`. Do not change the allocation scheme on one side only.
-6. **Zeroize freed buffers.** `ss_buffer_free` zeroizes before dropping, a
+6. **Zeroize freed buffers.** `xp_buffer_free` zeroizes before dropping, a
    best-effort wipe of clipboard-derived bytes. Keep that, and prefer minimizing
    transient copies of content elsewhere.
 7. **Every `unsafe` op carries a `SAFETY:` comment** explaining why it is sound. No

@@ -37,24 +37,19 @@ make bench-large     # heavy log files up to 256 MB
 
 Measured 2026-06-06 on **Apple M5 Pro, 18 cores, 48 GB, arm64**, via
 `make perf PERF_MIB=128 PERF_SAMPLES=5` (median of 5), on the current code **with
-pipeline intermediate zeroization** and the W1 byte-oriented
-`collapse_whitespace` path, W1c marker-free HTML text path, W1e guarded ASCII
-plain/log Markdown fast path, W4 ASCII Upper/Lower fast paths, and W5b IOC marker
-dispatch plus W5c pre-sized line dedupe containers and W5d/W5f/W5g defang
-allocation/marker guard cleanup, streaming token reconstruction, and no-op token
-prefiltering, W5j refang literal-span copying, W2 output pre-sizing for shared line
-joins, and W4b streaming sentence-case scanning, W2b borrowed-slice trailing trim,
-W1b Markdown output bookkeeping/normalization cleanup, and W5e streaming URL
-cleaner token reconstruction plus W5h/W5i URL no-op token prefiltering and
-tracker-key dispatch, W7 speed-tuned release optimization, W1d borrowed first-pass
-pipeline input, W2c streaming `unwrap_lines`, plus W3
-`TrimTrailingWhitespace` → `RemoveBlankLines` fusion and W3b `CollapseWhitespace` →
-`TrimTrailingWhitespace` → `RemoveBlankLines` fusion with boundary-zeroized scratch
-and W3c borrowed-line fast path for already-collapse-normalized lines (see the cost
-section below), plus W3d `TrimTrailingWhitespace` → `RemoveBlankLines` →
-`DedupeLines` fusion, W3e guarded `CollapseWhitespace` →
-`TrimTrailingWhitespace` → `RemoveBlankLines` → `DedupeLines` fusion, and W3f
-guarded ASCII plain/log `StripHtml` → `StripMarkdown` boundary fusion.
+pipeline intermediate zeroization** and every optimization wave banked to date
+(per-wave dates, measurements, and acceptance evidence live in the
+[exec-plan decision log](exec-plans/active/0002-performance-ceiling-and-optimization-loop.md#decision-log)):
+
+| Wave | Banked work reflected in this baseline |
+|------|----------------------------------------|
+| W1/W1b–W1e | Copy-amplification removal: byte-oriented `collapse_whitespace`; marker-free HTML text path; Markdown output bookkeeping + in-place edge trim; borrowed first-pass pipeline input; guarded ASCII plain/log Markdown fast path |
+| W2/W2b/W2c | Streamed line ops: pre-sized shared line joins; borrowed-slice trailing trim; streaming `unwrap_lines` |
+| W3/W3b–W3f | Pass fusion: trim→blank; collapse→trim→blank (boundary-zeroized scratch, borrowed-line fast path); trim→blank→dedupe; collapse→trim→blank→dedupe; guarded `StripHtml`→`StripMarkdown` boundary fusion |
+| W4/W4b | ASCII fast paths: whole-text Upper/Lower; streaming sentence-case scanning |
+| W5/W5b–W5j | Dedupe/IOC: pre-sized dedupe containers; defang allocation/marker-guard cleanup, streaming token reconstruction, no-op token prefiltering; refang first-byte dispatch + literal-span copying; URL-cleaner streaming reconstruction, no-op prefiltering, tracker-key dispatch |
+| W7 | Speed-tuned release profile (`opt-level = 3`) |
+
 Re-measure on each machine; do not assume another machine's numbers. Read each
 transform row relative to this machine's own roofline controls (byte-copy is noisy at
 this size and was ≈ 36 GiB/s in this run; byte-scan is vectorized under the
@@ -145,6 +140,12 @@ pipelines, intermediate wipes cost memory bandwidth. Measured on the same machin
 | full-menu-log | 162.7 MiB/s | 108.3 MiB/s | −33% |
 | lossy-utf8-log | 175.9 MiB/s | 122.1 MiB/s | −31% |
 
+**Measurement context:** this comparison was taken 2026-06-05, when the
+zeroization posture landed — *before* most of the optimization waves now banked in
+the baseline table above. Its absolute MiB/s values therefore do not match (and do
+not contradict) the baseline table; only the **relative Δ** is the meaningful
+number here. The cost of the wipe itself has not changed.
+
 **This cost is material only on very large pastes (100+ MiB).** At clipboard scale
 (sub-MiB, the overwhelmingly common case) the absolute transform time is
 microseconds either way, so the wipe is imperceptible. The trade — a third of
@@ -173,14 +174,19 @@ do not improve the stated threat model.
 
 - Text under 1 MiB: feels instant.
 - Normal multi-MiB document/log copies: well under perceptual friction.
-- The macOS shell should move large transforms off the main actor so the menu-bar
-  UI stays responsive regardless of transform time (Wave 6 in the exec-plan).
+- The macOS shell runs large transforms off the main actor (with a threshold-gated
+  busy indicator), so the menu-bar UI stays responsive regardless of transform time.
+  This shipped — see the [macos-posture guardrail](guardrails/macos-posture.md)
+  rule 12 (Wave 6 in the exec-plan).
 
 ## Optimization backlog
 
-See the exec-plan's wave list. Highest-confidence remaining items: stream the
-remaining `collect`→`join` line ops (W2), fuse compatible adjacent passes (W3), and
-additional ASCII fast paths with Unicode fallbacks where semantics allow (W4). The
-speed-tuned `opt-level = 3` release profile and first-pass pipeline borrowing are
-already banked. Each change must clear ≥ 5% median gain with no > 3% regression and
-all guardrails green.
+See the exec-plan's wave list and decision log. The waves themselves (W1–W5, W7)
+are largely banked — everything in the baseline table above already includes them.
+What remains is the *unbanked remainder* of those waves: streaming the few line-list
+ops still on `collect`→`join` paths (rest of W2), further fusion candidates beyond
+the banked default/full-menu suffixes (rest of W3), additional ASCII fast paths with
+Unicode fallbacks where semantics allow (rest of W4), and the Swift↔Rust copy
+measurement half of W6. The larger deferred item is the caller-arena deferred
+zeroization design (a future ABI bump; see the exec-plan). Each change must clear
+≥ 5% median gain with no > 3% regression and all guardrails green.

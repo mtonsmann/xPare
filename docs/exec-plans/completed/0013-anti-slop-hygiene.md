@@ -69,7 +69,7 @@ Kani argument in `proofs.yml`). So they are *not* in the required gate and are *
 scheduled: they run on demand, locally, and event-driven (path-filtered) in
 `hygiene.yml`, mirroring `proofs.yml`. A surviving mutant is either dead code or an
 under-asserted test; the fix is to strengthen a test, and that assertion becomes a
-permanent regression. `SS_DIFF_BASE=<ref>` scopes a run to a diff for fast PR feedback.
+permanent regression. `XP_DIFF_BASE=<ref>` scopes a run to a diff for fast PR feedback.
 
 ### D-6 - Tier-2 agent review is event-driven, not scheduled
 
@@ -110,7 +110,7 @@ log). Still deferred (low value / poor fit; tracked here until 0013 is archived)
   baseline ~95.6%, `xtask` excluded), `check-mutants` (cargo-mutants 27.1.0, `.cargo/mutants.toml`),
   and the event-driven `hygiene.yml`, all best-effort and outside the required gate.
   Verified by reading: `check-coverage` passes; `hygiene.yml` passes `actionlint` + `zizmor`;
-  the `check-mutants` plumbing (incl. `SS_DIFF_BASE` diff scoping) was smoke-tested. Phase 5
+  the `check-mutants` plumbing (incl. `XP_DIFF_BASE` diff scoping) was smoke-tested. Phase 5
   (D-6) tier-2 agent-review doctrine documented in the hygiene guardrail. Remaining: the
   one-time full-tree mutation baseline sweep + survivor triage.
 - 2026-06-08: Full-tree mutation baseline run. **Found a config bug first:** cargo-mutants

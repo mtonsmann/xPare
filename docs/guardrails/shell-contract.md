@@ -12,7 +12,7 @@ the core** — no new core code, no ABI change.
 ## The hard rule
 
 **No transform logic lives in a shell.** A shell never strips HTML, normalizes
-whitespace, changes case, etc. itself. It extracts text, calls `ss_transform`, and
+whitespace, changes case, etc. itself. It extracts text, calls `xp_transform`, and
 writes the result back. If you find yourself parsing markup in shell code, stop —
 that belongs in the core as an operation.
 
@@ -53,10 +53,11 @@ new platform.
 4. **Tray / menu-bar UI.** A lightweight status-area UI: toggle continuous mode,
    trigger an on-demand clean, open settings, quit. No main window required.
 5. **Global hotkey.** A configurable hotkey for the on-demand clean (default
-   **⌥⌘V** on macOS). Choose a registration mechanism that needs the **least**
-   privilege — specifically, **not** one requiring Accessibility or Input Monitoring
-   (on macOS, Carbon `RegisterEventHotKey`; pick the equivalent low-privilege API per
-   platform).
+   **⌃⌥⌘V** on macOS, re-recordable in Settings). Choose a registration mechanism
+   that needs the **least** privilege — specifically, **not** one requiring
+   Accessibility or Input Monitoring (on macOS, Carbon `RegisterEventHotKey`; pick
+   the equivalent low-privilege API per platform). Surface registration failure
+   (the chord may be taken by another app) instead of silently doing nothing.
 6. **Settings.** Persist user preferences (hotkey, continuous on/off + interval, the
    operation pipeline / chosen config). Settings are *configuration*, never clipboard
    *content* — persisting content is forbidden (see
@@ -65,21 +66,21 @@ new platform.
    user-controlled value (size thresholds, intervals) must be clamped or saturating
    *at the point of use* — mirroring the core's saturating growth-product discipline
    (DESIGN.md D14 / `saturating_growth_product`) — and unit-tested at the extremes
-   (zero, negative, the type's max). The lesson is from a real finding: the macOS
-   paste-as-file threshold was floored but not capped, so a 16-digit typed KB value
-   overflow-trapped `* 1024` on every strip (caught in PR #33's review; the
-   `Int.max` regression test in `SettingsTests` now blocks the class for that
-   field — give new fields the same treatment).
+   (zero, negative, the type's max). The lesson is from a real review finding in the
+   paste-as-file feature's landing: the macOS paste-as-file threshold was floored but
+   not capped, so a 16-digit typed KB value overflow-trapped `* 1024` on every strip.
+   The `Int.max` regression test in `SettingsTests` now blocks the class for that
+   field — give new fields the same treatment.
 7. **Calling the core.** Link the FFI staticlib and call the four C symbols:
-   `ss_abi_version` (negotiate), `ss_capabilities_json` (discover supported ops —
-   don't hardcode them), `ss_transform` (read → transform), and `ss_buffer_free`
+   `xp_abi_version` (negotiate), `xp_capabilities_json` (discover supported ops —
+   don't hardcode them), `xp_transform` (read → transform), and `xp_buffer_free`
    (release the result; it is zeroized on free). Build the `config_json` from the
    user's chosen pipeline. The canonical sanitization config is
    **`StripHtml` → `StripMarkdown`**.
    One-shot conversion commands may intentionally choose a different representation:
    `HtmlToMarkdown` consumes the raw HTML representation directly so structure is not
    destroyed before conversion.
-8. **Off-thread transform (UI responsiveness).** `ss_transform` is synchronous and,
+8. **Off-thread transform (UI responsiveness).** `xp_transform` is synchronous and,
    on large inputs (e.g. a multi-hundred-MB log pasted onto the clipboard), can take
    ~1 s or more — far too long to run on the UI/event thread. Run the transform **off
    the UI thread** and marshal the result back to the UI thread to apply it. This is
@@ -103,8 +104,7 @@ module map at `shells/macos/Sources/CXPare/include/`:
 
 A new platform should follow the same principle: consume the one checked-in header,
 never a copy. (`Package.swift`, the Swift app/kit sources, and the entitlements file
-are owned by the shell stream and may still be landing; this guardrail documents the
-contract they implement.)
+live under `shells/macos/`; this guardrail documents the contract they implement.)
 
 ## Enforcing checks
 

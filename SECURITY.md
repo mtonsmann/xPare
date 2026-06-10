@@ -19,8 +19,8 @@ for the boundary and module map see [`ARCHITECTURE.md`](ARCHITECTURE.md).
 | **No network** | No code path can open a socket — not in the core, not in any crate that could be linked or run at build time | `cargo xtask check-no-network` (banlist over the whole workspace tree); macOS App Sandbox grants **no** network entitlement |
 | **No persistence of content** | Clipboard text is never written to a file, database, or any durable store — with **one explicit, opt-in exception**: the paste-as-file feature (see [below](#opt-in-paste-as-file-exception)) | No filesystem dependency in the core (`check-core-deps`); the only disk I/O anywhere is the CLI reading a *config* file (never content) and the sanctioned `PasteFileStore`; `check-no-content-logging` scans for content persistence and honors its allow-marker **only** inside `PasteFileStore.swift`, and `check-clipboard-safety` keeps real-clipboard exercise out of default targets |
 | **No logging of content** | Clipboard text can never reach a log/console sink | Core denies `print!`/`println!`/`eprint*`/`dbg!` at compile time (`#![deny(...)]`); no logging crate is a dependency; the CLI sends *diagnostics* to stderr and *only transformed text* to stdout; `cargo xtask check-no-content-logging` scans the shipped Rust + Swift source for logging calls on clipboard-derived content |
-| **In-memory only + wipe** | Content lives in memory only for the transform; pipeline intermediates, transform-local scratch storage, and the buffer that crosses the boundary are wiped before release | The core holds each pipeline intermediate in a `Zeroizing` buffer (wiped on drop); fused pipeline scratch storage is wiped before capacity growth can release old storage and on drop; `ss_buffer_free` zeroizes the returned buffer before freeing it (`zeroize` crate); `cargo xtask check-pipeline-zeroization` blocks the current fused-scratch regression class |
-| **Memory safety** | The untrusted-input parser cannot be memory-unsafe | `#![forbid(unsafe_code)]` in the core + `cargo xtask check-unsafe-forbid`; all `unsafe` is isolated to the tiny `core-ffi` shim, which uses `catch_unwind` so a panic is never UB across FFI |
+| **In-memory only + wipe** | Content lives in memory only for the transform; pipeline intermediates, transform-local scratch and accumulator storage, and the buffer that crosses the boundary are wiped before release (best-effort gaps inventoried [below](#where-zeroization-matters)) | The core holds each pipeline intermediate in a `Zeroizing` buffer (wiped on drop); fused pipeline scratch storage and growing op accumulators are wiped before capacity growth can release old storage and on drop; `xp_buffer_free` zeroizes the returned buffer before freeing it (`zeroize` crate); `cargo xtask check-pipeline-zeroization` is a regression tripwire for the fused-scratch pattern (it does not prove every allocation is wiped) |
+| **Memory safety** | The first-party untrusted-input parsing code has no `unsafe`; the few third-party parsing deps are a frozen, audited, pure-data allowlist carrying their own vetted internal `unsafe` | `#![forbid(unsafe_code)]` in the core + `cargo xtask check-unsafe-forbid`; the dep allowlist (`check-core-deps`); all first-party `unsafe` is isolated to the tiny `core-ffi` shim, which uses `catch_unwind` so a panic is never UB across FFI |
 | **No telemetry / analytics** | The tool phones home to no one | Same mechanisms as "no network" + "no persistence" — there is no code that could |
 | **Minimal OS privilege** | The macOS shell requests the least it can | App Sandbox + Hardened Runtime; entitlements file is *only* `app-sandbox = true`, verified by `cargo xtask check-entitlements`; official Developer ID releases sign with that file and verify the signed entitlement payload is still minimal; no Accessibility / Input Monitoring (hotkey uses Carbon `RegisterEventHotKey`); in-place clipboard rewrite only, never paste simulation |
 | **Stable, auditable boundary** | The core/shell contract is small and frozen | Checked-in C header + `cargo xtask check-abi` (drift fails CI) |
@@ -101,19 +101,45 @@ clipboard-derived bytes remain recoverable from xPare-owned heap storage
 after that storage is no longer needed. It is not an exfiltration control and does
 not defend against an attacker who can read live process memory during a transform.
 
-xPare enforces zeroization at ownership and last-use boundaries:
+xPare wipes at ownership and last-use boundaries. What **is** wiped:
 
-- Full pipeline intermediates are wiped when the next operation supersedes them or
-  when the transform returns.
+- Full pipeline intermediates: every op output that feeds another pass is held in
+  `Zeroizing` storage and wiped when its pass completes or the transform returns.
 - Transform-local scratch storage is wiped before capacity growth can release old
   bytes to the allocator, and again on drop. Allocation-preserving reuse may clear
   logical length without a hot-path wipe because the storage is still owned by the
   same transform.
-- The FFI output buffer is wiped when the shell calls `ss_buffer_free`, after the
+- Op output accumulators cannot leak via mid-construction reallocation: each is
+  either pre-sized to a provably sufficient capacity (so it never reallocates —
+  the bounds are pinned by property tests) or appended through a wipe-on-grow
+  helper (`core/src/ops/wipe.rs`) that zeroizes the superseded allocation before
+  growth frees it. Transient content copies in the HTML-to-Markdown converter
+  (decoded entities and attributes, link destinations, pre/code buffers) are
+  `Zeroizing` as well.
+- The FFI output buffer is wiped when the shell calls `xp_buffer_free`, after the
   shell has written the transformed text back to the clipboard.
-- The shell's input buffer and the OS clipboard are outside the core/FFI ownership
-  boundary; the shell minimizes lifetime but cannot promise core-owned zeroization
-  for memory it does not own.
+
+What remains **best-effort** — the precise residual gaps:
+
+- Each op's *return value* is a plain `String` until the pipeline wraps it (for
+  next-pass intermediates) or the FFI frees it (for the final output); that
+  window is inherent to the return-by-value design.
+- `sort_lines` with `case_insensitive = true` allocates one fully case-folded
+  copy of every line as a plain comparison key, dropped unwiped.
+- `strip_markdown`'s third-party parser (`pulldown-cmark`) keeps internal,
+  unwiped allocations (owned `CowStr` buffers for entity-unescaped text and
+  parser state) holding clipboard-derived bytes.
+- Process-level limits apply to all of it: registers, stack temporaries,
+  allocator metadata, and OS paging/swap are not covered.
+- The shell's own copies of the clipboard text — the pasteboard snapshot, the
+  UTF-8 byte array handed across the FFI, and the output `String` written back —
+  are ordinary Swift allocations and are not scrubbed.
+
+`cargo xtask check-pipeline-zeroization` is a **regression tripwire** for the
+fused-scratch wipe-before-release pattern and for the wipe-on-grow routing of
+the growable op accumulators (`html_to_markdown`, the Unicode case mappings,
+`strip_markdown`) — it catches those specific classes of regression
+mechanically; it is not a proof that every allocation is wiped.
 
 ## Handling of adversarial input
 
@@ -122,9 +148,9 @@ Clipboard markup is attacker-influenced, so the core treats all input as hostile
 - **Lossy UTF-8 decoding** — invalid bytes become U+FFFD instead of an error, so no
   input can make a transform fail.
 - **Never panics, never hangs** — the hand-rolled HTML parser iterates by `char` on
-  UTF-8 boundaries, runs in linear time with only bounded lookahead, and is proven
-  panic-free by `cargo fuzz` targets, property tests, and a checked-in adversarial
-  corpus. A panic, were one to occur, is caught at the FFI boundary and returned as
+  UTF-8 boundaries, runs in linear time with only bounded lookahead, and is pinned
+  down as panic-free by `cargo fuzz` targets, property tests, and a checked-in
+  adversarial corpus. A panic, were one to occur, is caught at the FFI boundary and returned as
   `XP_STATUS_ERR_INTERNAL` rather than unwinding into the host (which would be UB).
 - **Active content is neutralized by `StripHtml`** — `<script>`/`<style>` bodies are
   dropped entirely and all tags removed. The shell feeds the clipboard's HTML
@@ -166,18 +192,21 @@ Clipboard markup is attacker-influenced, so the core treats all input as hostile
 These are documented honestly in [`DESIGN.md`](DESIGN.md#known-limitations); the
 security-relevant ones:
 
-- **Zeroization is best-effort.** The core now holds each pipeline intermediate in
-  `Zeroizing` storage, wipes transform-local scratch storage before capacity growth
-  can release old clipboard-derived bytes, and the FFI wipes the output buffer on
-  free. Clipboard-derived content is scrubbed from xPare-owned heap storage
-  when that storage is no longer needed (at a measured throughput cost on very large
-  inputs — see [`docs/performance.md`](docs/performance.md)). It remains
-  *best-effort*: the caller's own input buffer (e.g. the shell's pasteboard read) and
-  the OS clipboard itself are outside the core's control, and the allocator may retain
-  freed pages briefly before reuse. The invalid-UTF-8 FFI path is covered by this:
-  when lossy decoding needs an owned replacement string, that temporary copy is held
-  in a `Zeroizing` buffer and wiped on drop; the caller's original byte buffer remains
-  outside the FFI's ownership.
+- **Zeroization is best-effort.** The core holds each pipeline intermediate in
+  `Zeroizing` storage, wipes transform-local scratch and accumulator storage before
+  capacity growth can release old clipboard-derived bytes, and the FFI wipes the
+  output buffer on free (at a measured throughput cost on very large inputs — see
+  [`docs/performance.md`](docs/performance.md)). The exact inventory — what is
+  wiped and the specific residual gaps (plain-`String` return windows, the
+  case-insensitive sort's folded keys, `pulldown-cmark`'s internal buffers,
+  process-level limits, the shell's own unscrubbed copies) — is in
+  [Where zeroization matters](#where-zeroization-matters). The caller's own input
+  buffer (e.g. the shell's pasteboard read) and the OS clipboard itself are outside
+  the core's control, and the allocator may retain freed pages briefly before
+  reuse. The invalid-UTF-8 FFI path is covered by this: when lossy decoding needs
+  an owned replacement string, that temporary copy is held in a `Zeroizing` buffer
+  and wiped on drop; the caller's original byte buffer remains outside the FFI's
+  ownership.
 - **Continuous mode is best-effort under local races.** It polls the pasteboard
   `changeCount`; it does not lock the system pasteboard or prove that no other local
   writer changed it before xPare read or after it rewrote the pasteboard. The
@@ -185,6 +214,14 @@ security-relevant ones:
   while a strip is running, and drops stale transform completions if `changeCount`
   moved in flight. xPare still performs content-free outcomes only and applies
   the same size limits to each attempted run.
+- **Continuous mode skips concealed/transient pasteboard content.** Before reading
+  anything, the continuous poller checks for the
+  [nspasteboard.org](http://nspasteboard.org) marker types —
+  `org.nspasteboard.ConcealedType`, `org.nspasteboard.TransientType`,
+  `org.nspasteboard.AutoGeneratedType` — and leaves marked content untouched
+  *without reading it* (password-manager etiquette). The user-initiated
+  hotkey/menu path deliberately still processes marked content: an explicit
+  strip request wins over the marker.
 - **Official release sandboxing is part of the release gate.** Unsigned/ad-hoc
   previews are for testing and are not official downloadable binaries. `make dist`
   and the release workflow require the checked-in App Sandbox entitlements for the
@@ -204,10 +241,10 @@ security-relevant ones:
 This repository is the system of record. If you find a security issue —
 particularly anything that could cause clipboard content to leave the process, be
 persisted/logged, or a way to make the core panic, hang, or read out of bounds —
-open an issue (or, for sensitive reports, contact the maintainers privately) and
-clearly mark it as a security report. A reproducing input for a core
-panic/hang/OOB is the most valuable thing you can include; it becomes a regression
-in the corpus.
+report it through **GitHub Private Vulnerability Reporting**:
+<https://github.com/mtonsmann/xPare/security/advisories/new>. The report stays
+private until a fix is released. A reproducing input for a core panic/hang/OOB is
+the most valuable thing you can include; it becomes a regression in the corpus.
 
 A change that alters any property in the table above is a **posture change**: it
 must be called out explicitly in the PR, justified, and reflected here and in the
