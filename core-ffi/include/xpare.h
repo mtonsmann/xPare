@@ -51,24 +51,24 @@ typedef enum SsStatus {
   /**
    * Success. `*out` / `*out_len` describe a buffer the caller must free.
    */
-  XP_STATUS_OK = 0,
+  SS_STATUS_OK = 0,
   /**
    * A required pointer argument was null.
    */
-  XP_STATUS_ERR_NULL_ARG = 1,
+  SS_STATUS_ERR_NULL_ARG = 1,
   /**
    * `config_json` was not valid UTF-8, not valid JSON, or an unsupported version.
    */
-  XP_STATUS_ERR_INVALID_CONFIG = 2,
+  SS_STATUS_ERR_INVALID_CONFIG = 2,
   /**
    * An unexpected internal error (e.g. a caught panic). Should never happen.
    */
-  XP_STATUS_ERR_INTERNAL = 3,
+  SS_STATUS_ERR_INTERNAL = 3,
   /**
    * `input_len` exceeded [`XP_MAX_INPUT_BYTES`]; nothing was read, allocated, or
    * transformed. (Added in ABI v2.)
    */
-  XP_STATUS_ERR_INPUT_TOO_LARGE = 4,
+  SS_STATUS_ERR_INPUT_TOO_LARGE = 4,
 } SsStatus;
 
 #ifdef __cplusplus
