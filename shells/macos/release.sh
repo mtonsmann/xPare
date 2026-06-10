@@ -12,15 +12,18 @@
 #                    Needs no Apple account; this is the path CI and local testing use.
 #   dist             Developer ID sign with the checked App Sandbox entitlements
 #                    -> notarize -> staple -> zip -> checksum -> verify.
-#                    GATED: requires CERT_NAME, the entitlements file, and a real
-#                    vX.Y.Z version. Cannot run without an Apple Developer ID.
-#   github-release   Upload the signed release zip + checksum via `gh`.
+#                    GATED: requires CERT_NAME, NOTARY_PROFILE, the entitlements
+#                    file, and a real vX.Y.Z version. Cannot run without an Apple
+#                    Developer ID; never produces an un-notarized official asset.
+#   github-release   Verify the zip is stapled, then upload it + checksum via `gh`
+#                    (draft release; prerelease for hyphenated versions).
 #
 # Environment:
 #   VERSION=X.Y.Z              Release version. `dist` requires it (or an exact vX.Y.Z
 #                              git tag); `preview` falls back to a dev label.
 #   CERT_NAME="Developer ID Application: Name (TEAMID)"   Required for `dist`.
-#   NOTARY_PROFILE=name        `xcrun notarytool store-credentials` profile; required to notarize.
+#   NOTARY_PROFILE=name        `xcrun notarytool store-credentials` profile; required
+#                              for `dist` (official assets must be notarized).
 #   SIGN_ENTITLEMENTS=path     Entitlements for the Developer ID signature. Defaults
 #                              to shells/macos/xPare.entitlements; dist rejects
 #                              any path that does not resolve to that checked file.
@@ -33,6 +36,9 @@ APP_NAME="xPare"
 APP="${SCRIPT_DIR}/dist/${APP_NAME}.app"
 EXE="${APP}/Contents/MacOS/${APP_NAME}"
 RELEASE_DIR="${REPO_ROOT}/dist/release"
+# Asset names carry the build arch. Releases are arm64-only for 1.0 (built on
+# Apple Silicon, so this resolves to arm64); x86_64 and universal assets are
+# deferred — see docs/release-model.md.
 ARCH="$(uname -m)"
 DEFAULT_SIGN_ENTITLEMENTS="${SCRIPT_DIR}/xPare.entitlements"
 
@@ -48,7 +54,8 @@ resolve_version() {
     printf '%s' "${v}"
 }
 
-valid_version() { [[ "$1" =~ ^[0-9]+(\.[0-9]+){2}([.-][A-Za-z0-9]+)?$ ]]; }
+# Semver-shaped: X.Y.Z with an optional dotted prerelease (1.0.0-rc.1).
+valid_version() { [[ "$1" =~ ^[0-9]+(\.[0-9]+){2}(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$ ]]; }
 
 canonical_path() {
     local path="$1"
@@ -72,16 +79,29 @@ minimal_entitlements_error() {
         return 1
     fi
 
-    local printed
-    if ! printed="$(/usr/libexec/PlistBuddy -c 'Print' "${target}" 2>/dev/null)"; then
+    # Minimality: delete the one allowed key from a scratch copy and require the
+    # remaining dict to print empty. A line-based count of `Print` output would
+    # also count the keys of nested dict payloads (and could be fooled by
+    # multi-line string values), so the check works structurally instead. The
+    # authoritative XML-level scan is `cargo xtask check-entitlements`; this is
+    # the in-script fail-closed mirror for the signing path.
+    local scratch
+    scratch="$(mktemp "${TMPDIR:-/tmp}/xpare-entitlements-scratch.XXXXXX")" || {
+        echo "could not create a scratch copy to verify ${label}."
+        return 1
+    }
+    local remainder=""
+    if ! cp "${target}" "${scratch}" \
+        || ! /usr/libexec/PlistBuddy -c 'Delete :com.apple.security.app-sandbox' "${scratch}" 2>/dev/null \
+        || ! remainder="$(/usr/libexec/PlistBuddy -c 'Print' "${scratch}" 2>/dev/null)"; then
+        rm -f "${scratch}"
         echo "could not read ${label}."
         return 1
     fi
-
-    local key_count
-    key_count="$(printf '%s\n' "${printed}" | awk '/^[[:space:]]+[A-Za-z0-9_.-]+ =/ { count++ } END { print count + 0 }')"
-    if [[ "${key_count}" != "1" ]]; then
-        echo "${label} must contain only com.apple.security.app-sandbox=true; found ${key_count} entitlement keys."
+    rm -f "${scratch}"
+    if [[ "${remainder}" != $'Dict {\n}' ]]; then
+        echo "${label} must contain only com.apple.security.app-sandbox=true; found extra entitlement content:"
+        printf '%s\n' "${remainder}"
         return 1
     fi
 }
@@ -116,7 +136,10 @@ verify_signed_entitlements() {
     local target="$1"
     local actual
     actual="$(mktemp "${TMPDIR:-/tmp}/xpare-entitlements.XXXXXX")"
-    if ! codesign -d --entitlements :- "${target}" > "${actual}" 2>/dev/null; then
+    # `--entitlements - --xml` requests the XML plist form PlistBuddy can parse
+    # (the legacy `:-` destination is deprecated, and a bare `-` emits DER on
+    # current toolchains).
+    if ! codesign -d --entitlements - --xml "${target}" > "${actual}" 2>/dev/null; then
         rm -f "${actual}"
         die "could not read signed entitlements from ${target}."
     fi
@@ -131,25 +154,115 @@ verify_signed_entitlements() {
     echo ">>> verified minimal App Sandbox entitlement on ${target}"
 }
 
+# The hardened runtime is a posture requirement and a notarization prerequisite;
+# `--options runtime` at sign time must be visible in the finished signature's
+# CodeDirectory flags, not just requested.
+verify_hardened_runtime() {
+    local target="$1"
+    local flags_line
+    flags_line="$(codesign -d --verbose "${target}" 2>&1 | grep '^CodeDirectory' || true)"
+    if [[ "${flags_line}" != *"runtime"* ]]; then
+        die "hardened runtime flag missing on ${target} (CodeDirectory: ${flags_line:-unreadable})."
+    fi
+    echo ">>> verified hardened runtime flag on ${target}"
+}
+
+# Submit the signed bundle for notarization and staple the ticket. Trusting the
+# notarytool exit code alone is not enough — a completed-but-Invalid submission
+# can still exit 0 — so this parses the machine-readable verdict and requires
+# status Accepted, printing the notarization log on any other outcome.
+notarize_and_staple() {
+    local notary_zip="${RELEASE_DIR}/${APP_NAME}-notary-submission.zip"
+    mkdir -p "${RELEASE_DIR}"
+    rm -f "${notary_zip}"
+    ditto -c -k --keepParent "${APP}" "${notary_zip}"
+
+    echo ">>> notarizing (xcrun notarytool submit --wait)"
+    local submit_json submit_ok=1
+    submit_json="$(mktemp "${TMPDIR:-/tmp}/xpare-notary.XXXXXX")"
+    if ! xcrun notarytool submit "${notary_zip}" --keychain-profile "${NOTARY_PROFILE}" \
+        --wait --output-format json > "${submit_json}"; then
+        submit_ok=0
+    fi
+
+    local status submission_id
+    status="$(plutil -extract status raw -o - "${submit_json}" 2>/dev/null || true)"
+    submission_id="$(plutil -extract id raw -o - "${submit_json}" 2>/dev/null || true)"
+    rm -f "${submit_json}"
+    if [ "${submit_ok}" -ne 1 ] || [ "${status}" != "Accepted" ]; then
+        echo "release.sh: notarization status '${status:-<none>}' (submission id: ${submission_id:-<none>})." >&2
+        if [ -n "${submission_id}" ]; then
+            echo "release.sh: notarization log for ${submission_id}:" >&2
+            xcrun notarytool log "${submission_id}" --keychain-profile "${NOTARY_PROFILE}" >&2 \
+                || echo "release.sh: could not fetch the notarization log." >&2
+        fi
+        rm -f "${notary_zip}"
+        die "notarization did not return status Accepted."
+    fi
+
+    xcrun stapler staple "${APP}"
+    xcrun stapler validate "${APP}"
+    # Remove the pre-staple submission zip: it holds the un-stapled bundle and
+    # must never sit in the release dir where it could be mistaken for (or
+    # checksummed alongside) the real asset.
+    rm -f "${notary_zip}"
+    echo ">>> notarized (submission ${submission_id}) and stapled"
+}
+
+# The uploadable zip must contain the stapled app — catches a zip produced
+# before stapling or by a tampered dist run.
+verify_zip_stapled() {
+    local zip="$1"
+    local unpack
+    unpack="$(mktemp -d "${TMPDIR:-/tmp}/xpare-staple-check.XXXXXX")"
+    if ! ditto -x -k "${zip}" "${unpack}"; then
+        rm -rf "${unpack}"
+        die "could not unpack ${zip} to verify stapling."
+    fi
+    if ! xcrun stapler validate "${unpack}/${APP_NAME}.app"; then
+        rm -rf "${unpack}"
+        die "${zip} contains an un-stapled app; rerun 'release.sh dist' with NOTARY_PROFILE."
+    fi
+    rm -rf "${unpack}"
+    echo ">>> verified stapled notarization ticket inside ${zip}"
+}
+
 # Assemble the .app via package-app.sh at the requested version (ad-hoc signed).
+# Extra args are forwarded to package-app.sh (dist passes --require-icon).
 assemble() {
-    echo ">>> assembling ${APP_NAME}.app (version ${1})"
-    ( cd "${SCRIPT_DIR}" && ./package-app.sh --version "${1}" )
+    local version="$1"
+    shift
+    echo ">>> assembling ${APP_NAME}.app (version ${version})"
+    ( cd "${SCRIPT_DIR}" && ./package-app.sh --version "${version}" "$@" )
     [ -d "${APP}" ] || die "expected bundle not found at ${APP}"
 }
 
 zip_app() {
-    mkdir -p "${RELEASE_DIR}"
-    rm -f "$1"
-    ditto -c -k --keepParent "${APP}" "$1"
-    shasum -a 256 "$1" > "$1.sha256"
-    echo ">>> wrote $1 (+ .sha256)"
+    local zip="$1"
+    local dir base
+    dir="$(dirname "${zip}")"
+    base="$(basename "${zip}")"
+    mkdir -p "${dir}"
+    rm -f "${zip}"
+    ditto -c -k --keepParent "${APP}" "${zip}"
+    # Hash the basename from inside the directory so the .sha256 file verifies
+    # anywhere with `shasum -c` — an absolute path baked into the file would
+    # only ever verify on the machine that built it.
+    ( cd "${dir}" && shasum -a 256 "${base}" > "${base}.sha256" )
+    # Aggregate manifest over every zip currently in the release dir, for
+    # one-shot `shasum -c SHA256SUMS` verification of a download set.
+    ( cd "${RELEASE_DIR}" && shasum -a 256 -- *.zip > SHA256SUMS )
+    echo ">>> wrote ${zip} (+ ${base}.sha256, SHA256SUMS)"
 }
 
 cmd="${1:-}"
 case "${cmd}" in
     preview)
         version="$(resolve_version)"
+        # Preview archives are explicitly-unofficial test artifacts whose names
+        # say so, so the version is a label rather than a contract: untagged
+        # builds fall back to a dev marker (which still matches valid_version's
+        # prerelease shape) instead of failing strict validation.
         [ -n "${version}" ] || version="0.0.0-dev"
         assemble "${version}"
         zip_app "${RELEASE_DIR}/${APP_NAME}-v${version}-macos-${ARCH}-unsigned-preview.zip"
@@ -159,11 +272,16 @@ case "${cmd}" in
     dist)
         version="$(resolve_version)"
         [ -n "${version}" ] || die "dist needs VERSION=X.Y.Z or an exact vX.Y.Z tag."
-        valid_version "${version}" || die "VERSION must look like X.Y.Z or X.Y.Z-suffix (got '${version}')."
+        valid_version "${version}" || die "VERSION must look like X.Y.Z with an optional dotted prerelease, e.g. 1.0.0-rc.1 (got '${version}')."
         sign_entitlements="$(resolve_sign_entitlements)"
         [ -n "${CERT_NAME:-}" ] || die "dist needs CERT_NAME='Developer ID Application: ... (TEAMID)'."
+        # Fail closed: a signed-but-un-notarized zip under the official asset
+        # name is indistinguishable from a real release downstream. `preview`
+        # is the path that needs no Apple credentials.
+        [ -n "${NOTARY_PROFILE:-}" ] || die "dist needs NOTARY_PROFILE (see 'xcrun notarytool store-credentials'); official assets must be notarized — use 'preview' for unsigned archives."
 
-        assemble "${version}"
+        # Official bundles must carry the app icon, so its generation is fatal here.
+        assemble "${version}" --require-icon
 
         echo ">>> Developer ID signing (hardened runtime + App Sandbox entitlements)"
         # Sign the inner Mach-O first, then the bundle (inside-out).
@@ -175,25 +293,17 @@ case "${cmd}" in
         codesign --verify --strict --verbose=2 "${APP}"
         verify_signed_entitlements "${EXE}"
         verify_signed_entitlements "${APP}"
+        verify_hardened_runtime "${EXE}"
+        verify_hardened_runtime "${APP}"
 
-        local_zip="${RELEASE_DIR}/${APP_NAME}-v${version}-notary.zip"
-        mkdir -p "${RELEASE_DIR}"; rm -f "${local_zip}"
-        ditto -c -k --keepParent "${APP}" "${local_zip}"
-
-        if [ -n "${NOTARY_PROFILE:-}" ]; then
-            echo ">>> notarizing (xcrun notarytool submit --wait)"
-            xcrun notarytool submit "${local_zip}" --keychain-profile "${NOTARY_PROFILE}" --wait
-            xcrun stapler staple "${APP}"
-            xcrun stapler validate "${APP}"
-        else
-            echo ">>> NOTARY_PROFILE unset — signed but NOT notarized/stapled (incomplete release)." >&2
-        fi
+        notarize_and_staple
 
         zip_app "${RELEASE_DIR}/${APP_NAME}-v${version}-macos-${ARCH}.zip"
         echo ">>> verifying Gatekeeper acceptance"
         codesign --verify --deep --strict --verbose=2 "${APP}"
-        spctl --assess --type execute --verbose "${APP}" || \
-            echo ">>> spctl assessment failed (expected until notarization completes)." >&2
+        # Notarization is mandatory above, so Gatekeeper acceptance is a hard
+        # requirement — a failure here means the release is not shippable.
+        spctl --assess --type execute --verbose "${APP}"
         ;;
 
     github-release)
@@ -202,12 +312,34 @@ case "${cmd}" in
         command -v gh >/dev/null 2>&1 || die "the gh CLI is required for github-release."
         zip="${RELEASE_DIR}/${APP_NAME}-v${version}-macos-${ARCH}.zip"
         [ -f "${zip}" ] || die "${zip} is missing; run 'release.sh dist' first."
-        gh release create "v${version}" "${zip}" "${zip}.sha256" \
-            --title "${APP_NAME} ${version}" --generate-notes --verify-tag
+        sums="${RELEASE_DIR}/SHA256SUMS"
+        [ -f "${sums}" ] || die "${sums} is missing; run 'release.sh dist' first."
+        verify_zip_stapled "${zip}"
+
+        # Draft first so a human reviews and publishes; hyphenated versions
+        # (1.0.0-rc.1) are marked prerelease. Re-runs are idempotent: an
+        # existing release gets its assets replaced instead of dying. The
+        # aggregate SHA256SUMS rides along with the per-file checksum (CI's
+        # provenance attestation covers SHA256SUMS*, so the published asset
+        # set and the attested subject set stay in sync).
+        if gh release view "v${version}" >/dev/null 2>&1; then
+            echo ">>> release v${version} already exists — replacing assets (--clobber)"
+            gh release upload "v${version}" "${zip}" "${zip}.sha256" "${sums}" --clobber
+        else
+            create_flags=(--draft)
+            case "${version}" in
+                *-*) create_flags+=(--prerelease) ;;
+            esac
+            gh release create "v${version}" "${zip}" "${zip}.sha256" "${sums}" \
+                --title "${APP_NAME} ${version}" --generate-notes --verify-tag \
+                "${create_flags[@]}"
+        fi
         ;;
 
     ""|-h|--help)
-        sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+        # Print the header comment block (everything up to the first non-# line)
+        # so the usage text cannot drift out of sync with a fixed line range.
+        awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "${BASH_SOURCE[0]}"
         ;;
     *)
         die "unknown subcommand '${cmd}' (use preview | dist | github-release)"
