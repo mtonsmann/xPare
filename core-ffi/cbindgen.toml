@@ -19,4 +19,4 @@ prefix_with_name = false
 
 [export]
 # Keep the surface explicit and ordered for a stable, reviewable diff.
-include = ["SsStatus"]
+include = ["XpStatus"]
