@@ -5,14 +5,14 @@ import CXPare
 /// maps 1:1 to a non-OK `SsStatus` from the core; ``encodingFailed`` /
 /// ``decodingFailed`` cover the Swift-side marshalling.
 public enum TransformError: Error, Equatable, CustomStringConvertible {
-    /// A required pointer argument was null (`XP_STATUS_ERR_NULL_ARG`).
+    /// A required pointer argument was null (`SS_STATUS_ERR_NULL_ARG`).
     case nullArgument
-    /// The config JSON was rejected by the core (`XP_STATUS_ERR_INVALID_CONFIG`).
+    /// The config JSON was rejected by the core (`SS_STATUS_ERR_INVALID_CONFIG`).
     case invalidConfig
-    /// An unexpected internal error / caught panic (`XP_STATUS_ERR_INTERNAL`).
+    /// An unexpected internal error / caught panic (`SS_STATUS_ERR_INTERNAL`).
     case internalError
     /// Input exceeded the core's hard size ceiling
-    /// (`XP_STATUS_ERR_INPUT_TOO_LARGE`, ABI v2).
+    /// (`SS_STATUS_ERR_INPUT_TOO_LARGE`, ABI v2).
     case inputTooLarge
     /// The core returned a status not covered by the frozen ABI.
     case unknownStatus(UInt32)
@@ -39,11 +39,11 @@ public enum TransformError: Error, Equatable, CustomStringConvertible {
     /// Translate a raw `SsStatus` into a thrown error, or `nil` for OK.
     static func from(status: SsStatus) -> TransformError? {
         switch status {
-        case XP_STATUS_OK: return nil
-        case XP_STATUS_ERR_NULL_ARG: return .nullArgument
-        case XP_STATUS_ERR_INVALID_CONFIG: return .invalidConfig
-        case XP_STATUS_ERR_INTERNAL: return .internalError
-        case XP_STATUS_ERR_INPUT_TOO_LARGE: return .inputTooLarge
+        case SS_STATUS_OK: return nil
+        case SS_STATUS_ERR_NULL_ARG: return .nullArgument
+        case SS_STATUS_ERR_INVALID_CONFIG: return .invalidConfig
+        case SS_STATUS_ERR_INTERNAL: return .internalError
+        case SS_STATUS_ERR_INPUT_TOO_LARGE: return .inputTooLarge
         default: return .unknownStatus(status.rawValue)
         }
     }
