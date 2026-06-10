@@ -78,9 +78,12 @@ jobs:
         run: cargo run -p xtask -- check-coverage
 
   # --------------------------------------------------------------------------
-  # Mutation testing. On a PR, scope to the diff (fast feedback) via XP_DIFF_BASE;
-  # on push-to-main / manual dispatch, run the full tree. A surviving mutant means
-  # dead code or an under-asserted test.
+  # Mutation testing. PRs scope to the diff vs their base branch; pushes scope to
+  # the pushed-over commit. Only a manual workflow_dispatch runs the full tree —
+  # at ~900 mutants the full sweep cannot fit the job timeout on a hosted runner,
+  # and every commit on protected main already had a diff-scoped run on its PR.
+  # A MISSED mutant means dead code or an under-asserted test (timeouts count as
+  # detected — see check-mutants in xtask).
   # --------------------------------------------------------------------------
   mutants:
     name: mutants (cargo-mutants, best-effort)
@@ -115,9 +118,39 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
         run: git fetch --no-tags --depth=1 origin "$BASE_REF"
 
-      # XP_DIFF_BASE scopes the run to the PR diff; empty on push/dispatch = full tree
-      # (xtask treats an empty value as unset). Set via env, never inlined into a script.
-      - name: Run mutation testing
+      # Resolve what XP_DIFF_BASE should be for this event (xtask treats an empty
+      # value as unset = full tree). Values flow through env, never inlined into
+      # the script, so there is no template-injection surface.
+      - name: Resolve mutation scope
         env:
-          XP_DIFF_BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          base=""
+          case "${EVENT_NAME}" in
+            pull_request)
+              base="origin/${BASE_REF}"
+              ;;
+            push)
+              if [ -n "${PUSH_BEFORE}" ] \
+                 && [ "${PUSH_BEFORE}" != "0000000000000000000000000000000000000000" ] \
+                 && git cat-file -e "${PUSH_BEFORE}^{commit}" 2>/dev/null; then
+                base="${PUSH_BEFORE}"
+              elif git rev-parse -q --verify 'HEAD~1^{commit}' >/dev/null 2>&1; then
+                # Force-push or unfetchable before-SHA: the pushed head's first
+                # parent still scopes the run to what just landed.
+                base="HEAD~1"
+              fi
+              ;;
+            *)
+              # workflow_dispatch: deliberate full-tree run, no time pressure.
+              base=""
+              ;;
+          esac
+          echo "Mutation scope base: ${base:-<full tree>}"
+          echo "XP_DIFF_BASE=${base}" >> "${GITHUB_ENV}"
+
+      - name: Run mutation testing
         run: cargo run -p xtask -- check-mutants
