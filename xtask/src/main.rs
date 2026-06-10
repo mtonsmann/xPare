@@ -1018,12 +1018,7 @@ fn check_c_ffi_surface() -> Result<(), String> {
     check_file_lines(
         &root,
         "shells/macos/Sources/CXPare/include/module.modulemap",
-        &[
-            "module CXPare {",
-            r#"header "shim.h""#,
-            "export *",
-            "}",
-        ],
+        &["module CXPare {", r#"header "shim.h""#, "export *", "}"],
         &mut errors,
     );
     check_generated_header_shape(&root, &mut errors);

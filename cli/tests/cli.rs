@@ -161,8 +161,7 @@ fn strip_html_via_config_json_over_stdin() {
 fn config_from_temp_file() {
     // Write a config file to the OS temp dir, with a PID-unique name so concurrent
     // test binaries never clash. Clean it up regardless of assertion outcome.
-    let path =
-        std::env::temp_dir().join(format!("xpare-cli-test-{}.json", std::process::id()));
+    let path = std::env::temp_dir().join(format!("xpare-cli-test-{}.json", std::process::id()));
     std::fs::write(&path, STRIP_HTML).expect("failed to write temp config");
 
     let out = run_str(
