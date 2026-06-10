@@ -3280,9 +3280,7 @@ mod tests {
         assert!(content_line_violation(sink_line, false).is_some());
         // Even a harmless line is flagged if it smuggles the marker into a
         // non-allowlisted file.
-        assert!(
-            content_line_violation("// xpare:allow-content-persistence", false).is_some()
-        );
+        assert!(content_line_violation("// xpare:allow-content-persistence", false).is_some());
         // Without the marker, the ordinary scan applies regardless of file.
         assert!(content_line_violation(
             "UserDefaults.standard.set(clipboardText, forKey: key)",

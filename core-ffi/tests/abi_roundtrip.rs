@@ -16,7 +16,7 @@ use std::os::raw::c_char;
 
 use xpare_ffi::{
     ss_abi_version, ss_buffer_free, ss_capabilities_json, ss_transform, SsStatus,
-    SS_MAX_INPUT_BYTES,
+    XP_MAX_INPUT_BYTES,
 };
 
 // ---------------------------------------------------------------------------
@@ -127,7 +127,7 @@ const IDENTITY_CFG: &str = r#"{"version":2,"operations":[]}"#;
 fn abi_version_is_two() {
     assert_eq!(ss_abi_version(), 2);
     // Cross-check against the public constant so a bump can never silently pass.
-    assert_eq!(ss_abi_version(), xpare_ffi::SS_ABI_VERSION);
+    assert_eq!(ss_abi_version(), xpare_ffi::XP_ABI_VERSION);
 }
 
 // ---------------------------------------------------------------------------
@@ -149,7 +149,7 @@ fn oversized_input_is_rejected_before_read_or_alloc() {
     let status = unsafe {
         ss_transform(
             tiny.as_ptr(),
-            SS_MAX_INPUT_BYTES + 1,
+            XP_MAX_INPUT_BYTES + 1,
             cfg.as_ptr(),
             &mut out,
             &mut out_len,
