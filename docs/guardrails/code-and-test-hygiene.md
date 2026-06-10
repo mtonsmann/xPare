@@ -54,8 +54,10 @@ style note. Fix the code to satisfy the check; never weaken the check.
   deterministic and offline (rustdoc on the pinned stable toolchain), so it stays in the
   required gate.
 - **Coverage & mutation testing (`check-coverage`, `check-mutants`)** are the deepest
-  signal for rules 1 and 7 — a surviving mutant is either dead code or an under-asserted
-  test. They are **heavy and deterministic**, so (like Miri and Kani) they are *not* in
+  signal for rules 1 and 7 — a MISSED mutant is either dead code or an under-asserted
+  test, and is the only mutation outcome that fails the check (a TIMEOUT means the
+  mutation hung the suite, which is detection, not a gap; UNVIABLE is non-signal).
+  They are **heavy and deterministic**, so (like Miri and Kani) they are *not* in
   the required `ci` gate: they run on demand, locally, and event-driven in
   [`hygiene.yml`](../../.github/workflows/hygiene.yml). A mutation finding is fixed by
   *strengthening a test*, and that new assertion becomes a permanent regression.

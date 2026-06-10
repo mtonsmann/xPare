@@ -2276,9 +2276,11 @@ fn check_coverage() -> Result<(), String> {
 }
 
 /// check-mutants: run cargo-mutants over the product logic (see `.cargo/mutants.toml`). A
-/// surviving mutant is dead code or an under-asserted test. `XP_DIFF_BASE=<ref>` scopes
-/// the run to lines changed vs `<ref>` (fast PR feedback via `--in-diff`); unset = full
-/// tree. Best-effort and heavy, so it stays out of the required `ci` gate.
+/// MISSED mutant is dead code or an under-asserted test and FAILS the check; TIMEOUT
+/// outcomes pass (the mutation hung the suite — that is detection, not a gap) and
+/// UNVIABLE ones are non-signal. `XP_DIFF_BASE=<ref>` scopes the run to lines changed vs
+/// `<ref>` (fast PR feedback via `--in-diff`); unset = full tree. Best-effort and heavy,
+/// so it stays out of the required `ci` gate.
 fn check_mutants() -> Result<(), String> {
     let tool = ensure_cargo_tool("cargo-mutants", "cargo-mutants", CARGO_MUTANTS_VERSION)?;
     let path_env = path_with_tool_dir(&tool);
@@ -2341,20 +2343,104 @@ fn check_mutants() -> Result<(), String> {
     let status = cmd
         .status()
         .map_err(|e| format!("check-mutants: FAIL — could not launch `cargo mutants`: {e}"))?;
-    if status.success() {
-        println!("check-mutants: no surviving mutants — every mutated line is caught by a test.");
-        Ok(())
-    } else {
-        Err(
-            "check-mutants: FAIL — surviving (or timed-out/unviable) mutant(s); see mutants.out/.\n\
+
+    // The verdict comes from mutants.out, NOT the raw exit status: cargo-mutants
+    // exits nonzero for TIMEOUT outcomes too, but a mutant that hangs the suite IS
+    // detected (the hang is loud; it cannot ship silently) — only a MISSED mutant
+    // (suite stays green under the mutation) is an assertion gap. The exit status
+    // still vetoes interrupted/errored runs that never classified all mutants.
+    let out_dir = root.join("mutants.out");
+    let count_lines = |name: &str| -> usize {
+        std::fs::read_to_string(out_dir.join(name))
+            .map(|s| s.lines().filter(|l| !l.trim().is_empty()).count())
+            .unwrap_or(0)
+    };
+    let missed_list = std::fs::read_to_string(out_dir.join("missed.txt")).unwrap_or_default();
+    let generated = std::fs::read_to_string(out_dir.join("mutants.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v.as_array().map(Vec::len))
+        .unwrap_or(0);
+    classify_mutants_outcome(
+        status.code(),
+        generated,
+        &missed_list,
+        count_lines("caught.txt"),
+        count_lines("timeout.txt"),
+        count_lines("unviable.txt"),
+    )
+}
+
+/// Decide pass/fail from a completed `cargo mutants` run. Pure so the policy is
+/// unit-testable: FAIL on missed mutants and on runs that did not complete
+/// (interrupt/internal error, or no classified outcomes despite generated
+/// mutants — e.g. a baseline test failure); PASS otherwise, treating TIMEOUT
+/// outcomes as detected and UNVIABLE ones as non-signal.
+fn classify_mutants_outcome(
+    exit_code: Option<i32>,
+    generated: usize,
+    missed_list: &str,
+    caught: usize,
+    timeout: usize,
+    unviable: usize,
+) -> Result<(), String> {
+    let missed: Vec<&str> = missed_list
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .collect();
+    if !missed.is_empty() {
+        return Err(format!(
+            "check-mutants: FAIL — {} MISSED mutant(s); see mutants.out/missed.txt:\n  {}\n\
              \n\
-             A SURVIVING mutant means a line was changed and the whole test suite still passed:\n\
+             A MISSED mutant means a line was changed and the whole test suite still passed:\n\
              either the line is dead (delete it) or a test runs it without asserting on its\n\
              behavior (strengthen the assertion — that becomes a permanent regression). Only\n\
-             skip a genuinely equivalent mutant via `.cargo/mutants.toml` with a documented reason."
-                .to_string(),
-        )
+             skip a genuinely equivalent mutant via `.cargo/mutants.toml` with a documented reason.",
+            missed.len(),
+            missed.join("\n  ")
+        ));
     }
+    // Exit code 1 is cargo-mutants' usage/internal-error class, and a killed
+    // process has no code at all: in both cases the sweep did not finish, so an
+    // empty missed.txt proves nothing.
+    match exit_code {
+        None => {
+            return Err(
+                "check-mutants: FAIL — cargo-mutants was killed by a signal before completing; \
+                 an empty missed.txt from a partial sweep proves nothing. Re-run."
+                    .to_string(),
+            );
+        }
+        Some(1) => {
+            return Err(
+                "check-mutants: FAIL — cargo-mutants reported a usage/internal error; \
+                 see mutants.out/ and the log above."
+                    .to_string(),
+            );
+        }
+        Some(_) => {}
+    }
+    if generated == 0 {
+        println!(
+            "check-mutants: no mutants in scope (empty or non-product diff) — nothing to test."
+        );
+        return Ok(());
+    }
+    if caught + timeout + unviable == 0 {
+        return Err(
+            "check-mutants: FAIL — mutants were generated but none were classified \
+             (baseline test failure or an interrupted run); see mutants.out/log."
+                .to_string(),
+        );
+    }
+    print!("check-mutants: 0 missed ({caught} caught, {timeout} timeout, {unviable} unviable).");
+    if timeout > 0 {
+        print!(
+            " Timeouts count as DETECTED: the mutation hung the suite, which cannot ship silently."
+        );
+    }
+    println!();
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -3600,5 +3686,59 @@ mod tests {
         // The floor must sit under the ~95.8% Sources baseline measured at introduction,
         // or every run trips it. Guards against an accidental bump above reality.
         const { assert!(SWIFT_COVERAGE_FLOOR_PCT <= 95.8) }
+    }
+
+    // --- check-mutants verdict policy ---
+
+    #[test]
+    fn mutants_clean_run_passes() {
+        assert!(classify_mutants_outcome(Some(0), 89, "", 89, 0, 0).is_ok());
+    }
+
+    #[test]
+    fn mutants_timeouts_pass_as_detected() {
+        // cargo-mutants exits nonzero when timeouts exist; a hang is detection,
+        // not an assertion gap, so the check must still pass.
+        assert!(classify_mutants_outcome(Some(3), 89, "", 85, 2, 2).is_ok());
+    }
+
+    #[test]
+    fn mutants_missed_fails_and_names_them() {
+        let err = classify_mutants_outcome(
+            Some(2),
+            89,
+            "core/src/x.rs:1:1: replace a with b\n",
+            88,
+            0,
+            0,
+        )
+        .unwrap_err();
+        assert!(err.contains("1 MISSED"), "{err}");
+        assert!(err.contains("core/src/x.rs:1:1"), "{err}");
+    }
+
+    #[test]
+    fn mutants_signal_kill_fails_despite_empty_missed_list() {
+        // The original incident: the runner was reclaimed mid-sweep, missed.txt
+        // was empty only because the run never finished.
+        assert!(classify_mutants_outcome(None, 913, "", 21, 0, 4).is_err());
+    }
+
+    #[test]
+    fn mutants_internal_error_fails() {
+        assert!(classify_mutants_outcome(Some(1), 0, "", 0, 0, 0).is_err());
+    }
+
+    #[test]
+    fn mutants_empty_scope_passes() {
+        // Docs-only / workflow-only diffs generate zero mutants; that is a pass,
+        // not a baseline failure.
+        assert!(classify_mutants_outcome(Some(0), 0, "", 0, 0, 0).is_ok());
+    }
+
+    #[test]
+    fn mutants_generated_but_unclassified_fails() {
+        // Baseline test failure: mutants were enumerated but the sweep never ran.
+        assert!(classify_mutants_outcome(Some(4), 89, "", 0, 0, 0).is_err());
     }
 }
