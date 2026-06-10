@@ -1,4 +1,5 @@
 import Foundation
+@testable import XPareCore
 @testable import XPareKit
 
 /// An in-memory `PasteboardProtocol` for deterministic tests — no NSPasteboard,
@@ -78,5 +79,37 @@ final class FakePasteboard: PasteboardProtocol {
         self.snapshot = snapshot
         self.rawRepresentationBytes = rawRepresentationBytes
         changeCount += 1
+    }
+}
+
+/// Records every transform call; shared by the StripController suites.
+final class RecordingTransformer: Transforming, @unchecked Sendable {
+    private let lock = NSLock()
+    private let output: String
+    private var _callCount = 0
+    private var _configs: [TransformConfig] = []
+
+    init(output: String) {
+        self.output = output
+    }
+
+    var callCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return _callCount
+    }
+
+    var configs: [TransformConfig] {
+        lock.lock()
+        defer { lock.unlock() }
+        return _configs
+    }
+
+    func transform(_ input: String, config: TransformConfig) throws -> String {
+        lock.lock()
+        _callCount += 1
+        _configs.append(config)
+        lock.unlock()
+        return output
     }
 }
