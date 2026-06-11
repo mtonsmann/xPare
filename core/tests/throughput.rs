@@ -176,8 +176,113 @@ fn build_tracker_urls(target: usize) -> String {
     )
 }
 
+/// Delimiter-heavy records for split/join/prefix/suffix line operations.
+fn build_delimited_records(target: usize) -> String {
+    repeat_to("alpha|beta|gamma|delta\none|two|three|four\n\n", target)
+}
+
 fn cfg(operations: Vec<Operation>) -> Config {
     Config::as_given(operations)
+}
+
+#[test]
+fn operation_performance_coverage_map_covers_all_variants() {
+    for op in operation_samples() {
+        assert!(
+            !operation_performance_scenarios(&op).is_empty(),
+            "operation {:?} must have an explicit performance scenario",
+            op
+        );
+    }
+}
+
+fn operation_samples() -> Vec<Operation> {
+    vec![
+        Operation::StripHtml,
+        Operation::StripMarkdown,
+        Operation::HtmlToMarkdown,
+        Operation::CollapseWhitespace,
+        Operation::TrimTrailingWhitespace,
+        Operation::RemoveBlankLines,
+        Operation::UnwrapLines,
+        Operation::ChangeCase {
+            case: CaseKind::Upper,
+        },
+        Operation::ChangeCase {
+            case: CaseKind::Lower,
+        },
+        Operation::ChangeCase {
+            case: CaseKind::Title,
+        },
+        Operation::ChangeCase {
+            case: CaseKind::Sentence,
+        },
+        Operation::SortLines {
+            descending: true,
+            case_insensitive: true,
+        },
+        Operation::DedupeLines,
+        Operation::PrefixLines {
+            prefix: "> ".to_string(),
+        },
+        Operation::SuffixLines {
+            suffix: ";".to_string(),
+        },
+        Operation::JoinWith {
+            separator: ", ".to_string(),
+        },
+        Operation::SplitOn {
+            delimiter: "|".to_string(),
+        },
+        Operation::ExtractEmails,
+        Operation::ExtractUrls,
+        Operation::Defang {
+            style: BracketStyle::Square,
+        },
+        Operation::Defang {
+            style: BracketStyle::Round,
+        },
+        Operation::Refang,
+        Operation::CleanUrls,
+        Operation::MaskIdentifiers {
+            emails: true,
+            ipv4: true,
+            ipv6: true,
+        },
+    ]
+}
+
+fn operation_performance_scenarios(op: &Operation) -> &'static str {
+    match op {
+        Operation::StripHtml => "throughput strip-html-*; criterion strip_html",
+        Operation::StripMarkdown => "throughput strip-markdown-*; criterion strip_markdown",
+        Operation::HtmlToMarkdown => "throughput html-to-markdown-heavy",
+        Operation::CollapseWhitespace => "throughput collapse-whitespace",
+        Operation::TrimTrailingWhitespace => "throughput trim-trailing",
+        Operation::RemoveBlankLines => "throughput remove-blank-lines",
+        Operation::UnwrapLines => "throughput unwrap-lines",
+        Operation::ChangeCase { case } => match case {
+            CaseKind::Upper => "criterion change_case/upper",
+            CaseKind::Lower => "throughput case-lower-ascii",
+            CaseKind::Title => "criterion change_case/title",
+            CaseKind::Sentence => "throughput case-sentence-unicode",
+        },
+        Operation::SortLines { .. } => "throughput sort-lines-*; large bench sort_lines*",
+        Operation::DedupeLines => "throughput dedupe-lines-*; large bench dedupe_lines",
+        Operation::PrefixLines { .. } => "throughput prefix-lines",
+        Operation::SuffixLines { .. } => "throughput suffix-lines",
+        Operation::JoinWith { .. } => "throughput join-with",
+        Operation::SplitOn { .. } => "throughput split-on",
+        Operation::ExtractEmails => "throughput extract-emails",
+        Operation::ExtractUrls => "throughput extract-urls; large bench extract_urls",
+        Operation::Defang { style } => match style {
+            BracketStyle::Square => "throughput defang-iocs",
+            BracketStyle::Round => "throughput defang-iocs (same scanner, alternate style)",
+        },
+        Operation::Refang => "throughput refang-iocs",
+        Operation::CleanUrls => "throughput clean-urls-trackers",
+        Operation::MaskIdentifiers { .. } => "throughput mask-identifiers; perf_guard mask_*",
+    }
 }
 
 // --- timing -----------------------------------------------------------------
@@ -328,6 +433,7 @@ fn throughput_baseline() {
     let unicode = build_unicode(target);
     let iocs = build_iocs(target);
     let tracker_urls = build_tracker_urls(target);
+    let delimited_records = build_delimited_records(target);
 
     bench_transform(
         "strip-html-plain",
@@ -369,6 +475,15 @@ fn throughput_baseline() {
         "strip-markdown-sparse-log",
         &raw,
         &cfg(vec![Operation::StripMarkdown]),
+        n,
+        false,
+        floor,
+        &mut failures,
+    );
+    bench_transform(
+        "html-to-markdown-heavy",
+        &html,
+        &cfg(vec![Operation::HtmlToMarkdown]),
         n,
         false,
         floor,
@@ -466,6 +581,80 @@ fn throughput_baseline() {
         &mut failures,
     );
     bench_transform(
+        "sort-lines-desc-ci",
+        &raw,
+        &cfg(vec![Operation::SortLines {
+            descending: true,
+            case_insensitive: true,
+        }]),
+        n,
+        false,
+        floor,
+        &mut failures,
+    );
+    bench_transform(
+        "prefix-lines",
+        &raw,
+        &cfg(vec![Operation::PrefixLines {
+            prefix: "> ".to_string(),
+        }]),
+        n,
+        false,
+        floor,
+        &mut failures,
+    );
+    bench_transform(
+        "suffix-lines",
+        &raw,
+        &cfg(vec![Operation::SuffixLines {
+            suffix: " ;".to_string(),
+        }]),
+        n,
+        false,
+        floor,
+        &mut failures,
+    );
+    bench_transform(
+        "join-with",
+        &raw,
+        &cfg(vec![Operation::JoinWith {
+            separator: ", ".to_string(),
+        }]),
+        n,
+        false,
+        floor,
+        &mut failures,
+    );
+    bench_transform(
+        "split-on",
+        &delimited_records,
+        &cfg(vec![Operation::SplitOn {
+            delimiter: "|".to_string(),
+        }]),
+        n,
+        false,
+        floor,
+        &mut failures,
+    );
+    bench_transform(
+        "extract-emails",
+        &iocs,
+        &cfg(vec![Operation::ExtractEmails]),
+        n,
+        false,
+        floor,
+        &mut failures,
+    );
+    bench_transform(
+        "extract-urls",
+        &iocs,
+        &cfg(vec![Operation::ExtractUrls]),
+        n,
+        false,
+        floor,
+        &mut failures,
+    );
+    bench_transform(
         "defang-iocs",
         &iocs,
         &cfg(vec![Operation::Defang {
@@ -499,6 +688,19 @@ fn throughput_baseline() {
         "clean-urls-trackers",
         &tracker_urls,
         &cfg(vec![Operation::CleanUrls]),
+        n,
+        false,
+        floor,
+        &mut failures,
+    );
+    bench_transform(
+        "mask-identifiers",
+        &iocs,
+        &cfg(vec![Operation::MaskIdentifiers {
+            emails: true,
+            ipv4: true,
+            ipv6: true,
+        }]),
         n,
         false,
         floor,
