@@ -83,6 +83,9 @@ A ✂ **scissors** icon appears in the menu bar (no Dock icon — it's an
   now".
 - **Default pipeline:** strip HTML → collapse whitespace → trim trailing
   whitespace. Toggle individual operations from the menu.
+- **Extract text from image:** copy an image, then use "Extract text from image" in
+  the menu. The shell uses Apple's local Vision OCR and rewrites the clipboard with
+  recognized plain text; this is an explicit one-shot command, not continuous mode.
 - **Continuous mode (opt-in):** enable "Continuous monitoring" to strip
   automatically whenever the clipboard changes (500 ms poll). Off by default.
 - **Quit:** the menu's "Quit SafetyStrip" (⌘Q).
@@ -104,7 +107,7 @@ Notes:
 
 The tests use **swift-testing** (`import Testing`), not XCTest — a deliberate
 choice forced by the environment (see *What is real vs. stubbed* below). The
-suite (30 tests, 5 suites) covers:
+suite covers:
 
 - **FFI integration** through the *real linked core*: `strip_html` on
   `"<p>hi  there</p>"` + `collapse_whitespace` → `"hi there"`, ABI version,
@@ -119,7 +122,8 @@ suite (30 tests, 5 suites) covers:
   defaults on absent/corrupt data.
 - **`StripController`** end-to-end: HTML is stripped and written back in place;
   HTML sources force `strip_html` even if unset; unchanged plain text is not
-  rewritten.
+  rewritten; image OCR is explicit-only, size-bounded, off-main, and protected
+  against stale pasteboard writes.
 
 ## Packaging & distribution
 
@@ -166,6 +170,10 @@ absent, if app-sandbox is missing/false, or if any banned key appears.
 - **Rich → plain extraction** reads the best representation: prefer
   `public.html` (handed to the core's `strip_html`), else RTF flattened to its
   plain attributed-string value, else a plain string.
+- **Image → text extraction** is explicit-only. `SystemPasteboard.readImage`
+  reads bounded PNG/JPEG/HEIC/TIFF image bytes, `VisionTextRecognizer` runs local
+  Vision OCR off the main actor, and `StripController.extractImageText` writes the
+  recognized text back only if the pasteboard generation has not changed.
 - **Global hotkey via Carbon.** `HotkeyManager` uses `RegisterEventHotKey` /
   `InstallEventHandler` (default ⌥⌘V). This is the one global-hotkey mechanism
   that needs **neither** Accessibility **nor** Input Monitoring. `CGEventTap`
@@ -186,7 +194,7 @@ absent, if app-sandbox is missing/false, or if any banned key appears.
   produces a working linked executable.
 - The FFI link against the real Rust staticlib, verified by passing integration
   tests that call the core and round-trip buffers.
-- `swift test`: 30 tests green (using swift-testing).
+- `swift test`: swift-testing suites green.
 
 **Adapted to the environment:**
 

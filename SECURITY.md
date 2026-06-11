@@ -101,11 +101,17 @@ Clipboard markup is attacker-influenced, so the core treats all input as hostile
   escaped where Markdown could reinterpret it as raw HTML, and copied code/pre
   content uses delimiters that cannot be closed by the copied backtick run. It is
   not injected into continuous mode or the canonical sanitization pipeline.
+- **Image OCR is explicit, local shell extraction** — the macOS shell's one-shot
+  "Extract text from image" command reads bounded image bytes and runs Apple's
+  local Vision OCR off the main actor. It adds no network path, no telemetry, no
+  persistence, and no new entitlement; recognized text is a short-lived in-memory
+  value, is checked against the shell ceiling, and is written back only if the
+  pasteboard generation has not changed.
 - **Size limits are enforced before the core transform** — the macOS shell refuses
   extracted text above its RAM-proportional limit, and the FFI rejects anything above
   `SS_MAX_INPUT_BYTES` before reading or allocating. The macOS shell also checks raw
-  HTML/RTF representation bytes before decoding them when AppKit exposes those
-  bytes. Rich-format extraction itself is still platform work, so the limit is a
+  HTML/RTF/image representation bytes before decoding or OCR when AppKit exposes
+  those bytes. Rich-format extraction itself is still platform work, so the limit is a
   pre-core-transform guard, not a streaming rich-format parser for every native
   format.
 - **Configs are envelope-bounded before transform** — `parse_config` rejects configs
@@ -162,6 +168,9 @@ security-relevant ones:
   `StripHtml` → `StripMarkdown`.
 - **`HtmlToMarkdown` is not a browser-grade sanitizer or renderer** — it is a
   dependency-free clipboard converter for common copied-web fragments.
+- **Image OCR accuracy is best-effort.** Vision recognition can miss text,
+  misread glyphs, or return lines in an order chosen by Apple's framework. It is a
+  local extraction convenience, not a security classifier or DLP control.
 - **Privacy masking is not comprehensive anonymization or DLP.** It is a
   deterministic, heuristic, token-level rewrite for selected emails and IPs. It does
   not promise to find every form of PII or to protect against other same-user apps

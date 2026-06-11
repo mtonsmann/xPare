@@ -50,9 +50,10 @@ and is wiped from the buffer that crosses the boundary.
    must not create exfiltration, persistence, logging, or memory-unsafety.
 9. **Resource limits apply before the core transform, after platform extraction.**
    Native shells must refuse oversized extracted text before calling the core, and
-   the FFI has its own hard backstop. When a platform exposes raw rich representation
-   bytes, check them before decoding; still do not document the ceiling as a
-   universal streaming pre-parse limit for every native format.
+   the FFI has its own hard backstop. When a platform exposes raw rich or image
+   representation bytes, check them before decoding or OCR; also bound any OCR
+   result before writing it back. Still do not document the ceiling as a universal
+   streaming pre-parse limit for every native format.
 
 ## Why each rule has teeth
 

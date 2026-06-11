@@ -53,6 +53,14 @@ needs both the right-answer test AND adversarial-input coverage. -->
 core/tests/reference_transform.rs) and the fuzz target(s) run. Note any new corpus
 or fuzz/regressions/<target>/ entry. -->
 
+## Performance plan
+
+<!-- Required for feature work. Name the performance surface and the guard or
+measurement to add/run at the owning layer. Examples: core/tests/perf_guard.rs,
+make perf, make bench, a Swift shell performance guard, or a measured smoke for
+shell orchestration. Docs-only/process-only changes may say "Not applicable: no
+runtime behavior." -->
+
 ## Verification / proof plan
 
 <!-- How the must-preserve invariants are mechanically checked: which property,
@@ -68,12 +76,18 @@ cargo test --workspace
 cargo xtask ci
 # plus, if a hand-rolled parser changed:
 # make fuzz-smoke FUZZ_SMOKE_SECONDS=60
+# plus, for feature work, the performance command named above:
+# cargo test -p safetystrip-core --test perf_guard
+# make perf PERF_MIB=128 PERF_SAMPLES=7
+# swift test --package-path shells/macos --filter <FeaturePerformanceGuard>
 ```
 
 ## Evidence packet
 
 <!-- The commands actually run and their results (pass/fail with the relevant
-output, not "looks good"). This is what the reviewer trusts. -->
+output, not "looks good"). Include the performance command/result for every
+feature, or "not applicable" with the no-runtime-impact reason. This is what the
+reviewer trusts. -->
 
 ## Proof gaps
 

@@ -322,6 +322,25 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Run local Vision OCR against an image clipboard item and replace it with
+    /// recognized plain text. This is explicit-only and never persisted.
+    func extractImageText() {
+        Task { @MainActor in
+            switch await controller.extractImageText() {
+            case .stripped(let changed):
+                lastStatus = changed ? "Extracted image text" : "Image text skipped"
+            case .empty:
+                lastStatus = "Clipboard empty"
+            case .failed:
+                lastStatus = "Image text extraction failed"
+            case .notApplicable:
+                lastStatus = "No image text found"
+            case .tooLarge(let bytes):
+                lastStatus = "Clipboard too large (\(bytes / (1024 * 1024)) MB)"
+            }
+        }
+    }
+
     /// Run a strip right now from the menu. The transform runs off the main thread;
     /// we await the outcome and update the (content-free) status on the main actor.
     func stripNow() {
@@ -507,6 +526,10 @@ private struct MenuContent: View {
             model.runCommand(.htmlToMarkdown,
                              label: "Converted to Markdown",
                              notApplicableStatus: "No HTML content")
+        }
+        .disabled(model.isStripping)
+        Button("Extract text from image") {
+            model.extractImageText()
         }
         .disabled(model.isStripping)
         Button("Refang clipboard") {

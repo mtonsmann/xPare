@@ -11,9 +11,10 @@ The engineering loop is **evidence-first**: a change is judged by the correctnes
 evidence it ships, not the diff. Before non-trivial work, fill in a correctness
 brief ([`docs/templates/correctness-brief.md`](docs/templates/correctness-brief.md))
 and follow [`docs/agent-workflow.md`](docs/agent-workflow.md); the PR template asks
-for the resulting **evidence packet**. Pipeline/op behavior is anchored by a
-Cedar-style **reference interpreter** — the optimized production `transform` is
-differentially tested against a simple one-op-at-a-time reference in
+for the resulting **evidence packet**, including performance evidence for every
+feature change. Pipeline/op behavior is anchored by a Cedar-style **reference
+interpreter** — the optimized production `transform` is differentially tested
+against a simple one-op-at-a-time reference in
 [`core/tests/reference_transform.rs`](core/tests/reference_transform.rs).
 
 ## The full local gate
@@ -73,17 +74,18 @@ the underlying commands interchangeably.
 
 You do not have to run the full gate for every edit, but you must run everything
 relevant to your change class (the same classes as `AGENTS.md`). Run
-`cargo xtask ci` before opening a PR. If you skip a relevant check, say why in
-the PR.
+`cargo xtask ci` before opening a PR. Feature work must also add or run a
+repeatable performance guard/measurement at the owning layer and include the result
+in the PR. If you skip a relevant check, say why in the PR.
 
 | Change class | What you touched | Run at minimum |
 |---|---|---|
-| **Core transform** | `core/` transform logic, ops, pipeline | `cargo test -p safetystrip-core`, `cargo clippy -p safetystrip-core --all-targets -- -D warnings`, `cargo fmt`, and the relevant fuzz target (below). New behavior needs regression **and** adversarial-input tests; output must stay deterministic. |
+| **Core transform** | `core/` transform logic, ops, pipeline | `cargo test -p safetystrip-core`, `cargo clippy -p safetystrip-core --all-targets -- -D warnings`, `cargo fmt`, the relevant fuzz target (below), and `cargo test -p safetystrip-core --test perf_guard` for new/changed behavior. Run `make perf`/`make bench` when throughput changes. New behavior needs regression **and** adversarial-input tests; output must stay deterministic. |
 | **FFI boundary / ABI** | `core-ffi/` (incl. `cbindgen.toml`), config serialization, capabilities/version, `CSafetyStrip` shim files | `cargo xtask check-abi`, `cargo xtask check-c-ffi-surface`, `cargo test -p safetystrip-ffi`. An intended ABI change means: bump `SS_ABI_VERSION`, run `cargo xtask gen-header`, and call it out in the PR (confirm a non-Swift shell could still consume the boundary). Adding a transform must **not** change the ABI. |
-| **Shell** | `shells/macos/` (Swift), reserved `windows/`/`linux/` | `cargo build -p safetystrip-ffi --release` then `swift build --package-path shells/macos`. Touching entitlements → `cargo xtask check-entitlements`; touching release signing → `cargo xtask check-release-posture`; touching the build/release shell scripts → `cargo xtask check-shell`. No transform logic belongs in a shell. |
+| **Shell** | `shells/macos/` (Swift), reserved `windows/`/`linux/` | `cargo build -p safetystrip-ffi --release` then `swift build --package-path shells/macos`. Feature work also needs a Swift performance guard or measured smoke for the shell-owned path, with the result in the PR. Touching entitlements → `cargo xtask check-entitlements`; touching release signing → `cargo xtask check-release-posture`; touching the build/release shell scripts → `cargo xtask check-shell`. No transform logic belongs in a shell. |
 | **Security / privacy posture** | entitlements, logging, in-memory lifetime, data paths, anything network-adjacent | `cargo xtask check-no-network`, `cargo xtask check-no-content-logging`, `cargo xtask check-pipeline-zeroization`, `cargo xtask check-entitlements`, `cargo xtask check-release-posture`, `cargo xtask check-unsafe-forbid`. Any new entitlement, network-capable dependency, data path, or weakening of wipe-before-release zeroization is a posture change — justify it in the PR and update `SECURITY.md`. |
 | **Dependencies & CI** | crate versions, `Cargo.toml`/`Cargo.lock`, lints, `xtask`, `.github/workflows/`, shell scripts | `cargo xtask check-core-deps`, `cargo xtask check-no-network`, `cargo xtask check-supply-chain` (any dependency/lockfile change), `cargo xtask check-workflows` (any workflow change), plus `cargo test -p xtask` / `cargo clippy -p xtask --all-targets -- -D warnings` when editing `xtask`. New crates: prefer boring, audited, API-stable ones; a new core dependency must be a pure-data crate (no OS/IO/net) and added to the `xtask` allowlist with justification. |
-| **Docs only** | `README`, `ARCHITECTURE.md`, `DESIGN.md`, `docs/`, runbooks | `cargo fmt --all --check` (still run the formatter). Other checks may be skipped if the PR explains why. |
+| **Docs only** | `README`, `ARCHITECTURE.md`, `DESIGN.md`, `docs/`, runbooks | `cargo fmt --all --check` (still run the formatter). Runtime performance testing is not applicable, but say so in the PR. Other checks may be skipped if the PR explains why. |
 
 ## Closing review findings
 
@@ -248,4 +250,6 @@ in `config_roundtrip.rs`. The proofs cover the arithmetic only — **not** the
   boundary moves.
 - For any security, correctness, or performance finding class fixed by the PR,
   call out the regression protection and docs lesson added.
+- For every feature, include the performance test or measurement run and the
+  result. If there is no runtime behavior, state that performance is not applicable.
 - Make sure `cargo xtask ci` is green.

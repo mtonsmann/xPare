@@ -54,15 +54,19 @@ should distrust, so the posture is deliberately minimal and is checked mechanica
    representation (prefer the HTML rep → core `StripHtml`), transform via the core,
    and write the result back to the same pasteboard. **Never** simulate a paste
    (synthesizing Cmd-V) — that needs Accessibility and can target the wrong app.
+   Explicit image OCR is the shell-owned exception to "transform via the core": the
+   one-shot command reads bounded image bytes, runs Apple's local Vision OCR, and
+   writes recognized plain text back in place without changing the core ABI.
 7. **No persistence or logging of pasteboard content** — see
    [privacy-and-data-handling](privacy-and-data-handling.md). Free the core's output
    buffer with `ss_buffer_free` (it is zeroized on free).
 8. **Refuse oversized clipboards gracefully.** Before handing pasteboard text to the
-   core, check it against a RAM-proportional ceiling
-   (`StripController.defaultMaxInputBytes()` = `min(SS_MAX_INPUT_BYTES,
-   physicalMemory / 10)`). A larger clipboard yields a content-free "too large"
-   outcome and is **left untouched** — never risk an out-of-memory abort on a huge
-   paste. This mirrors the OS clipboard's own memory-bound nature; the core's
+   core, image bytes to Vision OCR, or recognized OCR text back to the pasteboard,
+   check it against a RAM-proportional ceiling (`StripController.defaultMaxInputBytes()`
+   = `min(SS_MAX_INPUT_BYTES, physicalMemory / 10)`). A larger clipboard yields a
+   content-free "too large" outcome and is **left untouched** — never risk an
+   out-of-memory abort on a huge paste. This mirrors the OS clipboard's own
+   memory-bound nature; the core's
    `SS_MAX_INPUT_BYTES` (ABI v2) is the hard backstop beneath it. See `DESIGN.md`
    → *Performance & large inputs → Input size ceiling*.
 9. **Treat local pasteboard writers as a race/DoS boundary, not a confidentiality
@@ -86,16 +90,17 @@ should distrust, so the posture is deliberately minimal and is checked mechanica
 
 ### Responsiveness
 
-12. **Transform off the main thread; indicate only when it's slow.** `stripNow` runs
-   the core transform on a background task — the menu-bar UI must never block, even on
-   a large clipboard. It is **threshold-gated**: `onStrippingChange(true)` fires only
-   if a run outlasts `busyThreshold` (default 400 ms), and `(false)` when it finishes,
-   so the instant common case shows nothing and only a multi-second run surfaces a
+12. **Transform/OCR off the main thread; indicate only when it's slow.** `stripNow`
+   runs the core transform on a background task, and explicit image OCR runs Vision
+   recognition on a detached task — the menu-bar UI must never block, even on a large
+   clipboard. It is **threshold-gated**: `onStrippingChange(true)` fires only if a run
+   outlasts `busyThreshold` (default 400 ms), and `(false)` when it finishes, so the
+   instant common case shows nothing and only a multi-second run surfaces a
    "Stripping…" state. The pasteboard read and the in-place write stay on the main
-   actor (AppKit is main-affine); only the pure transform is backgrounded. The
-   indicator is **indeterminate** by design — the FFI is one opaque call, so an honest
-   percentage isn't available without a progress-callback ABI or the deferred
-   streaming API.
+   actor (AppKit is main-affine); only the pure transform / local OCR recognition is
+   backgrounded. The indicator is **indeterminate** by design — the FFI is one opaque
+   call, and Vision does not provide honest per-clipboard progress through this shell
+   path.
 
 ## Why (short form)
 
