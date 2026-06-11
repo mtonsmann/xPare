@@ -29,6 +29,10 @@ new platform.
    ceiling applies to raw rich representation bytes when the platform exposes them,
    and to extracted text before calling the core. Do not rely on this as a universal
    streaming pre-parse limit for every native format.
+   If the platform supports image OCR, keep it explicit: read bounded image bytes,
+   run only local OS OCR, and write recognized plain text back only for a user-driven
+   one-shot command. Do not add OCR as a persistent core operation or continuous-mode
+   policy.
 2. **Clipboard write (in place).** Write the transformed text **back to the clipboard
    in place**. Never simulate a paste (e.g. synthesizing Cmd-V/Ctrl-V) — that needs
    intrusive input permissions and can fire into the wrong app. Replace the
@@ -104,6 +108,8 @@ contract they implement.)
 
 - Which checklist items the change touches (clipboard read/write, change detection,
   UI, hotkey, settings, core call).
+- For image OCR: confirmation that it is local, explicit-only, size-bounded, and does
+  not change the core ABI.
 - Any new OS permission/entitlement the shell now requires — that is a **posture
   change** (justify it; update [macos-posture](macos-posture.md) and
   [privacy-and-data-handling](privacy-and-data-handling.md)).

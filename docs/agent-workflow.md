@@ -37,10 +37,10 @@ A review/scan/fuzz/CI finding is its own flow:
 
 Before editing, fill in [`docs/templates/correctness-brief.md`](templates/correctness-brief.md).
 The brief is short and states *what behavior you intend, what invariants must
-survive, what bug classes you considered, and how you will prove it*. Writing it
-first is what turns "plausible diff" into "verified change": it forces you to name
-the property before you write code that might violate it. Paste the filled brief
-into the PR (or link it).
+survive, what bug classes you considered, how you will prove it, and what
+performance surface the change owns*. Writing it first is what turns "plausible
+diff" into "verified change": it forces you to name the property before you write
+code that might violate it. Paste the filled brief into the PR (or link it).
 
 ### 3. Identify invariants
 
@@ -77,17 +77,34 @@ implementation, at the lowest practical layer:
 - **Fuzz** — run the target covering any hand-rolled parser you touch; commit any
   crashing input under `fuzz/regressions/<target>/`.
 
-### 5. Implement the smallest patch
+### 5. Add performance evidence for feature work
+
+Every new feature needs a repeatable performance signal before PR. Name the
+feature's performance surface in the correctness brief, add or extend the narrowest
+practical guard/measurement at the owning layer, and include the result in the PR:
+
+- **Core behavior** — extend `core/tests/perf_guard.rs` for complexity/DoS shape
+  and run the relevant benchmark flow from [`docs/performance.md`](performance.md)
+  (`make perf`, `make bench`, or `make bench-large`) when throughput changes.
+- **Shell-owned behavior** — add a Swift shell performance guard or measured smoke
+  for SafetyStrip-owned orchestration, pasteboard handling, or UI responsiveness.
+  OS framework latency that depends on hardware/content (for example Vision OCR)
+  may be a proof gap, but the SafetyStrip-owned overhead still needs a local signal.
+- **Docs-only or process-only work** — mark performance "not applicable" only when
+  there is no runtime behavior, and say that explicitly in the PR.
+
+### 6. Implement the smallest patch
 
 Make the narrowest change that satisfies the brief. Do not mix transform logic, ABI
 changes, shell code, dependency posture, and formatting. Match the surrounding
 code's idiom and comment density. If you change a documented op rule, change its doc
 comment in the same diff.
 
-### 6. Run risk-matched checks
+### 7. Run risk-matched checks
 
 Run the checks for your change class (see [`CONTRIBUTING.md`](../CONTRIBUTING.md)),
-then the full gate before opening the PR:
+then the full gate before opening the PR. For feature work, also run the
+performance command named in the brief:
 
 ```sh
 cargo fmt --all --check
@@ -101,7 +118,7 @@ If the change touches a hand-rolled parser, also run the relevant fuzz smoke
 `cargo +nightly fuzz run <target> -- -max_total_time=60`). If you skip a relevant
 check, say why in the PR.
 
-### 7. Produce an evidence packet
+### 8. Produce an evidence packet
 
 The evidence packet is the part of the PR that lets a reviewer trust the change
 without re-deriving it. It is required (the
@@ -111,11 +128,13 @@ without re-deriving it. It is required (the
 - The invariants preserved, and any new ones.
 - The exact commands you ran and their results (pass/fail, not "looks good").
 - The tests / properties / fuzz coverage added or updated, named.
+- The performance guard or measurement run for every feature, with the result
+  and any residual gap (or an explicit "not applicable" for no runtime behavior).
 - Compatibility / privacy / security posture impact (ABI, entitlements, network,
   zeroization, supported transforms) — or an explicit "none".
 - Any skipped check, with the reason.
 
-### 8. Preserve discovered bug classes as permanent regressions
+### 9. Preserve discovered bug classes as permanent regressions
 
 If anything — a property failure, a fuzz crash, a review note, a reference/production
 mismatch — surfaced a bug *class*, do not close it with only the one-off fix. Follow
@@ -124,7 +143,7 @@ the narrowest repeatable blocker at the owning layer (test, corpus entry, fuzz
 regression, `perf_guard`, or `xtask` check), and record the lesson in the right
 guardrail/posture doc.
 
-### 9. Document proof gaps
+### 10. Document proof gaps
 
 Be honest about what is *not* proven. This repo does verification-guided
 development, property-based testing, differential random testing, reference

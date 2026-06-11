@@ -224,8 +224,11 @@ struct StripControllerTests {
         defer { rawPasteboard.clearContents() }
 
         let htmlData = Data(repeating: 0x41, count: 128)
-        #expect(rawPasteboard.setData(htmlData, forType: .html))
-        #expect(rawPasteboard.setString("plain fallback", forType: .string))
+        rawPasteboard.declareTypes([.html, .string], owner: nil)
+        guard rawPasteboard.setData(htmlData, forType: .html),
+              rawPasteboard.setString("plain fallback", forType: .string) else {
+            return // Named pasteboards may be unavailable in headless/sandboxed agents.
+        }
 
         let pasteboard = SystemPasteboard(pasteboard: rawPasteboard)
         let result = pasteboard.readBest(maxRepresentationBytes: 16)
@@ -595,6 +598,238 @@ struct StripControllerTests {
         #expect(auto == .stripped(changed: true))
         #expect(pb.writes == ["[email]"])
     }
+
+    /// OCR is an explicit shell command: it reads a bounded image representation,
+    /// runs the injected recognizer, and writes recognized text back in place.
+    @Test func extractImageTextWritesRecognizedText() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let image = sampleImage()
+        let recognizer = RecordingImageTextRecognizer(output: "Invoice 42")
+        let pb = FakePasteboard(image: image, rawImageBytes: image.data.count)
+        let controller = StripController(
+            pasteboard: pb,
+            imageTextRecognizer: recognizer,
+            defaults: defaults
+        )
+
+        let outcome = await controller.extractImageText()
+        #expect(outcome == .stripped(changed: true))
+        #expect(pb.writes == ["Invoice 42"])
+        #expect(pb.readBestCalls == 0, "image OCR must not run the text pipeline read")
+        #expect(recognizer.callCount == 1)
+        #expect(recognizer.images == [image])
+    }
+
+    /// Without an image representation the OCR command is simply not applicable:
+    /// no core transform, no recognizer, and no pasteboard write.
+    @Test func extractImageTextIsNotApplicableWithoutImage() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let recognizer = RecordingImageTextRecognizer(output: "should not run")
+        let pb = FakePasteboard(snapshot: PasteboardSnapshot(text: "plain", kind: .plain))
+        let controller = StripController(
+            pasteboard: pb,
+            imageTextRecognizer: recognizer,
+            defaults: defaults
+        )
+
+        let outcome = await controller.extractImageText()
+        #expect(outcome == .notApplicable)
+        #expect(recognizer.callCount == 0)
+        #expect(pb.writes.isEmpty)
+    }
+
+    /// Whitespace-only OCR output is treated as "no recognized text" and leaves the
+    /// clipboard untouched.
+    @Test func extractImageTextDoesNotRewriteEmptyRecognition() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let image = sampleImage()
+        let recognizer = RecordingImageTextRecognizer(output: " \n\t ")
+        let pb = FakePasteboard(image: image, rawImageBytes: image.data.count)
+        let controller = StripController(
+            pasteboard: pb,
+            imageTextRecognizer: recognizer,
+            defaults: defaults
+        )
+
+        let outcome = await controller.extractImageText()
+        #expect(outcome == .notApplicable)
+        #expect(recognizer.callCount == 1)
+        #expect(pb.writes.isEmpty)
+    }
+
+    /// Recognized text is also bounded before it is written back to the pasteboard.
+    @Test func extractImageTextRefusesOversizedRecognizedText() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let image = sampleImage()
+        let text = String(repeating: "x", count: 1_000)
+        let recognizer = RecordingImageTextRecognizer(output: text)
+        let pb = FakePasteboard(image: image, rawImageBytes: image.data.count)
+        let controller = StripController(
+            pasteboard: pb,
+            imageTextRecognizer: recognizer,
+            defaults: defaults,
+            maxInputBytes: 16
+        )
+
+        let outcome = await controller.extractImageText()
+        #expect(outcome == .tooLarge(bytes: 1_000))
+        #expect(recognizer.callCount == 1)
+        #expect(pb.writes.isEmpty)
+    }
+
+    /// Oversized image bytes are refused before Vision decodes or recognizes the
+    /// image.
+    @Test func oversizedImageRepresentationIsRefusedBeforeRecognition() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let recognizer = RecordingImageTextRecognizer(output: "should not run")
+        let pb = FakePasteboard(image: sampleImage(), rawImageBytes: 1_000)
+        let controller = StripController(
+            pasteboard: pb,
+            imageTextRecognizer: recognizer,
+            defaults: defaults,
+            maxInputBytes: 16
+        )
+
+        let outcome = await controller.extractImageText()
+        #expect(outcome == .tooLarge(bytes: 1_000))
+        #expect(pb.materializedImageReadCount == 0,
+                "oversized image representations must be rejected before recognition")
+        #expect(recognizer.callCount == 0)
+        #expect(pb.writes.isEmpty)
+    }
+
+    /// Vision OCR can be slow; the recognizer must run off the main thread just
+    /// like the core transform does.
+    @Test func imageTextRecognitionRunsOffTheMainThread() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let image = sampleImage()
+        let recognizer = RecordingImageTextRecognizer(output: "text", delay: 0.02)
+        let pb = FakePasteboard(image: image, rawImageBytes: image.data.count)
+        let controller = StripController(
+            pasteboard: pb,
+            imageTextRecognizer: recognizer,
+            defaults: defaults
+        )
+
+        let outcome = await controller.extractImageText()
+        #expect(outcome == .stripped(changed: true))
+        #expect(recognizer.ranOnMainThread == false,
+                "image text recognition must run off the main thread")
+    }
+
+    /// CI-safe performance guard for Swift-only OCR orchestration. This does not
+    /// benchmark Apple's Vision framework; it catches accidental slow paths in the
+    /// shell-owned loop around bounded image reads, detached recognizer calls,
+    /// generation checks, and writeback.
+    @Test func imageTextCommandOverheadStaysBoundedWithFastRecognizer() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let image = sampleImage()
+        let recognizer = RecordingImageTextRecognizer(output: "text")
+        let pb = FakePasteboard()
+        let controller = StripController(
+            pasteboard: pb,
+            imageTextRecognizer: recognizer,
+            defaults: defaults,
+            busyThreshold: .seconds(60)
+        )
+
+        let iterations = 100
+        let start = DispatchTime.now().uptimeNanoseconds
+        for _ in 0..<iterations {
+            pb.externalSetImage(image, rawImageBytes: image.data.count)
+            let outcome = await controller.extractImageText()
+            #expect(outcome == .stripped(changed: true))
+        }
+        let elapsedMs = Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000
+
+        #expect(recognizer.callCount == iterations)
+        #expect(pb.writes.count == iterations)
+        #expect(elapsedMs < 2_000,
+                "Swift OCR command orchestration took \(elapsedMs) ms for \(iterations) runs")
+    }
+
+    /// If the clipboard changes while OCR is running, stale recognized text must not
+    /// overwrite the newer clipboard generation.
+    @Test func staleImageTextRecognitionDoesNotOverwriteNewerClipboard() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let blocking = BlockingImageTextRecognizer(output: "old recognized text")
+        let pb = FakePasteboard(image: sampleImage(), rawImageBytes: 4)
+        let controller = StripController(
+            pasteboard: pb,
+            imageTextRecognizer: blocking,
+            defaults: defaults
+        )
+
+        let task = Task { @MainActor in
+            await controller.extractImageText()
+        }
+        let deadline = Date().addingTimeInterval(1.0)
+        while !blocking.hasStarted, Date() < deadline {
+            await Task.yield()
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        #expect(blocking.hasStarted, "test recognizer should have started")
+        if !blocking.hasStarted {
+            blocking.release()
+        }
+
+        let newer = PasteboardSnapshot(text: "new clipboard", kind: .plain)
+        pb.externalSet(newer)
+        blocking.release()
+
+        let outcome = await task.value
+        #expect(outcome == .stripped(changed: false))
+        #expect(pb.snapshot == newer)
+        #expect(pb.writes.isEmpty,
+                "stale OCR output must not overwrite newer clipboard data")
+    }
+
+    /// Named pasteboard smoke for the real SystemPasteboard image path. This does
+    /// not touch NSPasteboard.general.
+    @Test func systemPasteboardReadsBoundedImageRepresentation() throws {
+        let name = NSPasteboard.Name("SafetyStripImageTests.\(UUID().uuidString)")
+        let rawPasteboard = NSPasteboard(name: name)
+        rawPasteboard.clearContents()
+        defer { rawPasteboard.clearContents() }
+
+        let imageData = Data([0x89, 0x50, 0x4e, 0x47])
+        rawPasteboard.declareTypes([.png], owner: nil)
+        guard rawPasteboard.setData(imageData, forType: .png) else {
+            return // Named pasteboards may be unavailable in headless/sandboxed agents.
+        }
+
+        let pasteboard = SystemPasteboard(pasteboard: rawPasteboard)
+        let result = pasteboard.readImage(maxRepresentationBytes: 16)
+        guard case .content(let read) = result else {
+            Issue.record("expected image content, got \(result)")
+            return
+        }
+        #expect(read.image.data == imageData)
+        #expect(read.image.pasteboardType == NSPasteboard.PasteboardType.png.rawValue)
+    }
+}
+
+private func sampleImage() -> PasteboardImage {
+    PasteboardImage(
+        data: Data([0x89, 0x50, 0x4e, 0x47]),
+        pasteboardType: NSPasteboard.PasteboardType.png.rawValue
+    )
 }
 
 private final class RecordingTransformer: Transforming, @unchecked Sendable {
@@ -649,6 +884,80 @@ private final class BlockingTransformer: Transforming, @unchecked Sendable {
     }
 
     func transform(_ input: String, config: TransformConfig) throws -> String {
+        lock.lock()
+        _hasStarted = true
+        lock.unlock()
+        proceed.wait()
+        return output
+    }
+}
+
+private final class RecordingImageTextRecognizer: ImageTextRecognizing, @unchecked Sendable {
+    private let lock = NSLock()
+    private let output: String
+    private let delay: TimeInterval
+    private var _callCount = 0
+    private var _images: [PasteboardImage] = []
+    private var _ranOnMainThread: Bool?
+
+    init(output: String, delay: TimeInterval = 0) {
+        self.output = output
+        self.delay = delay
+    }
+
+    var callCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return _callCount
+    }
+
+    var images: [PasteboardImage] {
+        lock.lock()
+        defer { lock.unlock() }
+        return _images
+    }
+
+    var ranOnMainThread: Bool? {
+        lock.lock()
+        defer { lock.unlock() }
+        return _ranOnMainThread
+    }
+
+    func recognizeText(in image: PasteboardImage) throws -> String {
+        lock.lock()
+        _callCount += 1
+        _images.append(image)
+        _ranOnMainThread = Thread.isMainThread
+        lock.unlock()
+
+        if delay > 0 {
+            Thread.sleep(forTimeInterval: delay)
+        }
+        return output
+    }
+}
+
+private final class BlockingImageTextRecognizer: ImageTextRecognizing, @unchecked Sendable {
+    private let lock = NSLock()
+    private let proceed = DispatchSemaphore(value: 0)
+    private let output: String
+    private var _hasStarted = false
+
+    init(output: String) {
+        self.output = output
+    }
+
+    var hasStarted: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return _hasStarted
+    }
+
+    func release() {
+        proceed.signal()
+    }
+
+    func recognizeText(in image: PasteboardImage) throws -> String {
         lock.lock()
         _hasStarted = true
         lock.unlock()

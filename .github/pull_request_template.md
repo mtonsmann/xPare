@@ -42,6 +42,13 @@ zeroization, supported transforms. State "none" explicitly if nothing changed. -
 coverage. Note any reference_transform.rs property, new corpus file, or
 fuzz/regressions/<target>/ entry. -->
 
+## Performance testing
+
+<!-- Required for feature work. Name the performance guard or measurement added/run
+at the owning layer and include the actual result. Examples: perf_guard case,
+make perf/bench numbers, or Swift shell performance guard timing. If this PR has
+no runtime behavior, state "not applicable" and why. -->
+
 ## Commands run
 
 <!-- The actual commands and their results (pass/fail). -->

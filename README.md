@@ -4,8 +4,9 @@ A **memory-safe, plain-text clipboard utility**. SafetyStrip cleans the text on
 your clipboard — coerce rich text to plain, strip HTML and Markdown, normalize
 whitespace, change case, run line operations, extract emails/URLs, defang and
 refang network indicators (IOCs), strip URL tracking parameters, and mask selected
-email/IP identifiers — and writes the result back **in place**, without your
-clipboard content ever leaving the process.
+email/IP identifiers. On macOS it can also explicitly extract text from image
+clipboard items using local Vision OCR. It writes the result back **in place**,
+without your clipboard content ever leaving the process.
 
 Its whole reason to exist is trust: the clipboard holds passwords, tokens, PII, and
 source, and the markup it carries is untrusted. So SafetyStrip is built so that
@@ -22,7 +23,7 @@ These are enforced mechanically by CI, not just promised. See [`SECURITY.md`](SE
 ```
   native shell (Swift / …)  ──ss_transform(input, config_json)──▶  Rust core
   • owns the clipboard, hotkey, UI            C ABI                • pure, deterministic
-  • reads rich text, extracts plain      (frozen, language-        • #![forbid(unsafe_code)]
+  • reads rich text / local OCR         (frozen, language-        • #![forbid(unsafe_code)]
   • writes the result back in place         neutral)              • no OS / IO / network
 ```
 

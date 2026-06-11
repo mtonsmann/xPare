@@ -58,12 +58,16 @@ not by weakening the check.
 5. Add or update focused tests for behavior changes — especially anything that
    affects transform output, the ABI, or the privacy posture. Core changes must
    include adversarial-input coverage.
-6. If a review, scan, fuzz run, or performance pass found an issue class, follow
+6. For every new feature, add or run performance testing at the owning layer
+   (core `perf_guard`/bench/throughput or shell-specific performance guard/smoke)
+   and include the result in the PR. Docs-only/runtime-free changes may mark this
+   not applicable with a reason.
+7. If a review, scan, fuzz run, or performance pass found an issue class, follow
    `docs/guardrails/review-finding-closure.md`: add repeatable regression
    protection and the relevant docs lesson before closing it.
-7. Run checks that match the risk of the change (see `CONTRIBUTING.md`). If you
+8. Run checks that match the risk of the change (see `CONTRIBUTING.md`). If you
    skip a relevant check, explain why in the PR.
-8. Update `ARCHITECTURE.md`, `DESIGN.md`, the relevant guardrail, and the shell
+9. Update `ARCHITECTURE.md`, `DESIGN.md`, the relevant guardrail, and the shell
    contract when the boundary, invariants, posture, or supported transforms
    change.
 
@@ -168,9 +172,12 @@ Consult:
 
 Performance is *measured* by criterion (`make bench`) and the opt-in `make perf`
 throughput harness, and *gated* in CI only for complexity (`perf_guard.rs`), never
-absolute speed. Releases: `make preview` is unsigned and needs no Apple account;
-`make dist` / `make github-release` are gated on Developer ID credentials. An
-optimization or release change may never weaken a guardrail.
+absolute speed. New features must add/run a risk-matched performance signal and
+report the result in the PR; shell-only features use a shell-specific guard or
+measured smoke when core benches do not apply. Releases: `make preview` is unsigned
+and needs no Apple account; `make dist` / `make github-release` are gated on
+Developer ID credentials. An optimization or release change may never weaken a
+guardrail.
 
 ## Documentation-Only Changes
 
@@ -188,6 +195,8 @@ If the docs-only change captures a review lesson, also consult
 
 - State the change class and any compatibility or posture impact (ABI, privacy,
   entitlements, supported transforms).
+- Include performance evidence for every feature: the command/guard run and its
+  result, or an explicit no-runtime-impact reason.
 - Keep diffs narrow and single-purpose.
 - Update the relevant guardrail and `ARCHITECTURE.md` when invariants or the
   boundary move.

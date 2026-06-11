@@ -41,6 +41,7 @@ public enum StripOutcome: Equatable, Sendable {
 public final class StripController {
     private let pasteboard: PasteboardProtocol
     private let transformer: any Transforming
+    private let imageTextRecognizer: any ImageTextRecognizing
     private let defaults: UserDefaults
     /// Largest clipboard (in UTF-8 bytes) this controller will hand to the core.
     /// See ``defaultMaxInputBytes()``.
@@ -67,12 +68,14 @@ public final class StripController {
         settings: Settings? = nil,
         pasteboard: PasteboardProtocol = SystemPasteboard(),
         transformer: any Transforming = Transformer(),
+        imageTextRecognizer: any ImageTextRecognizing = VisionTextRecognizer(),
         defaults: UserDefaults = .standard,
         maxInputBytes: Int = StripController.defaultMaxInputBytes(),
         busyThreshold: Duration = .milliseconds(400)
     ) {
         self.pasteboard = pasteboard
         self.transformer = transformer
+        self.imageTextRecognizer = imageTextRecognizer
         self.defaults = defaults
         self.maxInputBytes = maxInputBytes
         self.busyThreshold = busyThreshold
@@ -168,6 +171,51 @@ public final class StripController {
         }
     }
 
+    /// Explicit one-shot OCR command: read a bounded image representation from the
+    /// pasteboard, recognize text with macOS Vision off the main actor, and write
+    /// the recognized plain text back in place. This is not part of the persistent
+    /// pipeline and is never run by continuous mode.
+    @discardableResult
+    public func extractImageText() async -> StripOutcome {
+        let read: PasteboardImageRead
+        switch pasteboard.readImage(maxRepresentationBytes: maxInputBytes) {
+        case .content(let content):
+            read = content
+        case .empty:
+            return .notApplicable
+        case .tooLarge(let bytes, _):
+            return .tooLarge(bytes: bytes)
+        }
+
+        if read.image.data.count > maxInputBytes {
+            return .tooLarge(bytes: read.image.data.count)
+        }
+
+        let image = read.image
+        let recognizer = imageTextRecognizer
+        let recognized: String? = await runWithBusyIndicator {
+            await Task.detached(priority: .userInitiated) { [image, recognizer] in
+                try? recognizer.recognizeText(in: image)
+            }.value
+        }
+
+        guard let output = recognized,
+              !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return .notApplicable
+        }
+        let outputByteCount = output.utf8.count
+        if outputByteCount > maxInputBytes {
+            return .tooLarge(bytes: outputByteCount)
+        }
+
+        guard pasteboard.changeCount == read.changeCount else {
+            return .stripped(changed: false)
+        }
+
+        lastSelfWriteChangeCount = pasteboard.writePlain(output)
+        return .stripped(changed: true)
+    }
+
     /// Shared machinery for ``stripNow`` / ``runOnce``: read the best pasteboard
     /// representation, refuse an oversized clipboard, build the config via
     /// `makeConfig`, run the transform OFF the main actor (with the threshold-gated
@@ -210,31 +258,15 @@ public final class StripController {
             config.operations.removeAll(where: { $0.isReduction })
         }
 
-        // Threshold-gated "Stripping…" signal: flip to busy only if the work outlasts
-        // `busyThreshold`, so the instant common case never flickers. The task reports
-        // whether it actually signaled, so we clear the state iff we set it.
-        let threshold = busyThreshold
-        let busyTask = Task { @MainActor [weak self] () -> Bool in
-            do {
-                try await Task.sleep(for: threshold)
-            } catch {
-                return false // cancelled before the threshold elapsed → never signaled
-            }
-            self?.onStrippingChange?(true)
-            return true
-        }
-
         // The transform is the only heavy step and touches no main-affine state, so
         // run it OFF the main actor to keep the menu-bar UI responsive on large inputs.
         let input = snapshot.text
         let transformer = self.transformer
-        let output: String? = await Task.detached(priority: .userInitiated) {
-            try? transformer.transform(input, config: config)
-        }.value
-
-        busyTask.cancel()
-        if await busyTask.value {
-            onStrippingChange?(false)
+        let transformConfig = config
+        let output: String? = await runWithBusyIndicator {
+            await Task.detached(priority: .userInitiated) { [input, transformConfig, transformer] in
+                try? transformer.transform(input, config: transformConfig)
+            }.value
         }
 
         guard let output else {
@@ -255,6 +287,30 @@ public final class StripController {
         }
         lastSelfWriteChangeCount = pasteboard.writePlain(output)
         return .stripped(changed: true)
+    }
+
+    private func runWithBusyIndicator<T: Sendable>(_ operation: () async -> T) async -> T {
+        // Threshold-gated "Stripping…" signal: flip to busy only if the work outlasts
+        // `busyThreshold`, so the instant common case never flickers. The task reports
+        // whether it actually signaled, so we clear the state iff we set it.
+        let threshold = busyThreshold
+        let busyTask = Task { @MainActor [weak self] () -> Bool in
+            do {
+                try await Task.sleep(for: threshold)
+            } catch {
+                return false // cancelled before the threshold elapsed -> never signaled
+            }
+            self?.onStrippingChange?(true)
+            return true
+        }
+
+        let result = await operation()
+
+        busyTask.cancel()
+        if await busyTask.value {
+            onStrippingChange?(false)
+        }
+        return result
     }
 
     /// Build the config to run for a given snapshot. The user's ordered

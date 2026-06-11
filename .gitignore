@@ -12,6 +12,7 @@ Cargo.lock.bak
 /fuzz-runs/
 
 # Swift / SwiftPM
+.build-cache/
 shells/macos/.build
 shells/macos/.swiftpm
 shells/macos/dist
