@@ -7,12 +7,24 @@ import SafetyStripCore
 /// `split` — which a `.menu`-style `MenuBarExtra` cannot host (it has no room for a
 /// text field), plus the two `sort` flags. The everyday on/off toggles and the
 /// one-shot Extract commands stay in the menu; this window is the typed-input home
-/// macOS users expect.
+/// macOS users expect. Continuous image OCR is also here because it is a persisted
+/// setting; the menu duplicates it deliberately so the current OCR posture stays
+/// visible from the dropdown.
 struct SettingsView: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
         Form {
+            Section("Continuous mode") {
+                Toggle("OCR images in continuous mode", isOn: Binding(
+                    get: { model.settings.ocrImagesInContinuousMode },
+                    set: { model.setContinuousImageOCR($0) }
+                ))
+                Text("Applies to image-only clipboards when Continuous monitoring is on.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Line operations with text") {
                 ForEach(AppModel.ParamOp.allCases) { kind in
                     ParamRow(model: model, kind: kind)
@@ -66,7 +78,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 440, height: 380)
+        .frame(width: 440, height: 430)
         .navigationTitle("SafetyStrip Settings")
     }
 }

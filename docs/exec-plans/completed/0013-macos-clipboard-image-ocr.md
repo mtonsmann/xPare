@@ -1,5 +1,11 @@
 # macOS Clipboard Image OCR
 
+> Follow-up note: `docs/exec-plans/completed/0014-continuous-image-ocr.md` supersedes
+> the original explicit-only continuous-mode decision by adding a separate,
+> user-enabled continuous image OCR setting. The other safety decisions here still
+> apply: local Vision only, bounded image input, bounded recognized output,
+> off-main recognition, no ABI change, and stale-generation suppression.
+
 ## Correctness brief
 
 ### Change class
@@ -27,7 +33,8 @@ command, not a persistent transform or continuous-mode policy.
 
 ### New invariants
 
-- Image OCR is explicit-only: continuous mode never OCRs image clipboards.
+- Original invariant, superseded by 0014: image OCR was explicit-only and
+  continuous mode never OCRed image clipboards.
 - OCR recognition work runs off the main actor.
 - Empty/no-text OCR output is content-free `.notApplicable`, not a pasteboard
   rewrite.

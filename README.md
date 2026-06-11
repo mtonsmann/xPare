@@ -4,8 +4,9 @@ A **memory-safe, plain-text clipboard utility**. SafetyStrip cleans the text on
 your clipboard — coerce rich text to plain, strip HTML and Markdown, normalize
 whitespace, change case, run line operations, extract emails/URLs, defang and
 refang network indicators (IOCs), strip URL tracking parameters, and mask selected
-email/IP identifiers. On macOS it can also explicitly extract text from image
-clipboard items using local Vision OCR. It writes the result back **in place**,
+email/IP identifiers. On macOS it can also extract text from image clipboard items
+using local Vision OCR, either on demand or as a separate continuous-mode opt-in.
+It writes the result back **in place**,
 without your clipboard content ever leaving the process.
 
 Its whole reason to exist is trust: the clipboard holds passwords, tokens, PII, and

@@ -142,7 +142,15 @@ public final class StripController {
     /// hotkey / continuous action. Returns a content-free outcome.
     @discardableResult
     public func stripNow(trigger: StripTrigger = .manual) async -> StripOutcome {
-        await perform(trigger: trigger) { self.effectiveConfig(for: $0) }
+        let outcome = await perform(trigger: trigger) { self.effectiveConfig(for: $0) }
+        guard trigger == .clipboardChanged,
+              outcome == .empty,
+              settings.ocrImagesInContinuousMode else {
+            return outcome
+        }
+
+        let imageOutcome = await extractImageText(trigger: .clipboardChanged)
+        return imageOutcome == .notApplicable ? outcome : imageOutcome
     }
 
     /// Run a **transient** explicit operation list once against the clipboard, without
@@ -173,10 +181,20 @@ public final class StripController {
 
     /// Explicit one-shot OCR command: read a bounded image representation from the
     /// pasteboard, recognize text with macOS Vision off the main actor, and write
-    /// the recognized plain text back in place. This is not part of the persistent
-    /// pipeline and is never run by continuous mode.
+    /// the recognized plain text back in place. This is not part of the core
+    /// pipeline; continuous mode only uses the same path when the user explicitly
+    /// enables image OCR for image-only clipboards.
     @discardableResult
     public func extractImageText() async -> StripOutcome {
+        await extractImageText(trigger: .manual)
+    }
+
+    private func extractImageText(trigger: StripTrigger) async -> StripOutcome {
+        if trigger == .clipboardChanged,
+           pasteboard.changeCount == lastSelfWriteChangeCount {
+            return .stripped(changed: false)
+        }
+
         let read: PasteboardImageRead
         switch pasteboard.readImage(maxRepresentationBytes: maxInputBytes) {
         case .content(let content):

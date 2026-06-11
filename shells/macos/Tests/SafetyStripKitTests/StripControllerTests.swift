@@ -599,7 +599,110 @@ struct StripControllerTests {
         #expect(pb.writes == ["[email]"])
     }
 
-    /// OCR is an explicit shell command: it reads a bounded image representation,
+    /// Continuous image OCR is separately opt-in; an image-only clipboard is left
+    /// untouched unless that setting is enabled.
+    @Test func continuousModeDoesNotOCRImagesUnlessEnabled() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let recognizer = RecordingImageTextRecognizer(output: "should not run")
+        let pb = FakePasteboard(image: sampleImage(), rawImageBytes: 4)
+        let controller = StripController(
+            settings: Settings(mode: .continuous),
+            pasteboard: pb,
+            imageTextRecognizer: recognizer,
+            defaults: defaults
+        )
+
+        let outcome = await controller.stripNow(trigger: .clipboardChanged)
+        #expect(outcome == .empty)
+        #expect(pb.readBestCalls == 1)
+        #expect(pb.readImageCalls == 0)
+        #expect(recognizer.callCount == 0)
+        #expect(pb.writes.isEmpty)
+    }
+
+    /// When the user opts in, continuous mode may OCR image-only clipboards using
+    /// the same bounded/off-main path as the explicit command.
+    @Test func continuousModeOCRsImageOnlyClipboardWhenEnabled() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let image = sampleImage()
+        let recognizer = RecordingImageTextRecognizer(output: "Invoice 42")
+        let pb = FakePasteboard(image: image, rawImageBytes: image.data.count)
+        let controller = StripController(
+            settings: Settings(mode: .continuous, ocrImagesInContinuousMode: true),
+            pasteboard: pb,
+            imageTextRecognizer: recognizer,
+            defaults: defaults
+        )
+
+        let outcome = await controller.stripNow(trigger: .clipboardChanged)
+        #expect(outcome == .stripped(changed: true))
+        #expect(pb.readBestCalls == 1)
+        #expect(pb.readImageCalls == 1)
+        #expect(recognizer.callCount == 1)
+        #expect(pb.writes == ["Invoice 42"])
+    }
+
+    /// Text-like clipboards keep using the normal core pipeline even if they also
+    /// carry an image representation and continuous OCR is enabled.
+    @Test func continuousModePrefersTextPipelineOverOCR() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let transformer = RecordingTransformer(output: "clean text")
+        let recognizer = RecordingImageTextRecognizer(output: "image text")
+        let pb = FakePasteboard(
+            snapshot: PasteboardSnapshot(text: "dirty text", kind: .plain),
+            image: sampleImage(),
+            rawImageBytes: 4
+        )
+        let controller = StripController(
+            settings: Settings(mode: .continuous, ocrImagesInContinuousMode: true),
+            pasteboard: pb,
+            transformer: transformer,
+            imageTextRecognizer: recognizer,
+            defaults: defaults
+        )
+
+        let outcome = await controller.stripNow(trigger: .clipboardChanged)
+        #expect(outcome == .stripped(changed: true))
+        #expect(transformer.callCount == 1)
+        #expect(pb.readImageCalls == 0)
+        #expect(recognizer.callCount == 0)
+        #expect(pb.writes == ["clean text"])
+    }
+
+    /// After a continuous OCR self-write, the next observed generation is suppressed
+    /// before any read, so SafetyStrip does not OCR its own recognized text.
+    @Test func continuousImageOCRSelfWriteGenerationIsSuppressed() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let recognizer = RecordingImageTextRecognizer(output: "recognized text")
+        let pb = FakePasteboard(image: sampleImage(), rawImageBytes: 4)
+        let controller = StripController(
+            settings: Settings(mode: .continuous, ocrImagesInContinuousMode: true),
+            pasteboard: pb,
+            imageTextRecognizer: recognizer,
+            defaults: defaults
+        )
+
+        let first = await controller.stripNow(trigger: .clipboardChanged)
+        #expect(first == .stripped(changed: true))
+        #expect(pb.writes == ["recognized text"])
+
+        let second = await controller.stripNow(trigger: .clipboardChanged)
+        #expect(second == .stripped(changed: false))
+        #expect(pb.readBestCalls == 1)
+        #expect(pb.readImageCalls == 1)
+        #expect(recognizer.callCount == 1)
+        #expect(pb.writes == ["recognized text"])
+    }
+
+    /// OCR is a shell command/path: it reads a bounded image representation,
     /// runs the injected recognizer, and writes recognized text back in place.
     @Test func extractImageTextWritesRecognizedText() async throws {
         let (defaults, suite) = try isolatedDefaults()
@@ -760,6 +863,41 @@ struct StripControllerTests {
         #expect(pb.writes.count == iterations)
         #expect(elapsedMs < 2_000,
                 "Swift OCR command orchestration took \(elapsedMs) ms for \(iterations) runs")
+    }
+
+    /// CI-safe performance guard for the continuous-mode OCR entry path. This keeps
+    /// the text-read miss + bounded image read + fake recognizer + writeback loop
+    /// from accidentally growing expensive in SafetyStrip-owned Swift code.
+    @Test func continuousImageTextCommandOverheadStaysBoundedWithFastRecognizer() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let image = sampleImage()
+        let recognizer = RecordingImageTextRecognizer(output: "text")
+        let pb = FakePasteboard()
+        let controller = StripController(
+            settings: Settings(mode: .continuous, ocrImagesInContinuousMode: true),
+            pasteboard: pb,
+            imageTextRecognizer: recognizer,
+            defaults: defaults,
+            busyThreshold: .seconds(60)
+        )
+
+        let iterations = 100
+        let start = DispatchTime.now().uptimeNanoseconds
+        for _ in 0..<iterations {
+            pb.externalSetImage(image, rawImageBytes: image.data.count)
+            let outcome = await controller.stripNow(trigger: .clipboardChanged)
+            #expect(outcome == .stripped(changed: true))
+        }
+        let elapsedMs = Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000
+
+        #expect(recognizer.callCount == iterations)
+        #expect(pb.readBestCalls == iterations)
+        #expect(pb.readImageCalls == iterations)
+        #expect(pb.writes.count == iterations)
+        #expect(elapsedMs < 2_000,
+                "Continuous OCR orchestration took \(elapsedMs) ms for \(iterations) runs")
     }
 
     /// If the clipboard changes while OCR is running, stale recognized text must not

@@ -236,15 +236,17 @@ so the CLI and power users can still compose extraction inside a pipeline. The
 taxonomy is a *shell presentation* contract, with one hard rule: continuous mode
 must refuse to run a reduction.
 
-Image OCR follows the same "explicit command" rule, but it is shell-owned rather
-than a core operation. On macOS, "Extract text from image" reads a bounded image
-representation from the pasteboard, runs Apple's local Vision text recognizer off
-the main actor, and writes recognized plain text back only if the pasteboard
-generation is unchanged. **Why not a persistent transform:** OCR is OS integration,
-can be slow, and would be surprising in continuous mode — copying an image should
-not silently replace it unless the user explicitly asks for text extraction. Keeping
-it out of the core preserves the text-in/text-out ABI and lets future shells choose
-their own local platform OCR without changing the portable transform engine.
+Image OCR is shell-owned rather than a core operation. On macOS, "Extract text from
+image" reads a bounded image representation from the pasteboard, runs Apple's local
+Vision text recognizer off the main actor, and writes recognized plain text back
+only if the pasteboard generation is unchanged. Continuous image OCR is a separate
+opt-in setting: it defaults off, runs only when continuous monitoring is on, and is
+attempted only after the normal text pipeline finds no text-like representation.
+**Why not a persistent transform:** OCR is OS integration, can be slow, and future
+shells need to choose their own local platform OCR without changing the portable
+transform engine. Keeping OCR out of the core preserves the text-in/text-out ABI
+while still letting users deliberately opt image-only clipboards into continuous
+text extraction.
 
 **The top-level menu stays one row per feature family.** A standalone,
 zero-parameter rewrite can be a simple top-level toggle, but a feature with
