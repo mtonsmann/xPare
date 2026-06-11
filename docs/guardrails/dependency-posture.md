@@ -69,6 +69,16 @@ capability-constrained**, and the constraint is enforced mechanically.
    release-integrity bug). All of these run inside `cargo xtask ci`, so the one gate
    stays a complete superset of CI. Same posture rule: fix the dependency, or add a
    *scoped*, justified `ignore`/`exception` in `deny.toml` — never broaden the policy.
+10. **Keep non-Rust shipped automation surfaces dependency-light too.** The Swift
+    shell intentionally has no external SwiftPM packages; target dependencies must
+    stay local. Python helper scripts must remain stdlib-only and capability-light:
+    no network, subprocess, multiprocessing, or dynamic code execution. These are
+    enforced with `check-swift-package-deps` and `check-python-tooling-posture`.
+11. **CodeQL is additive, not a new required gate yet.** The CodeQL workflow is a
+    GitHub code-scanning baseline using `security-extended`. Keep its actions pinned
+    to commit SHAs, permissions minimal (`contents: read` plus job-scoped
+    `security-events: write`), and the Swift build explicit. Do not put it in branch
+    protection until the first alert baseline is triaged.
 
 ## How the checks work
 
@@ -82,6 +92,14 @@ capability-constrained**, and the constraint is enforced mechanically.
 - `check-shell` runs `shellcheck` over every shell script; `check-workflows` runs
   `actionlint` (correctness) then `zizmor --offline` (security) over
   `.github/workflows/`.
+- `check-swift-package-deps` rejects external SwiftPM package/product/binary/system
+  dependency declarations in `shells/macos/Package.swift`.
+- `check-python-tooling-posture` scans Python helpers for the small allowed stdlib
+  import set, rejects network/process/dynamic-exec tokens, and syntax-checks them
+  with `python3 -m py_compile`.
+- `check-codeql-workflow-posture` verifies `.github/workflows/codeql.yml` stays
+  additive, SHA-pinned, least-privilege, uses `security-extended`, and builds the
+  Swift shell explicitly.
 - `check-fuzz` is the optional fuzz/tooling gate: it installs the nightly toolchain
   and pinned `cargo-fuzz` on demand, discovers targets with `cargo fuzz list`, builds
   all targets, and smoke-runs them when `XP_FUZZ_SMOKE_SECONDS=N` is set. The
@@ -97,6 +115,9 @@ not how to silence it.
 - `cargo xtask check-no-network`
 - `cargo xtask check-supply-chain` (cargo-deny; auto-installs the pinned tool on first
   local use, pre-installed in CI)
+- `cargo xtask check-swift-package-deps`
+- `cargo xtask check-python-tooling-posture`
+- `cargo xtask check-codeql-workflow-posture`
 - `cargo xtask check-shell` (shellcheck) and `cargo xtask check-workflows` (actionlint
   + zizmor). The cargo-installable tools auto-install; `shellcheck`/`actionlint` print
   a one-line install hint if missing. `make zizmor` delegates to this same workflow
@@ -114,6 +135,10 @@ not how to silence it.
   that it carries no OS/IO/network capability.
 - Any addition to `CORE_DEP_ALLOWLIST` (with the justification that it is pure-data)
   or any change to `NETWORK_BANLIST`.
+- Any new SwiftPM package/product/binary/system dependency, or widening of the
+  Python helper import/capability allowlist.
+- Any change that makes CodeQL required, broadens its permissions, moves actions
+  back to tags, or changes the query suite.
 - Anything pulling in `unsafe` or network capability — that is also a
   [memory-safety](memory-safety.md) / [privacy](privacy-and-data-handling.md)
   posture change.

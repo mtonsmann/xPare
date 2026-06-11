@@ -60,6 +60,8 @@ should distrust, so the posture is deliberately minimal and is checked mechanica
    representation (prefer the HTML rep → core `StripHtml`), transform via the core,
    and write the result back to the same pasteboard. **Never** simulate a paste
    (synthesizing Cmd-V) — that needs Accessibility and can target the wrong app.
+   The ordinary text path must stay a clear-once, one-`.string` rewrite; the only
+   broader pasteboard write is the opt-in paste-as-file file-reference path.
 7. **No persistence or logging of pasteboard content** — see
    [privacy-and-data-handling](privacy-and-data-handling.md); the single sanctioned
    exception is the opt-in paste-as-file store (`PasteFileStore`, rule 2 there).
@@ -128,6 +130,16 @@ you from. Full rationale: [`DESIGN.md`](../../DESIGN.md) (D8, D9) and
   defaults to the checked entitlements file, rejects alternate resolved
   `SIGN_ENTITLEMENTS` paths, signs executable and bundle with that file, and
   verifies both signed entitlement payloads are minimal.
+- `cargo xtask check-swift-no-network-apis` — rejects direct network/browser/auth
+  API tokens in shipped Swift source, complementing the no-network entitlement
+  posture.
+- `cargo xtask check-shipped-command-exec` — rejects subprocess-spawning tokens in
+  shipped app/core/CLI source.
+- `cargo xtask check-real-clipboard-tests` — keeps default Swift tests on named
+  pasteboards rather than `NSPasteboard.general`.
+- `cargo xtask check-pasteboard-write-shape` — keeps `SystemPasteboard.writePlain(_:)`
+  to clear-once plus exactly one `.string` write; the opt-in `writeFileURL(_:)`
+  paste-as-file path is the documented exception, not a general broadening.
 - `shells/macos/release.sh dist` — resolves the same file by default, rejects
   alternate resolved paths, refuses to sign if it is missing, and verifies that the
   signed payload is still minimal after Developer ID signing.
@@ -145,5 +157,7 @@ you from. Full rationale: [`DESIGN.md`](../../DESIGN.md) (D8, D9) and
   entitlement files, or disables the post-signing entitlement verification.
 - Any change to the hotkey registration mechanism (must remain Accessibility-free).
 - Any change to pasteboard read/write that could persist, log, or copy content, or
-  that introduces paste simulation.
+  that introduces paste simulation. Broadening the plain-string rewrite path, or
+  expanding paste-as-file beyond its documented file-reference exception, is a
+  posture change.
 - Any change to the poller's lifecycle (it must stay fully torn down when off).

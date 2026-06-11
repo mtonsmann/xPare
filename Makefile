@@ -65,6 +65,13 @@ checks: ## Run only the structural invariant checks (no build/test)
 	$(CARGO) run -p xtask -- check-pipeline-zeroization
 	$(CARGO) run -p xtask -- check-clipboard-safety
 	$(CARGO) run -p xtask -- check-c-ffi-surface
+	$(CARGO) run -p xtask -- check-swift-no-network-apis
+	$(CARGO) run -p xtask -- check-shipped-command-exec
+	$(CARGO) run -p xtask -- check-swift-package-deps
+	$(CARGO) run -p xtask -- check-python-tooling-posture
+	$(CARGO) run -p xtask -- check-real-clipboard-tests
+	$(CARGO) run -p xtask -- check-pasteboard-write-shape
+	$(CARGO) run -p xtask -- check-codeql-workflow-posture
 	$(CARGO) run -p xtask -- check-test-hygiene
 	$(CARGO) run -p xtask -- check-release-posture
 

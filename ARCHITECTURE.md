@@ -84,6 +84,14 @@ checks run locally and in CI. Subcommands: `gen-header`, `check-abi`,
 `check-pipeline-zeroization` (fused core scratch storage is wiped before release),
 `check-agent-workflow`,
 `check-c-ffi-surface` (C/SwiftPM interop stays header-only and tiny),
+`check-swift-no-network-apis` (shipped Swift has no direct network/browser API
+surface), `check-shipped-command-exec` (shipped app/core/CLI surfaces cannot
+spawn subprocesses), `check-swift-package-deps` (SwiftPM remains local-target-only),
+`check-python-tooling-posture` (helper scripts stay stdlib-only and
+capability-light), `check-real-clipboard-tests` (default Swift tests avoid the
+real general pasteboard), `check-pasteboard-write-shape` (plain string rewrite
+stays clear-once + `.string` write), `check-codeql-workflow-posture` (CodeQL
+stays additive, pinned, and least-privilege),
 `check-release-posture` (official signing cannot broaden entitlements),
 `check-supply-chain` (cargo-deny: advisories, licenses, bans, sources),
 `check-unused-deps` (cargo-machete: no declared-but-unused dependency),
@@ -197,12 +205,15 @@ therefore CI). Fix the code to satisfy the check; never weaken the check.
 | No `unsafe` in the core | `#![forbid(unsafe_code)]` + `check-unsafe-forbid` | `core/src/lib.rs`, `xtask` |
 | Core has no OS/IO/network deps | `check-core-deps` (strict transitive allowlist) | `xtask` `CORE_DEP_ALLOWLIST` |
 | No network anywhere in the workspace | `check-no-network` (banlist over the whole tree) | `xtask` `NETWORK_BANLIST` |
+| No network/browser API surface in the macOS shell | `check-swift-no-network-apis` + minimal entitlements | `xtask`, `shells/macos/` |
+| No command execution in shipped app/core/CLI surfaces | `check-shipped-command-exec` | `xtask` |
 | Frozen C ABI | checked-in `core-ffi/include/xpare.h` + `check-abi` (drift fails) | `xtask` (cbindgen) |
 | Config is data (adding a transform ≠ ABI change) | serde round-trip + version tests | `core` tests |
 | Never panics on input | cargo-fuzz targets + property tests + adversarial corpus | `fuzz/`, `core` tests |
 | No log sink in the core | `#![deny(clippy::print_stdout, print_stderr)]` in core/core-ffi + workspace-wide `dbg_macro` deny + no logging deps | `core/src/lib.rs`, `[workspace.lints]` |
 | No clipboard content logged or persisted | `check-no-content-logging` (scans shipped Rust + Swift source for sink calls on clipboard-derived content) | `xtask` |
-| Default checks avoid the real clipboard | `check-clipboard-safety` (no default Make target depends on a real-clipboard smoke) | `xtask`, `Makefile` |
+| Default checks avoid the real clipboard | `check-clipboard-safety` (no default Make target depends on a real-clipboard smoke) + `check-real-clipboard-tests` (default Swift tests avoid `NSPasteboard.general`) | `xtask`, `Makefile` |
+| Plain-string pasteboard rewrite stays narrow | `check-pasteboard-write-shape` verifies `SystemPasteboard.writePlain(_:)` clears once and writes exactly one `.string`; the opt-in paste-as-file path is the separate sanctioned exception | `xtask`, `shells/macos/Sources/XPareKit/Pasteboard.swift` |
 | Pipeline intermediates, fused scratch, and growable op accumulators wiped before release | `Zeroizing` buffers in the pipeline + `check-pipeline-zeroization` (a regression tripwire for the fused-scratch and wipe-on-grow accumulator patterns, not a whole-program proof) + `xp_buffer_free` zeroizes output | `core/src/pipeline.rs`, `core/src/ops/wipe.rs`, `xtask`, `core-ffi` |
 | Deterministic output | `transform(x,c) == transform(x,c)` property test | `core` tests |
 | Optimized pipeline == reference semantics | differential property test: production `transform` equals a one-op-at-a-time reference interpreter (so every fused fast path stays byte-for-byte equal to sequential application, and canonical ordering equals an explicitly sorted `as_given` run) | `core/tests/reference_transform.rs` |
@@ -211,6 +222,8 @@ therefore CI). Fix the code to satisfy the check; never weaken the check.
 | No dead/dangling code | `unreachable_pub = "deny"` forces unexported `pub` to `pub(crate)`, after which `dead_code` (via `-D warnings`) flags the truly unused | `[workspace.lints]`, all crates |
 | No tangled functions or scaffolding macros | `cognitive_complexity` + `too_many_arguments` thresholds; `clippy::todo`/`unimplemented`/`dbg_macro` denied | `[workspace.lints]`, `clippy.toml` |
 | No declared-but-unused dependency | `check-unused-deps` (cargo-machete over the whole workspace) | `xtask`, `CARGO_MACHETE_VERSION` |
+| Non-Rust automation surfaces stay dependency-light | `check-swift-package-deps` + `check-python-tooling-posture` | `xtask`, `shells/macos/Package.swift`, Python helpers |
+| CodeQL remains additive/pinned before baseline triage | `check-codeql-workflow-posture`; CodeQL uses `security-extended` outside branch protection | `xtask`, `.github/workflows/codeql.yml` |
 | Every ignored test justified, count ratcheted | `check-test-hygiene` (bare `#[ignore]` fails; total `#[ignore]`s ≤ ceiling) | `xtask` `MAX_IGNORED_TESTS` |
 | No broken doc links or invalid doc HTML | `check-docs` (`cargo doc --no-deps` with `RUSTDOCFLAGS=-D warnings`) | `xtask` |
 | Public API (FFI/ABI contract) fully documented | `#![deny(missing_docs)]` on the shipped libs | `core/src/lib.rs`, `core-ffi/src/lib.rs` |

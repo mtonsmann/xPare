@@ -8,7 +8,8 @@ automation.
 - [`docs/agent-workflow.md`](../agent-workflow.md).
 - [`docs/guardrails/dependency-posture.md`](../guardrails/dependency-posture.md).
 - `Cargo.toml` / `Cargo.lock`, `deny.toml`, `xtask/src/main.rs`,
-  `.github/workflows/*`, `rust-toolchain.toml`.
+  `.github/workflows/*`, `rust-toolchain.toml`, `shells/macos/Package.swift`,
+  `shells/macos/*.py`.
 
 ## Hard constraints
 
@@ -22,6 +23,9 @@ automation.
   determinism) stay enforced by `cargo xtask ci`. Pinned linter versions
   (`cargo-deny`, `zizmor`, `cargo-fuzz`) in `xtask` must move in lockstep with the CI
   install step.
+- CodeQL is an additive GitHub code-scanning signal, not the required local gate.
+  Keep its workflow SHA-pinned, least-privilege, on `security-extended`, and out of
+  branch protection until baseline triage.
 - Fix the code to satisfy a check; do not weaken the check. A scoped `deny.toml`
   ignore/exception needs a documented risk decision and a reason.
 
@@ -36,7 +40,10 @@ automation.
 
 - `cargo xtask check-core-deps`, `cargo xtask check-no-network`,
   `cargo xtask check-supply-chain` for any dependency/lockfile change.
-- `cargo xtask check-workflows` for any workflow change.
+- `cargo xtask check-swift-package-deps` for SwiftPM changes.
+- `cargo xtask check-python-tooling-posture` for Python helper changes.
+- `cargo xtask check-workflows` and `cargo xtask check-codeql-workflow-posture` for
+  any workflow change.
 - `cargo test -p xtask` / `cargo clippy -p xtask --all-targets -- -D warnings` when
   editing `xtask`.
 

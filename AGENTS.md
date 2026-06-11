@@ -132,9 +132,10 @@ Consult:
 No network anywhere. No persistence or logging of clipboard content. In-memory
 only: the core holds pipeline intermediates in `Zeroizing` buffers and the FFI
 zeroizes the output buffer, so clipboard-derived bytes are wiped after use. The
-mechanical checks `check-no-content-logging` and `check-clipboard-safety` (in
-`cargo xtask ci`) enforce no content logging/persistence and keep real-clipboard
-exercise opt-in. Any new entitlement, any dependency capable of network access, or
+mechanical checks in `cargo xtask ci` enforce no content logging/persistence, no
+Swift network/browser API surface, no shipped subprocess spawning, no default
+real-clipboard tests, and plain-string-only clipboard rewrites. Any new entitlement,
+any dependency or API capable of network access, any shipped command-exec path, or
 any new data path is a posture change — call it out and justify it in the PR.
 
 ## Dependencies, CI, And Automation
@@ -153,8 +154,9 @@ dependency and automation updates separate from behavior changes. The invariants
 determinism) are enforced by CI lints and structural tests. Supply-chain auditing
 (`cargo-deny`: advisories, licenses, bans, sources), workflow linting (`actionlint`
 + `zizmor`), and shell linting (`shellcheck`) also run inside `cargo xtask ci`, so
-the one gate stays a complete superset of CI. Keep them green by fixing the code,
-not by weakening the check.
+the one gate stays a complete superset of CI. CodeQL runs separately as an additive,
+SHA-pinned `security-extended` signal, not as branch protection until its baseline is
+triaged. Keep all gates green by fixing the code, not by weakening the check.
 
 ## Performance And Releases
 
