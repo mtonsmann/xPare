@@ -69,19 +69,28 @@ should distrust, so the posture is deliberately minimal and is checked mechanica
    memory-bound nature; the core's
    `SS_MAX_INPUT_BYTES` (ABI v2) is the hard backstop beneath it. See `DESIGN.md`
    → *Performance & large inputs → Input size ceiling*.
+   For explicit image OCR, the byte ceiling is only the first gate: keep scanning
+   advertised image representations until a bounded one is found, and inspect
+   ImageIO dimensions before creating a `CGImage` so compressed images cannot
+   expand into an oversized decoded bitmap.
 9. **Treat local pasteboard writers as a race/DoS boundary, not a confidentiality
    boundary.** Another same-user process can write the general pasteboard before a
    read, during a transform, or after the in-place rewrite. SafetyStrip must still
    avoid logging/persistence/exfiltration and must bound each transform, but it does
    not claim to lock the pasteboard against local writers.
+10. **Keep OCR literal and orientation-aware.** Explicit OCR is a plain-text
+    extraction path for code, URLs, hashes, IOCs, and screenshots as much as prose:
+    disable Vision language correction unless the user explicitly opts into
+    correction, and pass image orientation metadata to Vision so copied photos are
+    recognized in their intended orientation.
 
 ### Continuous mode
 
-10. **Owned poller on `changeCount`, fully torn down when off.** Continuous mode polls
+11. **Owned poller on `changeCount`, fully torn down when off.** Continuous mode polls
    `NSPasteboard.general.changeCount` on a **500 ms** default interval. When the mode
    is disabled the timer/poller object must be invalidated **and** niled — no loop
    runs when the feature is off. On-demand mode (the default) does no polling at all.
-11. **No stronger ordering is implied.** Polling is best-effort; it can miss
+12. **No stronger ordering is implied.** Polling is best-effort; it can miss
    intermediate values if multiple writes happen between ticks and it can race a
    writer before the read or after the rewrite. The shell suppresses SafetyStrip
    self-write generations, drops stale transform completions when `changeCount`
@@ -90,7 +99,7 @@ should distrust, so the posture is deliberately minimal and is checked mechanica
 
 ### Responsiveness
 
-12. **Transform/OCR off the main thread; indicate only when it's slow.** `stripNow`
+13. **Transform/OCR off the main thread; indicate only when it's slow.** `stripNow`
    runs the core transform on a background task, and explicit image OCR runs Vision
    recognition on a detached task — the menu-bar UI must never block, even on a large
    clipboard. It is **threshold-gated**: `onStrippingChange(true)` fires only if a run

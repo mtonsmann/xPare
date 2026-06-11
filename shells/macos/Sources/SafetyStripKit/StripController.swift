@@ -193,14 +193,29 @@ public final class StripController {
 
         let image = read.image
         let recognizer = imageTextRecognizer
-        let recognized: String? = await runWithBusyIndicator {
+        let recognitionResult: Result<String, Error> = await runWithBusyIndicator {
             await Task.detached(priority: .userInitiated) { [image, recognizer] in
-                try? recognizer.recognizeText(in: image)
+                do {
+                    return .success(try recognizer.recognizeText(in: image))
+                } catch {
+                    return .failure(error)
+                }
             }.value
         }
 
-        guard let output = recognized,
-              !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        let output: String
+        switch recognitionResult {
+        case .success(let recognized):
+            output = recognized
+        case .failure(let error):
+            if let recognitionError = error as? ImageTextRecognitionError,
+               let decodedBytes = recognitionError.estimatedDecodedBytes {
+                return .tooLarge(bytes: decodedBytes)
+            }
+            return .notApplicable
+        }
+
+        guard !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return .notApplicable
         }
         let outputByteCount = output.utf8.count
