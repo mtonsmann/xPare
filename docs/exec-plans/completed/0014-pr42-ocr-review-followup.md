@@ -9,10 +9,10 @@
 ### Intended behavior
 
 Address the unresolved PR 42 OCR review findings without changing the core or
-the C ABI. Explicit image OCR rejects oversized decoded dimensions before
-creating a `CGImage`, preserves literal OCR candidates by disabling Vision
-language correction, honors image orientation metadata, and keeps scanning
-pasteboard image representations until it finds a bounded candidate.
+the C ABI. Image OCR rejects oversized decoded dimensions before creating a
+`CGImage`, preserves literal OCR candidates by disabling Vision language
+correction, honors image orientation metadata, and scans pasteboard image
+representations only within a finite oversized-read budget.
 
 ### Must-preserve invariants
 
@@ -20,7 +20,7 @@ pasteboard image representations until it finds a bounded candidate.
 - No network, no telemetry, no content logging, and no content persistence.
 - Minimal macOS entitlements; no new OS permission.
 - Default tests must avoid `NSPasteboard.general`.
-- Image OCR remains explicit-only and bounded before recognition/writeback.
+- Image OCR remains shell-owned and bounded before recognition/writeback.
 
 ### New invariants
 
@@ -28,8 +28,10 @@ pasteboard image representations until it finds a bounded candidate.
   recognizer's decoded-pixel ceiling before decode.
 - Vision language correction is disabled for this literal extraction path.
 - Image orientation metadata is passed through to Vision.
-- A too-large pasteboard image representation does not block a later bounded
-  representation.
+- A single too-large pasteboard image representation does not block a later
+  bounded representation.
+- Repeated too-large pasteboard image representations stop the alternate scan
+  before every advertised image type is materialized.
 
 ### Threats / bug classes considered
 
@@ -37,6 +39,8 @@ pasteboard image representations until it finds a bounded candidate.
 - Literal token corruption from OCR language correction.
 - Sideways/upside-down OCR from dropped EXIF/TIFF orientation metadata.
 - False `.tooLarge` outcomes when another advertised image type is safe.
+- Unbounded materialization when several advertised image representations are
+  all oversized.
 
 ### Test plan
 
@@ -45,6 +49,8 @@ pasteboard image representations until it finds a bounded candidate.
 - Add controller coverage for decoded-dimension refusal staying a size failure.
 - Add a named-pasteboard smoke that verifies `SystemPasteboard.readImage` skips
   an oversized first image representation and returns a later bounded one.
+- Add a named-pasteboard regression that verifies repeated oversized image
+  representations return `.tooLarge` before reaching a later bounded alternate.
 - Update the macOS posture guardrail with the OCR review lessons.
 
 ### Fuzz / property plan
@@ -73,14 +79,21 @@ env CARGO=cargo CARGO_TARGET_DIR=/private/tmp/xpare-pr42-xtask-target cargo run 
 env CARGO=cargo CARGO_TARGET_DIR=/private/tmp/xpare-pr42-xtask-target cargo run -p xtask -- check-entitlements
 git diff --check
 env XDG_CACHE_HOME=/private/tmp/xpare-pr42-cache CLANG_MODULE_CACHE_PATH=/private/tmp/xpare-pr42-cache/clang swift test --disable-sandbox --package-path shells/macos --filter ImageTextRecognizerTests -Xswiftc -F -Xswiftc /Library/Developer/CommandLineTools/Library/Developer/Frameworks -Xlinker -rpath -Xlinker /Library/Developer/CommandLineTools/Library/Developer/Frameworks -Xlinker -rpath -Xlinker /Library/Developer/CommandLineTools/Library/Developer/usr/lib
+env XDG_CACHE_HOME=/private/tmp/xpare-pr42-cache CLANG_MODULE_CACHE_PATH=/private/tmp/xpare-pr42-cache/clang swift test --disable-sandbox --package-path shells/macos --filter systemPasteboardStopsAfterRepeatedOversizedImageRepresentations -Xswiftc -F -Xswiftc /Library/Developer/CommandLineTools/Library/Developer/Frameworks -Xlinker -rpath -Xlinker /Library/Developer/CommandLineTools/Library/Developer/Frameworks -Xlinker -rpath -Xlinker /Library/Developer/CommandLineTools/Library/Developer/usr/lib
+cargo fmt --all --check
+git diff --check
+env CARGO=cargo CARGO_TARGET_DIR=/private/tmp/xpare-pr46-xtask-ci cargo run -p xtask -- ci
+env CARGO=cargo CARGO_TARGET_DIR=/private/tmp/xpare-pr46-xtask-ci cargo run -p xtask -- check-supply-chain
 ```
 
 ### Evidence packet
 
 - `cargo build -p safetystrip-ffi --release` -> pass.
 - `swift test --disable-sandbox --package-path shells/macos ...` with writable
-  Swift/Clang caches and CommandLineTools framework/rpath flags -> pass, 73
-  tests in 6 suites.
+  Swift/Clang caches and CommandLineTools framework/rpath flags -> pass after
+  merging `origin/growth-envelope-tightening`, 80 tests in 6 suites. OCR
+  orchestration guards reported 0.008s for manual OCR and 0.006s for continuous
+  OCR.
 - `cargo fmt --all --check` -> pass.
 - `cargo run -p xtask -- check-no-network` -> pass.
 - `cargo run -p xtask -- check-no-content-logging` -> pass.
@@ -89,9 +102,21 @@ env XDG_CACHE_HOME=/private/tmp/xpare-pr42-cache CLANG_MODULE_CACHE_PATH=/privat
 - `git diff --check` -> pass.
 - `swift test --filter ImageTextRecognizerTests ...` after raising the decoded
   image cap to 30 MP -> pass, 4 tests in 1 suite.
+- `swift test --filter systemPasteboardStopsAfterRepeatedOversizedImageRepresentations
+  ...` -> pass, proving repeated oversized image representations stop the
+  alternate scan before a later bounded representation.
+- `cargo fmt --all --check` -> pass after resolving PR conflicts.
+- `git diff --check` -> pass after resolving PR conflicts.
+- `cargo run -p xtask -- ci` with fresh target dir -> passed formatting, clippy,
+  Rust workspace tests, structural/privacy/ABI/entitlement/release/workflow
+  checks, shellcheck, actionlint, and offline zizmor; failed only when sandboxed
+  `cargo-deny` could not lock the read-only local advisory DB.
+- Escalated `cargo run -p xtask -- check-supply-chain` with the same fresh target
+  dir -> pass (`advisories ok, bans ok, licenses ok, sources ok`), with existing
+  warnings about unmatched license allowances and duplicate `wit-bindgen`.
 - `docs/guardrails/macos-posture.md` updated with the closure lesson for
-  decoded-dimension caps, alternate representations, literal OCR, and
-  orientation metadata.
+  decoded-dimension caps, finite alternate representation scans, literal OCR,
+  and orientation metadata.
 
 ### Proof gaps
 

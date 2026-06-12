@@ -54,9 +54,10 @@ should distrust, so the posture is deliberately minimal and is checked mechanica
    representation (prefer the HTML rep → core `StripHtml`), transform via the core,
    and write the result back to the same pasteboard. **Never** simulate a paste
    (synthesizing Cmd-V) — that needs Accessibility and can target the wrong app.
-   Explicit image OCR is the shell-owned exception to "transform via the core": the
-   one-shot command reads bounded image bytes, runs Apple's local Vision OCR, and
-   writes recognized plain text back in place without changing the core ABI.
+   Image OCR is the shell-owned exception to "transform via the core": the one-shot
+   command, and the separate opt-in continuous OCR setting for image-only
+   clipboards, read bounded image bytes, run Apple's local Vision OCR, and write
+   recognized plain text back in place without changing the core ABI.
 7. **No persistence or logging of pasteboard content** — see
    [privacy-and-data-handling](privacy-and-data-handling.md). Free the core's output
    buffer with `ss_buffer_free` (it is zeroized on free).
@@ -69,16 +70,18 @@ should distrust, so the posture is deliberately minimal and is checked mechanica
    memory-bound nature; the core's
    `SS_MAX_INPUT_BYTES` (ABI v2) is the hard backstop beneath it. See `DESIGN.md`
    → *Performance & large inputs → Input size ceiling*.
-   For explicit image OCR, the byte ceiling is only the first gate: keep scanning
-   advertised image representations until a bounded one is found, and inspect
-   ImageIO dimensions before creating a `CGImage` so compressed images cannot
-   expand into an oversized decoded bitmap.
+   For image OCR, the byte ceiling is only the first gate: a single oversized
+   advertised image representation may be skipped to find a bounded alternate, but
+   repeated oversized image representations must stop the scan rather than
+   materializing every advertised image type. Inspect ImageIO dimensions before
+   creating a `CGImage` so compressed images cannot expand into an oversized
+   decoded bitmap.
 9. **Treat local pasteboard writers as a race/DoS boundary, not a confidentiality
    boundary.** Another same-user process can write the general pasteboard before a
    read, during a transform, or after the in-place rewrite. SafetyStrip must still
    avoid logging/persistence/exfiltration and must bound each transform, but it does
    not claim to lock the pasteboard against local writers.
-10. **Keep OCR literal and orientation-aware.** Explicit OCR is a plain-text
+10. **Keep OCR literal and orientation-aware.** Image OCR is a plain-text
     extraction path for code, URLs, hashes, IOCs, and screenshots as much as prose:
     disable Vision language correction unless the user explicitly opts into
     correction, and pass image orientation metadata to Vision so copied photos are
@@ -100,9 +103,10 @@ should distrust, so the posture is deliberately minimal and is checked mechanica
 ### Responsiveness
 
 13. **Transform/OCR off the main thread; indicate only when it's slow.** `stripNow`
-   runs the core transform on a background task, and explicit image OCR runs Vision
-   recognition on a detached task — the menu-bar UI must never block, even on a large
-   clipboard. It is **threshold-gated**: `onStrippingChange(true)` fires only if a run
+   runs the core transform on a background task, and image OCR runs Vision recognition
+   on a detached task whether invoked manually or by the opt-in continuous setting —
+   the menu-bar UI must never block, even on a large clipboard. It is
+   **threshold-gated**: `onStrippingChange(true)` fires only if a run
    outlasts `busyThreshold` (default 400 ms), and `(false)` when it finishes, so the
    instant common case shows nothing and only a multi-second run surfaces a
    "Stripping…" state. The pasteboard read and the in-place write stay on the main

@@ -113,6 +113,7 @@ public final class SystemPasteboard: PasteboardProtocol {
         NSPasteboard.PasteboardType("public.heif"),
         .tiff,
     ]
+    private static let maxOversizedImageRepresentationSkips = 1
 
     public init(pasteboard: NSPasteboard = .general) {
         self.pasteboard = pasteboard
@@ -183,7 +184,12 @@ public final class SystemPasteboard: PasteboardProtocol {
                 continue
             }
             if data.count > ceiling {
-                largestOversizedRepresentation = max(largestOversizedRepresentation ?? 0, data.count)
+                let largest = max(largestOversizedRepresentation ?? 0, data.count)
+                guard largestOversizedRepresentation == nil,
+                      Self.maxOversizedImageRepresentationSkips > 0 else {
+                    return .tooLarge(bytes: largest, changeCount: generation)
+                }
+                largestOversizedRepresentation = largest
                 continue
             }
             return .content(PasteboardImageRead(

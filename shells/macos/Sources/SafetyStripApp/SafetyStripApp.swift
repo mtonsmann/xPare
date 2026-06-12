@@ -56,6 +56,11 @@ final class AppModel: ObservableObject {
         controller.update(settings)
     }
 
+    func setContinuousImageOCR(_ enabled: Bool) {
+        settings.ocrImagesInContinuousMode = enabled
+        controller.update(settings)
+    }
+
     // MARK: - Persistent pipeline (Clean toggles)
 
     /// Enable/disable a **zero-parameter** baseline operation, preserving order.
@@ -322,8 +327,8 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Run local Vision OCR against an image clipboard item and replace it with
-    /// recognized plain text. This is explicit-only and never persisted.
+    /// Run the explicit local Vision OCR command against an image clipboard item
+    /// and replace it with recognized plain text.
     func extractImageText() {
         Task { @MainActor in
             switch await controller.extractImageText() {
@@ -468,6 +473,10 @@ private struct MenuContent: View {
         Toggle("Continuous monitoring", isOn: Binding(
             get: { model.settings.mode == .continuous },
             set: { model.setMode($0 ? .continuous : .onDemand) }
+        ))
+        Toggle("OCR images in continuous mode", isOn: Binding(
+            get: { model.settings.ocrImagesInContinuousMode },
+            set: { model.setContinuousImageOCR($0) }
         ))
 
         Divider()

@@ -92,7 +92,7 @@ hand-rolled parsers: `strip_html`, `strip_markdown`, `transform_pipeline`.
 ### `shells/` — native OS integration
 
 Shells own everything the core refuses to touch: clipboard read/write
-(including rich→plain extraction and explicit local image OCR), change detection,
+(including rich→plain extraction and local image OCR), change detection,
 tray/menu-bar UI, the global hotkey, settings, and calling the core over the C ABI.
 **No transform logic lives in a shell.**
 
@@ -149,9 +149,11 @@ which is small enough to read end to end.
    because that is the path that neutralizes `<script>`/`<style>` and tags.
    The one-shot `HtmlToMarkdown` command is the deliberate exception: it consumes
    the raw HTML representation directly so structure can be preserved as Markdown.
-   The one-shot image OCR command is another shell-owned extraction path: on macOS
-   it reads bounded image bytes and uses local Vision text recognition to produce
-   plain text, without changing the core ABI or persistent pipeline.
+   Image OCR is another shell-owned extraction path: on macOS it reads bounded
+   image bytes and uses local Vision text recognition to produce plain text,
+   without changing the core ABI or persistent transform pipeline. It is always
+   available as a one-shot command and may also run in continuous mode only when
+   the user enables that separate setting.
 3. For core-backed transformations, the shell calls
    `ss_transform(input, config_json)`. `config_json` is a versioned, ordered list
    of operations — feature selection is **data**, not API.
