@@ -24,6 +24,9 @@
 #   CERT_NAME="Developer ID Application: Name (TEAMID)"   Required for `dist`.
 #   NOTARY_PROFILE=name        `xcrun notarytool store-credentials` profile; required
 #                              for `dist` (official assets must be notarized).
+#   NOTARY_KEYCHAIN=path       Optional keychain path for NOTARY_PROFILE; official
+#                              CI passes the temporary signing keychain so deleting
+#                              that keychain removes both signing and notary material.
 #   SIGN_ENTITLEMENTS=path     Entitlements for the Developer ID signature. Defaults
 #                              to shells/macos/xPare.entitlements; dist rejects
 #                              any path that does not resolve to that checked file.
@@ -180,8 +183,13 @@ notarize_and_staple() {
     echo ">>> notarizing (xcrun notarytool submit --wait)"
     local submit_json submit_ok=1
     submit_json="$(mktemp "${TMPDIR:-/tmp}/xpare-notary.XXXXXX")"
+    local -a notary_keychain_args=()
+    if [ -n "${NOTARY_KEYCHAIN:-}" ]; then
+        [ -f "${NOTARY_KEYCHAIN}" ] || die "NOTARY_KEYCHAIN does not exist: ${NOTARY_KEYCHAIN}"
+        notary_keychain_args=(--keychain "${NOTARY_KEYCHAIN}")
+    fi
     if ! xcrun notarytool submit "${notary_zip}" --keychain-profile "${NOTARY_PROFILE}" \
-        --wait --output-format json > "${submit_json}"; then
+        "${notary_keychain_args[@]}" --wait --output-format json > "${submit_json}"; then
         submit_ok=0
     fi
 
@@ -193,7 +201,8 @@ notarize_and_staple() {
         echo "release.sh: notarization status '${status:-<none>}' (submission id: ${submission_id:-<none>})." >&2
         if [ -n "${submission_id}" ]; then
             echo "release.sh: notarization log for ${submission_id}:" >&2
-            xcrun notarytool log "${submission_id}" --keychain-profile "${NOTARY_PROFILE}" >&2 \
+            xcrun notarytool log "${submission_id}" --keychain-profile "${NOTARY_PROFILE}" \
+                "${notary_keychain_args[@]}" >&2 \
                 || echo "release.sh: could not fetch the notarization log." >&2
         fi
         rm -f "${notary_zip}"

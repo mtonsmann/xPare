@@ -15,9 +15,11 @@
 # and an App Store Connect API key for notarization (MACOS_NOTARY_KEY_P8_BASE64
 # + MACOS_NOTARY_KEY_ID + MACOS_NOTARY_ISSUER_ID — a per-key-revocable,
 # Developer-role key; no personal Apple ID credential ever reaches CI). It
-# signs with the checked App Sandbox entitlements, notarizes, publishes the
-# GitHub Release, then attaches a build-provenance attestation and an SPDX
-# SBOM to the assets. Signing/notary credentials are NEVER required for
+# signs with the checked App Sandbox entitlements, notarizes, immediately wipes
+# Apple signing/notary material, verifies the signed assets remain unchanged
+# across post-signing metadata steps, publishes the GitHub Release, then attaches
+# a build-provenance attestation and an SPDX SBOM to the assets. Signing/notary
+# credentials are NEVER required for
 # pull-request CI (see .github/workflows/ci.yml).
 name: Release
 
@@ -262,10 +264,8 @@ jobs:
     permissions:
       # Publishes the GitHub Release and uploads its assets.
       contents: write
-      # Build-provenance attestation: sign with the workflow's OIDC identity and
-      # store the attestation.
-      id-token: write
-      attestations: write
+    outputs:
+      release_version: ${{ steps.release_version.outputs.version }}
     env:
       VERSION: ${{ github.ref_name }}
       NOTARY_PROFILE: xpare-notary
@@ -287,6 +287,7 @@ jobs:
         run: cargo run -p xtask -- check-entitlements
 
       - name: Normalize release version
+        id: release_version
         run: |
           set -euo pipefail
           version="${VERSION#v}"
@@ -295,6 +296,7 @@ jobs:
             exit 1
           fi
           echo "RELEASE_VERSION=${version}" >> "${GITHUB_ENV}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
 
       # `runner.temp` is not available in job-level `env:`, so derive the signing
       # paths from $RUNNER_TEMP here and export them for the later steps.
@@ -304,6 +306,7 @@ jobs:
             echo "KEYCHAIN_PATH=${RUNNER_TEMP}/xpare-signing.keychain-db"
             echo "CERTIFICATE_PATH=${RUNNER_TEMP}/developer-id.p12"
             echo "NOTARY_KEY_PATH=${RUNNER_TEMP}/notary-authkey.p8"
+            echo "SIGNED_RELEASE_MANIFEST=${RUNNER_TEMP}/signed-release-assets.sha256"
           } >> "${GITHUB_ENV}"
 
       - name: Validate required Apple secrets
@@ -330,7 +333,7 @@ jobs:
           # Throwaway keychain password: cryptographically random, never derived
           # from predictable run metadata (run_id/run_attempt are public). It
           # guards the imported signing key for this job only and dies with the
-          # keychain in the cleanup step.
+          # keychain in the immediate post-dist cleanup step.
           KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
           echo "${MACOS_CERTIFICATE_P12_BASE64}" | base64 -d > "${CERTIFICATE_PATH}"
           security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
@@ -351,8 +354,7 @@ jobs:
         # account credential ever reaches the runner. `store-credentials` wraps
         # the key in the same keychain profile `release.sh dist` already
         # consumes, so the local NOTARY_PROFILE flow is identical. The .p8 stays
-        # on disk in RUNNER_TEMP for the job's lifetime (notarytool may read it
-        # through the stored profile) and is shredded in the cleanup step.
+        # on disk only until the immediate post-dist cleanup step.
         env:
           MACOS_NOTARY_KEY_P8_BASE64: ${{ secrets.MACOS_NOTARY_KEY_P8_BASE64 }}
           MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
@@ -364,46 +366,148 @@ jobs:
           xcrun notarytool store-credentials "${NOTARY_PROFILE}" \
             --key "${NOTARY_KEY_PATH}" \
             --key-id "${MACOS_NOTARY_KEY_ID}" \
-            --issuer "${MACOS_NOTARY_ISSUER_ID}"
+            --issuer "${MACOS_NOTARY_ISSUER_ID}" \
+            --keychain "${KEYCHAIN_PATH}"
 
       - name: Sign and notarize (make dist)
-        run: make dist VERSION="${RELEASE_VERSION}" CERT_NAME="${CERT_NAME}" NOTARY_PROFILE="${NOTARY_PROFILE}" SIGN_ENTITLEMENTS="${GITHUB_WORKSPACE}/shells/macos/xPare.entitlements"
+        run: make dist VERSION="${RELEASE_VERSION}" CERT_NAME="${CERT_NAME}" NOTARY_PROFILE="${NOTARY_PROFILE}" NOTARY_KEYCHAIN="${KEYCHAIN_PATH}" SIGN_ENTITLEMENTS="${GITHUB_WORKSPACE}/shells/macos/xPare.entitlements"
 
-      # Signed build provenance for everything we ship: a verifier can check that
-      # an asset was built by THIS workflow at THIS SHA (`gh attestation verify`).
-      - name: Attest build provenance
-        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
-        with:
-          subject-path: |
-            dist/release/*.zip
-            dist/release/SHA256SUMS*
+      - name: Capture signed asset manifest
+        id: signed_manifest
+        run: |
+          set -euo pipefail
+          ( cd dist/release && shasum -a 256 -- *.zip *.zip.sha256 SHA256SUMS* ) > "${SIGNED_RELEASE_MANIFEST}"
+          manifest_sha="$(shasum -a 256 "${SIGNED_RELEASE_MANIFEST}" | awk '{print $1}')"
+          echo "sha256=${manifest_sha}" >> "${GITHUB_OUTPUT}"
 
-      # SPDX SBOM of the workspace (syft catalogs the Cargo lockfile), staged
-      # next to the zips and attached to the release after it exists below.
-      - name: Generate SBOM (SPDX JSON)
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
-        with:
-          path: .
-          format: spdx-json
-          output-file: dist/release/xPare-v${{ env.RELEASE_VERSION }}-sbom.spdx.json
-          upload-artifact: false
-          upload-release-assets: false
+      - name: Clean temporary signing material
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          if [ -e "${KEYCHAIN_PATH}" ]; then
+            security delete-keychain "${KEYCHAIN_PATH}"
+          fi
+          rm -f "${CERTIFICATE_PATH}" "${NOTARY_KEY_PATH}"
+
+      - name: Verify signed assets before publication
+        env:
+          SIGNED_MANIFEST_SHA256: ${{ steps.signed_manifest.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          expected_manifest_sha="${SIGNED_MANIFEST_SHA256}"
+          printf '%s  %s\n' "${expected_manifest_sha}" "${SIGNED_RELEASE_MANIFEST}" | shasum -a 256 --check --strict -
+          current_manifest="${RUNNER_TEMP}/signed-release-assets.current.sha256"
+          ( cd dist/release && shasum -a 256 -- *.zip *.zip.sha256 SHA256SUMS* ) > "${current_manifest}"
+          diff -u "${SIGNED_RELEASE_MANIFEST}" "${current_manifest}"
 
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: make github-release VERSION="${RELEASE_VERSION}"
 
+  attest-official:
+    name: attest published release assets
+    needs: publish-official
+    if: ${{ vars.XPARE_ENABLE_OFFICIAL_RELEASE == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    env:
+      RELEASE_VERSION: ${{ needs['publish-official'].outputs.release_version }}
+    steps:
+      - name: Download published release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/release
+          gh release download "v${RELEASE_VERSION}" \
+            --dir dist/release \
+            --pattern "*.zip" \
+            --pattern "*.zip.sha256" \
+            --pattern "SHA256SUMS*"
+
+      # Signed build provenance for everything we ship: a verifier can check that
+      # an asset was built by THIS workflow at THIS SHA (`gh attestation verify`).
+      # This third-party action runs in a separate job without release write
+      # permission, after the signed assets are published.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-path: |
+            dist/release/*.zip
+            dist/release/*.zip.sha256
+            dist/release/SHA256SUMS*
+
+  sbom-official:
+    name: generate release SBOM
+    needs: publish-official
+    if: ${{ vars.XPARE_ENABLE_OFFICIAL_RELEASE == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      RELEASE_VERSION: ${{ needs['publish-official'].outputs.release_version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      # SPDX SBOM of the workspace (syft catalogs the Cargo lockfile), staged
+      # as a workflow artifact. This third-party action has no release write
+      # permission; a later run-only job attaches exactly this SBOM file.
+      - name: Generate SBOM (SPDX JSON)
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: .
+          format: spdx-json
+          output-file: xPare-v${{ env.RELEASE_VERSION }}-sbom.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Upload SBOM workflow artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-sbom-${{ env.RELEASE_VERSION }}
+          path: xPare-v${{ env.RELEASE_VERSION }}-sbom.spdx.json
+          if-no-files-found: error
+
+  attach-sbom-official:
+    name: attach release SBOM
+    needs:
+      - publish-official
+      - sbom-official
+    if: ${{ vars.XPARE_ENABLE_OFFICIAL_RELEASE == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    env:
+      RELEASE_VERSION: ${{ needs['publish-official'].outputs.release_version }}
+    steps:
       - name: Attach SBOM to the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          artifact_name="release-sbom-${RELEASE_VERSION}"
+          artifact_url="$(
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts" \
+              --jq ".artifacts[] | select(.name == \"${artifact_name}\") | .archive_download_url" \
+              | head -n 1
+          )"
+          if [ -z "${artifact_url}" ]; then
+            echo "Could not find SBOM workflow artifact ${artifact_name}."
+            exit 1
+          fi
+          mkdir -p sbom
+          gh api "${artifact_url}" > sbom.zip
+          unzip -q sbom.zip -d sbom
           gh release upload "v${RELEASE_VERSION}" \
-            "dist/release/xPare-v${RELEASE_VERSION}-sbom.spdx.json" --clobber
-
-      - name: Clean temporary signing material
-        if: ${{ always() }}
-        run: |
-          security delete-keychain "${KEYCHAIN_PATH}" >/dev/null 2>&1 || true
-          rm -f "${CERTIFICATE_PATH}" "${NOTARY_KEY_PATH}"
+            "sbom/xPare-v${RELEASE_VERSION}-sbom.spdx.json" --clobber

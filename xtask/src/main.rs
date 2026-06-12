@@ -842,6 +842,30 @@ fn validate_release_posture(release_text: &str, entitlements_text: &str) -> Resu
         "dist must verify signed entitlements on the app bundle",
         &mut missing,
     );
+    require_script_snippet(
+        release_text,
+        "NOTARY_KEYCHAIN=path",
+        "official CI must be able to bind notary credentials to the temporary keychain",
+        &mut missing,
+    );
+    require_script_snippet(
+        release_text,
+        r#"notary_keychain_args=(--keychain "${NOTARY_KEYCHAIN}")"#,
+        "notarytool must support an explicit keychain for the stored profile",
+        &mut missing,
+    );
+    require_script_snippet(
+        release_text,
+        r#"xcrun notarytool submit "${notary_zip}" --keychain-profile "${NOTARY_PROFILE}" \"#,
+        "dist must pass the keychain-bound notary profile to notarytool submit",
+        &mut missing,
+    );
+    require_script_snippet(
+        release_text,
+        r#""${notary_keychain_args[@]}" --wait --output-format json"#,
+        "notarytool submit must consume the explicit keychain argument",
+        &mut missing,
+    );
 
     if missing.is_empty() {
         Ok(())
@@ -2487,6 +2511,383 @@ fn check_shell() -> Result<(), String> {
     run_tool("shellcheck", &shellcheck, &args)
 }
 
+struct ReleaseWorkflowStep {
+    name: Option<String>,
+    start: usize,
+}
+
+fn line_offset_pairs(text: &str) -> impl Iterator<Item = (usize, &str)> {
+    let mut offset = 0;
+    text.split_inclusive('\n').map(move |line| {
+        let start = offset;
+        offset += line.len();
+        (start, line.trim_end_matches(['\r', '\n']))
+    })
+}
+
+fn normalize_yaml_key(key: &str) -> &str {
+    let key = key.trim();
+    match key.as_bytes() {
+        [b'\'', rest @ .., b'\''] | [b'"', rest @ .., b'"'] => {
+            std::str::from_utf8(rest).unwrap_or(key)
+        }
+        _ => key,
+    }
+}
+
+fn yaml_line_key(line: &str) -> Option<&str> {
+    let trimmed = line.trim_start();
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+        return None;
+    }
+    let without_dash = match trimmed.strip_prefix('-') {
+        Some(rest) => rest.trim_start(),
+        None => trimmed,
+    };
+    let key_end = without_dash
+        .find(|ch: char| ch == ':' || ch.is_whitespace())
+        .unwrap_or(without_dash.len());
+    let key = &without_dash[..key_end];
+    if key.is_empty() {
+        return None;
+    }
+    let key = normalize_yaml_key(key);
+    let rest = without_dash[key_end..].trim_start();
+    rest.strip_prefix(':').map(|_| key)
+}
+
+fn yaml_line_value_for_key<'a>(line: &'a str, expected_key: &str) -> Option<&'a str> {
+    let trimmed = line.trim_start();
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+        return None;
+    }
+    let without_dash = trimmed.strip_prefix('-')?.trim_start();
+    let key_end = without_dash
+        .find(|ch: char| ch == ':' || ch.is_whitespace())
+        .unwrap_or(without_dash.len());
+    let key = &without_dash[..key_end];
+    let key = normalize_yaml_key(key);
+    if key != expected_key {
+        return None;
+    }
+    let rest = without_dash[key_end..].trim_start();
+    rest.strip_prefix(':').map(str::trim_start)
+}
+
+fn release_workflow_steps(text: &str) -> Vec<ReleaseWorkflowStep> {
+    let mut steps = Vec::new();
+    for (start, line) in line_offset_pairs(text) {
+        if !line.starts_with("      - ") {
+            continue;
+        }
+        let name = yaml_line_value_for_key(line, "name")
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        steps.push(ReleaseWorkflowStep { name, start });
+    }
+    steps
+}
+
+fn require_ordered_release_workflow_steps(
+    text: &str,
+    steps: &[&str],
+) -> Result<Vec<usize>, String> {
+    let workflow_steps = release_workflow_steps(text);
+    let mut positions = Vec::with_capacity(steps.len());
+    for required_step in steps {
+        let matches: Vec<&ReleaseWorkflowStep> = workflow_steps
+            .iter()
+            .filter(|step| step.name.as_deref() == Some(*required_step))
+            .collect();
+        match matches.as_slice() {
+            [] => return Err(format!("missing required step `{required_step}`")),
+            [step] => positions.push(step.start),
+            _ => {
+                return Err(format!(
+                    "duplicate required step `{required_step}`; release credential boundary must be unique"
+                ));
+            }
+        }
+    }
+    for ((left_step, left_pos), (right_step, right_pos)) in steps
+        .iter()
+        .zip(positions.iter())
+        .zip(steps.iter().skip(1).zip(positions.iter().skip(1)))
+    {
+        if left_pos >= right_pos {
+            return Err(format!("step `{left_step}` must run before `{right_step}`"));
+        }
+    }
+    Ok(positions)
+}
+
+fn find_action_step_line(text: &str) -> Option<(usize, String)> {
+    text.lines().enumerate().find_map(|(idx, line)| {
+        if yaml_line_key(line) == Some("uses") {
+            Some((idx + 1, line.trim_start().to_string()))
+        } else {
+            None
+        }
+    })
+}
+
+fn reject_action_steps_in_window(text: &str, label: &str) -> Result<(), String> {
+    if let Some((line, action)) = find_action_step_line(text) {
+        return Err(format!(
+            "third-party or external `uses:` action appears {label} at window line {line}: `{action}`"
+        ));
+    }
+    Ok(())
+}
+
+fn workflow_job_slice<'a>(
+    text: &'a str,
+    job_name: &str,
+    next_job_name: Option<&str>,
+) -> Result<&'a str, String> {
+    let marker = format!("  {job_name}:\n");
+    let start = text
+        .find(&marker)
+        .ok_or_else(|| format!("missing workflow job `{job_name}`"))?;
+    let end = match next_job_name {
+        Some(next_job_name) => {
+            let next_marker = format!("  {next_job_name}:\n");
+            text[start + marker.len()..]
+                .find(&next_marker)
+                .map(|idx| start + marker.len() + idx)
+                .ok_or_else(|| format!("missing workflow job `{next_job_name}`"))?
+        }
+        None => text.len(),
+    };
+    if start >= end {
+        return Err(format!(
+            "workflow job `{job_name}` is empty or out of order"
+        ));
+    }
+    Ok(&text[start..end])
+}
+
+fn non_comment_line_contains(text: &str, snippet: &str) -> bool {
+    text.lines()
+        .map(str::trim_start)
+        .filter(|line| !line.starts_with('#'))
+        .any(|line| line.contains(snippet))
+}
+
+fn continued_shell_command_starting_with(text: &str, command_start: &str) -> Option<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    for (idx, line) in lines.iter().enumerate() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('#') || !trimmed.starts_with(command_start) {
+            continue;
+        }
+        let mut command = String::new();
+        for line in &lines[idx..] {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with('#') {
+                continue;
+            }
+            let line = trimmed.trim_end();
+            let continued = line.ends_with('\\');
+            let line = line.trim_end_matches('\\').trim_end();
+            if !command.is_empty() {
+                command.push(' ');
+            }
+            command.push_str(line);
+            if !continued {
+                break;
+            }
+        }
+        return Some(command);
+    }
+    None
+}
+
+/// Validate the official release job's signing boundary. Apple Developer ID and
+/// notary material may exist only during the native signing/notarization window;
+/// no action may run after signed assets are captured and before publication,
+/// and the signed release assets must be checked against a captured manifest
+/// before publication. This is deliberately textual because the invariant is
+/// about the order of named workflow steps, not about YAML syntax (actionlint
+/// covers that).
+fn validate_release_workflow_credential_boundary(text: &str) -> Result<(), String> {
+    let steps = [
+        "Import Developer ID certificate",
+        "Store notary credentials",
+        "Sign and notarize (make dist)",
+        "Capture signed asset manifest",
+        "Clean temporary signing material",
+        "Verify signed assets before publication",
+        "Publish GitHub Release",
+        "Attest build provenance",
+        "Generate SBOM (SPDX JSON)",
+        "Attach SBOM to the GitHub Release",
+    ];
+    let positions = require_ordered_release_workflow_steps(text, &steps)?;
+
+    let import_pos = positions[0];
+    let cleanup_pos = positions[4];
+    let credential_window = &text[import_pos..cleanup_pos];
+    reject_action_steps_in_window(credential_window, "while Apple signing material is present")?;
+
+    let signed_asset_to_publish_window = &text[positions[3]..positions[6]];
+    reject_action_steps_in_window(
+        signed_asset_to_publish_window,
+        "after signed assets are captured and before publication",
+    )?;
+
+    let publish_job = workflow_job_slice(text, "publish-official", Some("attest-official"))?;
+    let publish_step_start = publish_job
+        .find("      - name: Publish GitHub Release\n")
+        .ok_or_else(|| "missing Publish GitHub Release step in publish-official job".to_string())?;
+    reject_action_steps_in_window(
+        &publish_job[publish_step_start..],
+        "after publication in the release-write job",
+    )?;
+
+    let attest_job = workflow_job_slice(text, "attest-official", Some("sbom-official"))?;
+    for required in ["contents: read", "id-token: write", "attestations: write"] {
+        if !non_comment_line_contains(attest_job, required) {
+            return Err(format!(
+                "attest-official job must contain `{required}` so provenance runs without release-asset write permission"
+            ));
+        }
+    }
+    if non_comment_line_contains(attest_job, "contents: write") {
+        return Err(
+            "attest-official job must not grant release-asset write permission".to_string(),
+        );
+    }
+
+    let sbom_job = workflow_job_slice(text, "sbom-official", Some("attach-sbom-official"))?;
+    for required in [
+        "contents: read",
+        "upload-release-assets: false",
+        "Upload SBOM workflow artifact",
+    ] {
+        if !non_comment_line_contains(sbom_job, required) {
+            return Err(format!(
+                "sbom-official job must contain `{required}` so SBOM generation runs without release-asset write permission"
+            ));
+        }
+    }
+    if non_comment_line_contains(sbom_job, "contents: write") {
+        return Err("sbom-official job must not grant release-asset write permission".to_string());
+    }
+
+    let attach_sbom_job = workflow_job_slice(text, "attach-sbom-official", None)?;
+    for required in [
+        "contents: write",
+        "actions: read",
+        "gh api \"repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts\"",
+        r#"gh release upload "v${RELEASE_VERSION}""#,
+        r#""sbom/xPare-v${RELEASE_VERSION}-sbom.spdx.json" --clobber"#,
+    ] {
+        if !non_comment_line_contains(attach_sbom_job, required) {
+            return Err(format!(
+                "attach-sbom-official job must contain `{required}` so only the SBOM artifact is attached with release write permission"
+            ));
+        }
+    }
+    reject_action_steps_in_window(
+        attach_sbom_job,
+        "inside the release-write SBOM attachment job",
+    )?;
+
+    let store_notary_credentials = &text[positions[1]..positions[2]];
+    let store_command = continued_shell_command_starting_with(
+        store_notary_credentials,
+        r#"xcrun notarytool store-credentials "${NOTARY_PROFILE}""#,
+    )
+    .ok_or_else(|| {
+        "notary credentials must be stored with the xcrun notarytool store-credentials command"
+            .to_string()
+    })?;
+    for required in [r#"--keychain "${KEYCHAIN_PATH}""#] {
+        if !store_command.contains(required) {
+            return Err(format!(
+                "notary credentials must be stored in the temporary keychain with `{required}` on the notarytool command"
+            ));
+        }
+    }
+
+    let sign_and_notarize = &text[positions[2]..positions[3]];
+    if !non_comment_line_contains(sign_and_notarize, r#"NOTARY_KEYCHAIN="${KEYCHAIN_PATH}""#) {
+        return Err(
+            "Sign and notarize (make dist) must pass NOTARY_KEYCHAIN=\"${KEYCHAIN_PATH}\" so notarytool reads the temporary keychain"
+                .to_string(),
+        );
+    }
+
+    let cleanup_to_verify = &text[cleanup_pos..positions[5]];
+    for required in [
+        "if: ${{ always() }}",
+        r#"if [ -e "${KEYCHAIN_PATH}" ]; then"#,
+        r#"security delete-keychain "${KEYCHAIN_PATH}""#,
+        r#"rm -f "${CERTIFICATE_PATH}" "${NOTARY_KEY_PATH}""#,
+    ] {
+        if !non_comment_line_contains(cleanup_to_verify, required) {
+            return Err(format!(
+                "cleanup step must contain `{required}` before signed assets are published"
+            ));
+        }
+    }
+    for line in cleanup_to_verify.lines() {
+        if line.contains("security delete-keychain") && line.contains("||") {
+            return Err(
+                "cleanup step must fail closed when deleting the signing keychain fails"
+                    .to_string(),
+            );
+        }
+    }
+
+    let capture_to_cleanup = &text[positions[3]..cleanup_pos];
+    for required in [
+        "id: signed_manifest",
+        "SIGNED_RELEASE_MANIFEST",
+        "shasum -a 256 -- *.zip *.zip.sha256 SHA256SUMS*",
+        r#"shasum -a 256 "${SIGNED_RELEASE_MANIFEST}""#,
+        r#"echo "sha256=${manifest_sha}" >> "${GITHUB_OUTPUT}""#,
+    ] {
+        if !non_comment_line_contains(capture_to_cleanup, required) {
+            return Err(format!(
+                "signed asset manifest capture must contain `{required}`"
+            ));
+        }
+    }
+
+    let attest_step = &text[positions[7]..positions[8]];
+    for required in [
+        "dist/release/*.zip",
+        "dist/release/*.zip.sha256",
+        "dist/release/SHA256SUMS*",
+    ] {
+        if !non_comment_line_contains(attest_step, required) {
+            return Err(format!(
+                "build provenance attestation must include signed release asset `{required}`"
+            ));
+        }
+    }
+
+    let verify_before_publish = &text[positions[5]..positions[6]];
+    for required in [
+        "SIGNED_MANIFEST_SHA256: ${{ steps.signed_manifest.outputs.sha256 }}",
+        r#"expected_manifest_sha="${SIGNED_MANIFEST_SHA256}""#,
+        "shasum -a 256 --check --strict -",
+        "shasum -a 256 -- *.zip *.zip.sha256 SHA256SUMS*",
+        r#"diff -u "${SIGNED_RELEASE_MANIFEST}""#,
+    ] {
+        if !non_comment_line_contains(verify_before_publish, required) {
+            return Err(format!(
+                "signed asset verification before publication must contain `{required}`"
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 /// check-workflows: lint the GitHub Actions workflows for correctness (actionlint)
 /// and security (zizmor). actionlint is a system tool; zizmor is cargo-installable
 /// (auto-installed, pinned). This is the same workflow-security gate CI runs via
@@ -2498,6 +2899,19 @@ fn check_workflows() -> Result<(), String> {
         println!("check-workflows: no .github/workflows directory; nothing to lint.");
         return Ok(());
     }
+    let release_workflow_path = root.join(".github/workflows/release.yml");
+    let release_workflow = std::fs::read_to_string(&release_workflow_path).map_err(|e| {
+        format!(
+            "check-workflows: FAIL — could not read {}: {e}",
+            release_workflow_path.display()
+        )
+    })?;
+    validate_release_workflow_credential_boundary(&release_workflow).map_err(|e| {
+        format!(
+            "check-workflows: FAIL — {} violates the official release credential boundary: {e}",
+            release_workflow_path.display()
+        )
+    })?;
     // Correctness first (fast, offline): expression/syntax errors, bad `needs`
     // graphs, shellcheck over inline `run:` blocks.
     let actionlint = require_system_tool(
@@ -4221,6 +4635,325 @@ mod tests {
             err.contains("executable"),
             "expected executable verification failure, got: {err}"
         );
+    }
+
+    // --- release workflow credential boundary ---
+
+    #[test]
+    fn current_release_workflow_credential_boundary_passes() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        validate_release_workflow_credential_boundary(&release_workflow).unwrap();
+    }
+
+    #[test]
+    fn release_workflow_rejects_actions_while_signing_material_exists() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened = release_workflow.replace(
+            "      - name: Capture signed asset manifest\n",
+            "      - name: Compromised post-signing action\n        uses: example/malicious@0000000000000000000000000000000000000000\n\n      - name: Capture signed asset manifest\n",
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(
+            err.contains("Apple signing material is present"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_workflow_rejects_short_form_actions_while_signing_material_exists() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened = release_workflow.replace(
+            "      - name: Capture signed asset manifest\n",
+            "      - uses: example/malicious@0000000000000000000000000000000000000000\n\n      - name: Capture signed asset manifest\n",
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(
+            err.contains("Apple signing material is present"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_workflow_rejects_spaced_uses_keys_while_signing_material_exists() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened = release_workflow.replace(
+            "      - name: Capture signed asset manifest\n",
+            "      - uses : example/malicious@0000000000000000000000000000000000000000\n\n      - name: Capture signed asset manifest\n",
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(
+            err.contains("Apple signing material is present"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_workflow_rejects_quoted_uses_keys_before_publication() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened = release_workflow.replace(
+            "      - name: Verify signed assets before publication\n",
+            "      - 'uses' : example/malicious@0000000000000000000000000000000000000000\n\n      - name: Verify signed assets before publication\n",
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(
+            err.contains("after signed assets are captured and before publication"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_workflow_rejects_duplicate_cleanup_step_before_action() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened = release_workflow.replace(
+            "      - name: Capture signed asset manifest\n",
+            "      - name: Clean temporary signing material\n        run: echo fake-cleanup\n\n      - name: Compromised post-signing action\n        uses: example/malicious@0000000000000000000000000000000000000000\n\n      - name: Capture signed asset manifest\n",
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(err.contains("duplicate required step"), "got: {err}");
+    }
+
+    #[test]
+    fn release_workflow_ignores_commented_cleanup_name_before_action() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened = release_workflow.replace(
+            "      - name: Capture signed asset manifest\n",
+            "      # - name: Clean temporary signing material\n      - name: Compromised post-signing action\n        uses: example/malicious@0000000000000000000000000000000000000000\n\n      - name: Capture signed asset manifest\n",
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(
+            err.contains("Apple signing material is present"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_workflow_rejects_notary_credentials_outside_temp_keychain() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened =
+            release_workflow.replace("            --keychain \"${KEYCHAIN_PATH}\"\n", "");
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(err.contains("temporary keychain"), "got: {err}");
+    }
+
+    #[test]
+    fn release_workflow_rejects_notary_keychain_argument_left_only_in_echo() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened = release_workflow.replace(
+            "            --issuer \"${MACOS_NOTARY_ISSUER_ID}\" \\\n            --keychain \"${KEYCHAIN_PATH}\"\n",
+            "            --issuer \"${MACOS_NOTARY_ISSUER_ID}\"\n          echo \"--keychain ${KEYCHAIN_PATH}\"\n",
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(err.contains("temporary keychain"), "got: {err}");
+    }
+
+    #[test]
+    fn release_workflow_rejects_fail_open_keychain_cleanup() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened = release_workflow.replace(
+            "            security delete-keychain \"${KEYCHAIN_PATH}\"\n",
+            "            security delete-keychain \"${KEYCHAIN_PATH}\" >/dev/null 2>&1 || true\n",
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(err.contains("fail closed"), "got: {err}");
+    }
+
+    #[test]
+    fn release_workflow_rejects_any_keychain_cleanup_failure_handler() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened = release_workflow.replace(
+            "            security delete-keychain \"${KEYCHAIN_PATH}\"\n",
+            "            security delete-keychain \"${KEYCHAIN_PATH}\" || echo failed\n",
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(err.contains("fail closed"), "got: {err}");
+    }
+
+    #[test]
+    fn release_workflow_rejects_post_signing_action_before_publication() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened = release_workflow.replace(
+            "      - name: Verify signed assets before publication\n",
+            "      - name: Compromised post-signing action\n        uses: example/malicious@0000000000000000000000000000000000000000\n\n      - name: Verify signed assets before publication\n",
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(
+            err.contains("before publication"),
+            "expected pre-publication action rejection, got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_workflow_rejects_post_publish_action_in_release_write_job() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened = release_workflow.replace(
+            "        run: make github-release VERSION=\"${RELEASE_VERSION}\"\n",
+            "        run: make github-release VERSION=\"${RELEASE_VERSION}\"\n\n      - name: Compromised post-publish action\n        uses: example/malicious@0000000000000000000000000000000000000000\n",
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(
+            err.contains("after publication in the release-write job"),
+            "expected post-publication action rejection, got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_workflow_rejects_release_write_on_attestation_job() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened = release_workflow.replace(
+            "      contents: read\n      id-token: write\n      attestations: write\n",
+            "      contents: write\n      id-token: write\n      attestations: write\n",
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(
+            err.contains("attest-official job must contain `contents: read`"),
+            "expected attestation token-scope failure, got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_workflow_rejects_release_write_on_sbom_generation_job() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened = release_workflow.replace(
+            "  sbom-official:\n    name: generate release SBOM\n",
+            "  sbom-official:\n    name: generate release SBOM\n    permissions:\n      contents: write\n",
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(
+            err.contains("sbom-official job must not grant release-asset write permission"),
+            "expected SBOM token-scope failure, got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_workflow_rejects_action_in_sbom_attachment_write_job() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened = release_workflow.replace(
+            "      - name: Attach SBOM to the GitHub Release\n",
+            "      - uses: example/malicious@0000000000000000000000000000000000000000\n\n      - name: Attach SBOM to the GitHub Release\n",
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(
+            err.contains("inside the release-write SBOM attachment job"),
+            "expected SBOM attachment action rejection, got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_workflow_rejects_unprotected_per_zip_checksum_assets() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened = release_workflow.replace(
+            "shasum -a 256 -- *.zip *.zip.sha256 SHA256SUMS*",
+            "shasum -a 256 -- *.zip SHA256SUMS*",
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(err.contains("*.zip.sha256"), "got: {err}");
+    }
+
+    #[test]
+    fn release_workflow_rejects_unbound_signed_asset_manifest_baseline() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened = release_workflow.replace(
+            "          echo \"sha256=${manifest_sha}\" >> \"${GITHUB_OUTPUT}\"\n",
+            "          # signed asset manifest digest no longer exported\n",
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(
+            err.contains("GITHUB_OUTPUT"),
+            "expected manifest output binding failure, got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_workflow_rejects_missing_signed_asset_manifest_binding_check() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened = release_workflow.replace(
+            "          expected_manifest_sha=\"${SIGNED_MANIFEST_SHA256}\"\n",
+            "          # signed asset manifest digest no longer checked\n",
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(
+            err.contains("SIGNED_MANIFEST_SHA256"),
+            "expected manifest binding verification failure, got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_workflow_rejects_missing_per_zip_checksum_attestation() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened = release_workflow.replace("            dist/release/*.zip.sha256\n", "");
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(
+            err.contains("attestation") && err.contains("*.zip.sha256"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_workflow_rejects_missing_pre_publish_manifest_check() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened = release_workflow.replace(
+            "      - name: Verify signed assets before publication\n",
+            "      - name: Publish without manifest verification\n",
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(
+            err.contains("Verify signed assets before publication"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_posture_rejects_notary_submit_without_explicit_keychain_support() {
+        let root = workspace_root();
+        let release = std::fs::read_to_string(root.join("shells/macos/release.sh")).unwrap();
+        let weakened = release.replace(
+            r#"notary_keychain_args=(--keychain "${NOTARY_KEYCHAIN}")"#,
+            r#"notary_keychain_args=()"#,
+        );
+        let err = validate_release_posture(&weakened, GOOD_MINIMAL).unwrap_err();
+        assert!(err.contains("explicit keychain"), "got: {err}");
     }
 
     // --- check-c-ffi-surface ---

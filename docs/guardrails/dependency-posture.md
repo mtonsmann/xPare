@@ -57,8 +57,26 @@ capability-constrained**, and the constraint is enforced mechanically.
    over-broad `GITHUB_TOKEN` permissions) through `cargo xtask ci`
    (`check-workflows`, which also runs `actionlint` for correctness), so an agent
    catches workflow issues locally before pushing; `.github/dependabot.yml` bumps
-   the pinned SHAs so the pins don't rot. The actions themselves are supply-chain
-   just like crates — boring, audited, pinned.
+   the pinned SHAs so the pins don't rot. The official release workflow has one
+   extra project-specific invariant inside `check-workflows`: Apple signing/notary
+   material may exist only around `make dist`; the notary profile must be stored
+   in and consumed from the temporary keychain; cleanup must fail closed before
+   any post-signing `uses:` action; and no third-party `uses:` action may run
+   between signed-asset manifest capture and `make github-release`. The signed
+   zip, per-zip checksum, and aggregate-checksum manifest must be re-verified
+   immediately before publication. The baseline manifest cannot stand alone as
+   a mutable `$RUNNER_TEMP` file: bind it to a prior step output digest before
+   later third-party actions run, and validate that binding before the
+   pre-publication asset comparison. That guard validates real workflow step
+   keys, normalizes YAML key spelling used by action steps, and validates the
+   actual continued notarytool command instead of accepting comments or adjacent
+   prose as proof. The actions themselves are supply-chain just like crates —
+   boring, audited, pinned, and kept outside the signing credential window and
+   the signed-asset publication window. Post-publication metadata actions must
+   also be isolated from release-asset write permission: attestation and SBOM
+   generation run in `contents: read` jobs, and the only later `contents: write`
+   job is a run-only SBOM attachment step that downloads the fixed workflow
+   artifact and uploads that one file.
 9. **Audit the supply chain and the non-Rust surface mechanically.**
    [`cargo-deny`](https://embarkstudios.github.io/cargo-deny/) (`deny.toml`) scans the
    whole dependency tree for RustSec advisories, yanked crates, license compliance (a
