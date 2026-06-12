@@ -137,7 +137,7 @@ preview: ## Unsigned/ad-hoc preview zip + checksum under dist/release (VERSION o
 dist: ## Gated Developer ID sign+notarize+staple release (needs CERT_NAME; uses checked entitlements)
 	cd shells/macos && VERSION="$(VERSION)" CERT_NAME="$(CERT_NAME)" NOTARY_PROFILE="$(NOTARY_PROFILE)" NOTARY_KEYCHAIN="$(NOTARY_KEYCHAIN)" SIGN_ENTITLEMENTS="$(SIGN_ENTITLEMENTS)" ./release.sh dist
 
-github-release: ## Upload the signed release zip + checksum via gh (needs VERSION)
+github-release: ## Create the draft release with signed assets + staged SBOM (needs VERSION)
 	cd shells/macos && VERSION="$(VERSION)" ./release.sh github-release
 
 clean: ## Remove build artifacts (workspace, fuzz, macOS, release)

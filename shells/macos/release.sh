@@ -15,8 +15,9 @@
 #                    GATED: requires CERT_NAME, NOTARY_PROFILE, the entitlements
 #                    file, and a real vX.Y.Z version. Cannot run without an Apple
 #                    Developer ID; never produces an un-notarized official asset.
-#   github-release   Verify the zip is stapled, then upload it + checksum via `gh`
-#                    (draft release; prerelease for hyphenated versions).
+#   github-release   Verify the zip is stapled, then create a draft release with
+#                    the zip, checksums, and staged SBOM via `gh` (prerelease for
+#                    hyphenated versions).
 #
 # Environment:
 #   VERSION=X.Y.Z              Release version. `dist` requires it (or an exact vX.Y.Z
@@ -323,23 +324,27 @@ case "${cmd}" in
         [ -f "${zip}" ] || die "${zip} is missing; run 'release.sh dist' first."
         sums="${RELEASE_DIR}/SHA256SUMS"
         [ -f "${sums}" ] || die "${sums} is missing; run 'release.sh dist' first."
+        sbom="${RELEASE_DIR}/${APP_NAME}-v${version}-sbom.spdx.json"
+        [ -f "${sbom}" ] || die "${sbom} is missing; generate the release SBOM before github-release."
         verify_zip_stapled "${zip}"
 
         # Draft first so a human reviews and publishes; hyphenated versions
-        # (1.0.0-rc.1) are marked prerelease. Re-runs are idempotent: an
-        # existing release gets its assets replaced instead of dying. The
-        # aggregate SHA256SUMS rides along with the per-file checksum (CI's
-        # provenance attestation covers SHA256SUMS*, so the published asset
-        # set and the attested subject set stay in sync).
+        # (1.0.0-rc.1) are marked prerelease. This command creates a draft once
+        # and never mutates release assets after that. A draft-status check before
+        # upload would be racy with a maintainer publishing the draft, so existing
+        # releases are a hard stop rather than a clobber target.
+        # The aggregate SHA256SUMS rides along with the per-file checksum, and
+        # the SBOM is included in the same create command. CI's provenance
+        # attestation covers SHA256SUMS*, so the published asset set and the
+        # attested subject set stay in sync.
         if gh release view "v${version}" >/dev/null 2>&1; then
-            echo ">>> release v${version} already exists — replacing assets (--clobber)"
-            gh release upload "v${version}" "${zip}" "${zip}.sha256" "${sums}" --clobber
+            die "release v${version} already exists; refusing to replace release assets. Delete the draft release before rerunning, or create a new tag for a corrected public release."
         else
             create_flags=(--draft)
             case "${version}" in
                 *-*) create_flags+=(--prerelease) ;;
             esac
-            gh release create "v${version}" "${zip}" "${zip}.sha256" "${sums}" \
+            gh release create "v${version}" "${zip}" "${zip}.sha256" "${sums}" "${sbom}" \
                 --title "${APP_NAME} ${version}" --generate-notes --verify-tag \
                 "${create_flags[@]}"
         fi

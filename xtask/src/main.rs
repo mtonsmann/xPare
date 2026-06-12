@@ -757,6 +757,25 @@ fn require_script_snippet(text: &str, snippet: &str, why: &str, missing: &mut Ve
     }
 }
 
+fn release_script_case_slice<'a>(
+    text: &'a str,
+    case_label: &str,
+    next_case_label: &str,
+) -> Result<&'a str, String> {
+    let marker = format!("    {case_label})\n");
+    let start = text
+        .find(&marker)
+        .ok_or_else(|| format!("release script is missing `{case_label})` case"))?;
+    let next_marker = format!("\n    {next_case_label})");
+    let end = text[start + marker.len()..]
+        .find(&next_marker)
+        .map(|idx| start + marker.len() + idx)
+        .ok_or_else(|| {
+            format!("release script is missing `{next_case_label})` after `{case_label})`")
+        })?;
+    Ok(&text[start..end])
+}
+
 /// Validate the release script's load-bearing entitlement controls by exact
 /// textual assertions. This is intentionally strict: if release signing is
 /// refactored, the guard must be updated in the same PR after proving the new
@@ -867,6 +886,94 @@ fn validate_release_posture(release_text: &str, entitlements_text: &str) -> Resu
         &mut missing,
     );
 
+    let github_release_case =
+        release_script_case_slice(release_text, "github-release", "\"\"|-h|--help")?;
+    let release_view = r#"gh release view "v${version}" >/dev/null 2>&1"#;
+    let release_view_line = r#"if gh release view "v${version}" >/dev/null 2>&1; then"#;
+    let release_refusal_prefix =
+        r#"die "release v${version} already exists; refusing to replace release assets"#;
+    let release_create = r#"gh release create "v${version}""#;
+    for (snippet, why) in [
+        (
+            release_view_line,
+            "github-release must check for an existing release before creating one",
+        ),
+        (
+            release_refusal_prefix,
+            "github-release must fail closed before replacing existing release assets",
+        ),
+        (
+            release_create,
+            "github-release must create the release only after the existing-release guard",
+        ),
+        (
+            r#"sbom="${RELEASE_DIR}/${APP_NAME}-v${version}-sbom.spdx.json""#,
+            "github-release must stage the release SBOM path",
+        ),
+        (
+            r#"[ -f "${sbom}" ] || die"#,
+            "github-release must fail closed when the release SBOM is missing",
+        ),
+    ] {
+        if !non_comment_line_contains(github_release_case, snippet) {
+            missing.push(format!("{why}: missing `{snippet}`"));
+        }
+    }
+    if !non_comment_line_starts_with(github_release_case, release_view_line) {
+        missing.push(
+            "github-release must execute the existing-release guard directly, not echo or comment it"
+                .to_string(),
+        );
+    }
+    if let Err(err) = require_non_comment_lines_in_order(
+        github_release_case,
+        &[
+            release_view_line,
+            release_refusal_prefix,
+            "else",
+            release_create,
+        ],
+        "github-release existing-release guard",
+    ) {
+        missing.push(err);
+    }
+    let release_create_command =
+        continued_shell_command_starting_with(github_release_case, release_create);
+    match release_create_command {
+        Some(command) if command.contains(r#""${sbom}""#) => {}
+        Some(_) => missing.push(
+            "github-release must include the staged SBOM in the one-shot release creation command"
+                .to_string(),
+        ),
+        None => missing.push(
+            "github-release must contain an executable `gh release create` command".to_string(),
+        ),
+    }
+    if let (Some(view_pos), Some(create_pos)) = (
+        github_release_case.find(release_view),
+        github_release_case.find(release_create),
+    ) {
+        if view_pos >= create_pos {
+            missing.push(
+                "github-release must check for an existing release before release creation"
+                    .to_string(),
+            );
+        }
+    }
+    for banned in [
+        "gh release upload",
+        "--clobber",
+        "gh release delete",
+        "gh release delete-asset",
+        "uploads/releases/assets",
+    ] {
+        if non_comment_line_contains(release_text, banned) {
+            missing.push(format!(
+                "github-release must never replace existing release assets: banned `{banned}`"
+            ));
+        }
+    }
+
     if missing.is_empty() {
         Ok(())
     } else {
@@ -875,7 +982,8 @@ fn validate_release_posture(release_text: &str, entitlements_text: &str) -> Resu
              \n\
              Official Developer ID releases must sign with the checked \
              app-sandbox-only entitlement file, reject alternate SIGN_ENTITLEMENTS \
-             paths, and verify the signed entitlement payload remains minimal. \
+             paths, verify the signed entitlement payload remains minimal, and \
+             never replace assets on an existing GitHub Release. \
              Restore these controls or update this check in the same PR with an \
              equivalent fail-closed proof.",
             missing.join("\n  ")
@@ -902,13 +1010,13 @@ fn check_release_posture() -> Result<(), String> {
     validate_release_posture(&release_text, &entitlements_text).map_err(|e| {
         format!(
             "check-release-posture: FAIL — {} no longer mechanically preserves \
-             official App Sandbox minimality:\n{e}",
+             official release posture:\n{e}",
             release_path.display()
         )
     })?;
 
     println!(
-        "check-release-posture: official signing path rejects alternate entitlements and verifies minimal signed payloads."
+        "check-release-posture: official signing path rejects alternate entitlements, verifies minimal signed payloads, and refuses to replace existing release assets."
     );
     Ok(())
 }
@@ -2675,6 +2783,60 @@ fn non_comment_line_contains(text: &str, snippet: &str) -> bool {
         .any(|line| line.contains(snippet))
 }
 
+fn non_comment_line_starts_with(text: &str, snippet: &str) -> bool {
+    text.lines()
+        .map(str::trim_start)
+        .filter(|line| !line.starts_with('#'))
+        .any(|line| line.starts_with(snippet))
+}
+
+fn require_non_comment_lines_in_order(
+    text: &str,
+    snippets: &[&str],
+    label: &str,
+) -> Result<(), String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut cursor = 0usize;
+    for snippet in snippets {
+        let Some(match_idx) = lines
+            .iter()
+            .enumerate()
+            .skip(cursor)
+            .find_map(|(idx, line)| {
+                let trimmed = line.trim_start();
+                if !trimmed.starts_with('#') && trimmed.starts_with(snippet) {
+                    Some(idx)
+                } else {
+                    None
+                }
+            })
+        else {
+            return Err(format!(
+                "{label} must contain executable line `{snippet}` in order"
+            ));
+        };
+        cursor = match_idx + 1;
+    }
+    Ok(())
+}
+
+fn reject_release_mutation_primitives(text: &str, label: &str) -> Result<(), String> {
+    for banned in [
+        "gh release upload",
+        "--clobber",
+        "gh release delete",
+        "gh release delete-asset",
+        "uploads/releases/assets",
+    ] {
+        if non_comment_line_contains(text, banned) {
+            return Err(format!(
+                "{label} must not mutate or delete existing release assets: banned `{banned}`"
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn continued_shell_command_starting_with(text: &str, command_start: &str) -> Option<String> {
     let lines: Vec<&str> = text.lines().collect();
     for (idx, line) in lines.iter().enumerate() {
@@ -2704,27 +2866,44 @@ fn continued_shell_command_starting_with(text: &str, command_start: &str) -> Opt
     None
 }
 
-/// Validate the official release job's signing boundary. Apple Developer ID and
-/// notary material may exist only during the native signing/notarization window;
-/// no action may run after signed assets are captured and before publication,
-/// and the signed release assets must be checked against a captured manifest
-/// before publication. This is deliberately textual because the invariant is
-/// about the order of named workflow steps, not about YAML syntax (actionlint
-/// covers that).
+/// Validate the official release workflow's signing and publication boundary.
+/// Apple Developer ID and notary material may exist only during native signing;
+/// signed assets are verified, encrypted before any workflow artifact handoff,
+/// attested, paired with an SBOM, then published by a run-only create job. The
+/// workflow must not mutate or delete assets on an existing release: the
+/// complete draft is created once after all required metadata is ready. This is
+/// deliberately textual because the invariant is about ordered named workflow
+/// steps and shell command shape, not YAML syntax (actionlint covers that).
 fn validate_release_workflow_credential_boundary(text: &str) -> Result<(), String> {
+    reject_release_mutation_primitives(text, "official release workflow")?;
+    for removed_job in [
+        "attach-sbom-official",
+        "retract-incomplete-official-release",
+    ] {
+        if non_comment_line_contains(text, removed_job) {
+            return Err(format!(
+                "official release workflow must not use the removed post-create mutation job `{removed_job}`"
+            ));
+        }
+    }
+
     let steps = [
         "Import Developer ID certificate",
         "Store notary credentials",
         "Sign and notarize (make dist)",
         "Capture signed asset manifest",
         "Clean temporary signing material",
-        "Verify signed assets before publication",
-        "Publish GitHub Release",
+        "Verify signed assets before encrypted handoff",
+        "Encrypt signed release handoff",
+        "Upload encrypted signed release handoff",
         "Materialize signed subject checksums",
         "Attest build provenance",
         "Generate SBOM (SPDX JSON)",
-        "Attach SBOM to the GitHub Release",
-        "Delete incomplete draft GitHub Release",
+        "Upload SBOM workflow artifact",
+        "Download encrypted signed release handoff",
+        "Download release SBOM",
+        "Verify signed assets before release creation",
+        "Publish GitHub Release",
     ];
     let positions = require_ordered_release_workflow_steps(text, &steps)?;
 
@@ -2733,38 +2912,38 @@ fn validate_release_workflow_credential_boundary(text: &str) -> Result<(), Strin
     let credential_window = &text[import_pos..cleanup_pos];
     reject_action_steps_in_window(credential_window, "while Apple signing material is present")?;
 
-    let signed_asset_to_publish_window = &text[positions[3]..positions[6]];
+    let signed_asset_to_handoff_window = &text[positions[3]..positions[6]];
     reject_action_steps_in_window(
-        signed_asset_to_publish_window,
-        "after signed assets are captured and before publication",
+        signed_asset_to_handoff_window,
+        "after signed assets are captured and before encrypted handoff",
     )?;
 
-    let publish_job = workflow_job_slice(text, "publish-official", Some("attest-official"))?;
+    let sign_job = workflow_job_slice(text, "sign-official", Some("attest-official"))?;
     for required in [
+        "contents: read",
         "release_subject_checksums_b64: ${{ steps.signed_manifest.outputs.checksums_b64 }}",
-        "GH_REPO: ${{ github.repository }}",
+        "signed_manifest_sha256: ${{ steps.signed_manifest.outputs.sha256 }}",
+        "signed_asset_handoff_artifact_id: ${{ steps.upload_signed_handoff.outputs.artifact-id }}",
+        "signed_asset_handoff_key_hex: ${{ steps.signed_handoff.outputs.key_hex }}",
+        "signed_asset_handoff_iv_hex: ${{ steps.signed_handoff.outputs.iv_hex }}",
+        "signed_asset_handoff_sha256: ${{ steps.signed_handoff.outputs.sha256 }}",
     ] {
-        if !non_comment_line_contains(publish_job, required) {
+        if !non_comment_line_contains(sign_job, required) {
             return Err(format!(
-                "publish-official job must contain `{required}` so release publication and metadata handoff are explicit"
+                "sign-official job must contain `{required}` so signing outputs are explicit and non-publishing"
             ));
         }
     }
-    let publish_step_start = publish_job
-        .find("      - name: Publish GitHub Release\n")
-        .ok_or_else(|| "missing Publish GitHub Release step in publish-official job".to_string())?;
-    reject_action_steps_in_window(
-        &publish_job[publish_step_start..],
-        "after publication in the release-write job",
-    )?;
+    if non_comment_line_contains(sign_job, "contents: write") {
+        return Err("sign-official job must not grant release-asset write permission".to_string());
+    }
 
     let attest_job = workflow_job_slice(text, "attest-official", Some("sbom-official"))?;
     for required in [
         "contents: read",
         "id-token: write",
         "attestations: write",
-        "artifact-metadata: write",
-        "RELEASE_SUBJECT_CHECKSUMS_B64: ${{ needs['publish-official'].outputs.release_subject_checksums_b64 }}",
+        "RELEASE_SUBJECT_CHECKSUMS_B64: ${{ needs['sign-official'].outputs.release_subject_checksums_b64 }}",
         "base64 -d > dist/release/signed-release-assets.sha256",
         "subject-checksums: dist/release/signed-release-assets.sha256",
     ] {
@@ -2779,6 +2958,12 @@ fn validate_release_workflow_credential_boundary(text: &str) -> Result<(), Strin
             "attest-official job must not grant release-asset write permission".to_string(),
         );
     }
+    if non_comment_line_contains(attest_job, "artifact-metadata: write") {
+        return Err(
+            "attest-official job must not grant artifact metadata write permission unless it publishes registry storage records"
+                .to_string(),
+        );
+    }
     if non_comment_line_contains(attest_job, "gh release download") {
         return Err(
             "attest-official job must not download draft release assets; attest the signed checksum subjects instead"
@@ -2786,10 +2971,12 @@ fn validate_release_workflow_credential_boundary(text: &str) -> Result<(), Strin
         );
     }
 
-    let sbom_job = workflow_job_slice(text, "sbom-official", Some("attach-sbom-official"))?;
+    let sbom_job = workflow_job_slice(text, "sbom-official", Some("publish-official"))?;
     for required in [
         "contents: read",
+        "release_sbom_artifact_id: ${{ steps.upload_sbom.outputs.artifact-id }}",
         "upload-release-assets: false",
+        "id: upload_sbom",
         "Upload SBOM workflow artifact",
     ] {
         if !non_comment_line_contains(sbom_job, required) {
@@ -2802,60 +2989,40 @@ fn validate_release_workflow_credential_boundary(text: &str) -> Result<(), Strin
         return Err("sbom-official job must not grant release-asset write permission".to_string());
     }
 
-    let attach_sbom_job = workflow_job_slice(
-        text,
-        "attach-sbom-official",
-        Some("retract-incomplete-official-release"),
-    )?;
+    let publish_job = workflow_job_slice(text, "publish-official", None)?;
     for required in [
         "contents: write",
         "actions: read",
+        "sign-official",
         "attest-official",
+        "sbom-official",
+        "RELEASE_VERSION: ${{ needs['sign-official'].outputs.release_version }}",
+        "RELEASE_SUBJECT_CHECKSUMS_B64: ${{ needs['sign-official'].outputs.release_subject_checksums_b64 }}",
+        "SIGNED_MANIFEST_SHA256: ${{ needs['sign-official'].outputs.signed_manifest_sha256 }}",
+        "SIGNED_ASSET_HANDOFF_ARTIFACT_ID: ${{ needs['sign-official'].outputs.signed_asset_handoff_artifact_id }}",
+        "SIGNED_ASSET_HANDOFF_KEY_HEX: ${{ needs['sign-official'].outputs.signed_asset_handoff_key_hex }}",
+        "SIGNED_ASSET_HANDOFF_IV_HEX: ${{ needs['sign-official'].outputs.signed_asset_handoff_iv_hex }}",
+        "SIGNED_ASSET_HANDOFF_SHA256: ${{ needs['sign-official'].outputs.signed_asset_handoff_sha256 }}",
+        "RELEASE_SBOM_ARTIFACT_ID: ${{ needs['sbom-official'].outputs.release_sbom_artifact_id }}",
         "GH_REPO: ${{ github.repository }}",
-        "gh api \"repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts\"",
-        r#"gh release upload "v${RELEASE_VERSION}""#,
-        r#""sbom/xPare-v${RELEASE_VERSION}-sbom.spdx.json" --clobber"#,
+        r#"dist/release/xPare-v${RELEASE_VERSION}-sbom.spdx.json"#,
     ] {
-        if !non_comment_line_contains(attach_sbom_job, required) {
+        if !non_comment_line_contains(publish_job, required) {
             return Err(format!(
-                "attach-sbom-official job must contain `{required}` so only the SBOM artifact is attached with release write permission"
+                "publish-official job must contain `{required}` so the complete draft is created with explicit inputs"
             ));
         }
     }
     reject_action_steps_in_window(
-        attach_sbom_job,
-        "inside the release-write SBOM attachment job",
+        publish_job,
+        "inside the release-create job with release write permission",
     )?;
-
-    let cleanup_job = workflow_job_slice(text, "retract-incomplete-official-release", None)?;
-    for required in [
-        "contents: write",
-        "always()",
-        "needs['publish-official'].result == 'success'",
-        "needs['attest-official'].result != 'success'",
-        "needs['sbom-official'].result != 'success'",
-        "needs['attach-sbom-official'].result != 'success'",
-        "GH_REPO: ${{ github.repository }}",
-        r#"gh release view "v${RELEASE_VERSION}" --json isDraft --jq '.isDraft'"#,
-        "refusing to delete it after metadata failure",
-        r#"gh release delete "v${RELEASE_VERSION}" --yes"#,
-    ] {
-        if !non_comment_line_contains(cleanup_job, required) {
-            return Err(format!(
-                "retract-incomplete-official-release job must contain `{required}` so required metadata failures do not leave a publishable incomplete draft"
-            ));
-        }
-    }
-    if non_comment_line_contains(cleanup_job, "--cleanup-tag") {
+    if non_comment_line_contains(publish_job, "gh run download") {
         return Err(
-            "retract-incomplete-official-release job must delete only the incomplete draft release, not the tag"
+            "publish-official job must download artifacts by artifact-id, not `gh run download`"
                 .to_string(),
         );
     }
-    reject_action_steps_in_window(
-        cleanup_job,
-        "inside the incomplete-draft release cleanup job",
-    )?;
 
     let store_notary_credentials = &text[positions[1]..positions[2]];
     let store_command = continued_shell_command_starting_with(
@@ -2891,7 +3058,7 @@ fn validate_release_workflow_credential_boundary(text: &str) -> Result<(), Strin
     ] {
         if !non_comment_line_contains(cleanup_to_verify, required) {
             return Err(format!(
-                "cleanup step must contain `{required}` before signed assets are published"
+                "cleanup step must contain `{required}` before signed assets leave the signing job"
             ));
         }
     }
@@ -2921,7 +3088,72 @@ fn validate_release_workflow_credential_boundary(text: &str) -> Result<(), Strin
         }
     }
 
-    let attest_step = &text[positions[8]..positions[9]];
+    let verify_before_encrypted_handoff = &text[positions[5]..positions[6]];
+    for required in [
+        "SIGNED_MANIFEST_SHA256: ${{ steps.signed_manifest.outputs.sha256 }}",
+        r#"expected_manifest_sha="${SIGNED_MANIFEST_SHA256}""#,
+        "shasum -a 256 --check --strict -",
+        "shasum -a 256 -- *.zip *.zip.sha256 SHA256SUMS*",
+        r#"diff -u "${SIGNED_RELEASE_MANIFEST}""#,
+    ] {
+        if !non_comment_line_contains(verify_before_encrypted_handoff, required) {
+            return Err(format!(
+                "signed asset verification before encrypted handoff must contain `{required}`"
+            ));
+        }
+    }
+
+    let encrypt_signed_handoff = &text[positions[6]..positions[7]];
+    for required in [
+        "id: signed_handoff",
+        r#"handoff_dir="${RUNNER_TEMP}/signed-release-handoff""#,
+        r#"key_hex="$(openssl rand -hex 32)""#,
+        r#"iv_hex="$(openssl rand -hex 16)""#,
+        r#"( cd dist/release && tar -cf "${tarball}" -- *.zip *.zip.sha256 SHA256SUMS )"#,
+        r#"openssl enc -aes-256-cbc -K "${key_hex}" -iv "${iv_hex}""#,
+        r#"echo "SIGNED_ASSET_HANDOFF_DIR=${handoff_dir}""#,
+        r#"} >> "${GITHUB_ENV}""#,
+        r#"echo "key_hex=${key_hex}""#,
+        r#"echo "iv_hex=${iv_hex}""#,
+        r#"echo "sha256=${encrypted_sha}""#,
+        r#"} >> "${GITHUB_OUTPUT}""#,
+    ] {
+        if !non_comment_line_contains(encrypt_signed_handoff, required) {
+            return Err(format!(
+                "signed release handoff encryption must contain `{required}`"
+            ));
+        }
+    }
+
+    let upload_signed_handoff = &text[positions[7]..positions[8]];
+    for required in [
+        "id: upload_signed_handoff",
+        "uses: actions/upload-artifact@",
+        "name: encrypted-signed-release-handoff-${{ env.RELEASE_VERSION }}",
+        "path: ${{ env.SIGNED_ASSET_HANDOFF_DIR }}/signed-release-assets.tar.enc",
+        "if-no-files-found: error",
+        "retention-days: 1",
+        "compression-level: 0",
+    ] {
+        if !non_comment_line_contains(upload_signed_handoff, required) {
+            return Err(format!(
+                "encrypted signed release handoff upload must contain `{required}`"
+            ));
+        }
+    }
+    for forbidden in [
+        "dist/release/*.zip",
+        "dist/release/*.zip.sha256",
+        "dist/release/SHA256SUMS",
+    ] {
+        if non_comment_line_contains(upload_signed_handoff, forbidden) {
+            return Err(format!(
+                "encrypted signed release handoff upload must not expose raw signed asset path `{forbidden}`"
+            ));
+        }
+    }
+
+    let attest_step = &text[positions[9]..positions[10]];
     for required in ["subject-checksums: dist/release/signed-release-assets.sha256"] {
         if !non_comment_line_contains(attest_step, required) {
             return Err(format!(
@@ -2930,17 +3162,94 @@ fn validate_release_workflow_credential_boundary(text: &str) -> Result<(), Strin
         }
     }
 
-    let verify_before_publish = &text[positions[5]..positions[6]];
+    let download_signed_assets = &text[positions[12]..positions[13]];
     for required in [
-        "SIGNED_MANIFEST_SHA256: ${{ steps.signed_manifest.outputs.sha256 }}",
-        r#"expected_manifest_sha="${SIGNED_MANIFEST_SHA256}""#,
-        "shasum -a 256 --check --strict -",
-        "shasum -a 256 -- *.zip *.zip.sha256 SHA256SUMS*",
-        r#"diff -u "${SIGNED_RELEASE_MANIFEST}""#,
+        "GH_REPO: ${{ github.repository }}",
+        r#"artifact_zip="${RUNNER_TEMP}/signed-release-handoff.zip""#,
+        r#"handoff_dir="${RUNNER_TEMP}/signed-release-handoff""#,
+        r#""/repos/${GH_REPO}/actions/artifacts/${SIGNED_ASSET_HANDOFF_ARTIFACT_ID}/zip" > "${artifact_zip}""#,
+        r#"unzip -q "${artifact_zip}" -d "${handoff_dir}""#,
+        r#"encrypted="${handoff_dir}/signed-release-assets.tar.enc""#,
+        r#"tarball="${handoff_dir}/signed-release-assets.tar""#,
+        r#"test -s "${encrypted}""#,
+        r#"printf '%s  %s\n' "${SIGNED_ASSET_HANDOFF_SHA256}" "${encrypted}" | shasum -a 256 --check --strict -"#,
+        r#"openssl enc -d -aes-256-cbc -K "${SIGNED_ASSET_HANDOFF_KEY_HEX}" -iv "${SIGNED_ASSET_HANDOFF_IV_HEX}""#,
+        r#"tar -C dist/release -xf "${tarball}""#,
     ] {
-        if !non_comment_line_contains(verify_before_publish, required) {
+        if !non_comment_line_contains(download_signed_assets, required) {
             return Err(format!(
-                "signed asset verification before publication must contain `{required}`"
+                "publish-official encrypted signed handoff download must contain `{required}`"
+            ));
+        }
+    }
+
+    let download_release_sbom = &text[positions[13]..positions[14]];
+    for required in [
+        "GH_REPO: ${{ github.repository }}",
+        r#"artifact_zip="${RUNNER_TEMP}/release-sbom.zip""#,
+        r#"sbom_dir="${RUNNER_TEMP}/release-sbom""#,
+        r#"rm -rf "${sbom_dir}""#,
+        r#""/repos/${GH_REPO}/actions/artifacts/${RELEASE_SBOM_ARTIFACT_ID}/zip" > "${artifact_zip}""#,
+        r#"unzip -q "${artifact_zip}" -d "${sbom_dir}""#,
+        r#"sbom="${sbom_dir}/xPare-v${RELEASE_VERSION}-sbom.spdx.json""#,
+        r#"test -s "${sbom}""#,
+        r#"cp "${sbom}" "dist/release/xPare-v${RELEASE_VERSION}-sbom.spdx.json""#,
+    ] {
+        if !non_comment_line_contains(download_release_sbom, required) {
+            return Err(format!(
+                "publish-official SBOM download must contain `{required}`"
+            ));
+        }
+    }
+
+    let verify_before_release_creation = &text[positions[14]..positions[15]];
+    for required in [
+        r#"printf '%s' "${RELEASE_SUBJECT_CHECKSUMS_B64}" | base64 -d > "${expected_manifest}""#,
+        r#"printf '%s  %s\n' "${SIGNED_MANIFEST_SHA256}" "${expected_manifest}" | shasum -a 256 --check --strict -"#,
+        "shasum -a 256 -- *.zip *.zip.sha256 SHA256SUMS*",
+        r#"diff -u "${expected_manifest}" "${current_manifest}""#,
+    ] {
+        if !non_comment_line_contains(verify_before_release_creation, required) {
+            return Err(format!(
+                "signed asset verification before release creation must contain `{required}`"
+            ));
+        }
+    }
+
+    let publish_step = &text[positions[15]..];
+    require_non_comment_lines_in_order(
+        publish_step,
+        &[
+            r#"if gh release view "v${RELEASE_VERSION}" >/dev/null 2>&1; then"#,
+            r#"echo "Release v${RELEASE_VERSION} already exists; refusing to replace release assets.""#,
+            "exit 1",
+            "fi",
+            "create_flags=(--draft)",
+            r#"gh release create "v${RELEASE_VERSION}""#,
+        ],
+        "Publish GitHub Release step",
+    )?;
+    if !non_comment_line_starts_with(publish_step, r#"gh release create "v${RELEASE_VERSION}""#) {
+        return Err(
+            "Publish GitHub Release step must execute `gh release create` directly".to_string(),
+        );
+    }
+    let create_command = continued_shell_command_starting_with(
+        publish_step,
+        r#"gh release create "v${RELEASE_VERSION}""#,
+    )
+    .ok_or_else(|| "Publish GitHub Release step must create the release".to_string())?;
+    for required in [
+        r#""${zips[0]}""#,
+        r#""${zips[0]}.sha256""#,
+        r#""dist/release/SHA256SUMS""#,
+        r#""dist/release/xPare-v${RELEASE_VERSION}-sbom.spdx.json""#,
+        "--verify-tag",
+        r#""${create_flags[@]}""#,
+    ] {
+        if !create_command.contains(required) {
+            return Err(format!(
+                "Publish GitHub Release command must include `{required}`"
             ));
         }
     }
@@ -4756,17 +5065,17 @@ mod tests {
     }
 
     #[test]
-    fn release_workflow_rejects_quoted_uses_keys_before_publication() {
+    fn release_workflow_rejects_quoted_uses_keys_before_encrypted_handoff() {
         let root = workspace_root();
         let release_workflow =
             std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
         let weakened = release_workflow.replace(
-            "      - name: Verify signed assets before publication\n",
-            "      - 'uses' : example/malicious@0000000000000000000000000000000000000000\n\n      - name: Verify signed assets before publication\n",
+            "      - name: Verify signed assets before encrypted handoff\n",
+            "      - 'uses' : example/malicious@0000000000000000000000000000000000000000\n\n      - name: Verify signed assets before encrypted handoff\n",
         );
         let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
         assert!(
-            err.contains("after signed assets are captured and before publication"),
+            err.contains("after signed assets are captured and before encrypted handoff"),
             "got: {err}"
         );
     }
@@ -4851,34 +5160,34 @@ mod tests {
     }
 
     #[test]
-    fn release_workflow_rejects_post_signing_action_before_publication() {
+    fn release_workflow_rejects_post_signing_action_before_encrypted_handoff() {
         let root = workspace_root();
         let release_workflow =
             std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
         let weakened = release_workflow.replace(
-            "      - name: Verify signed assets before publication\n",
-            "      - name: Compromised post-signing action\n        uses: example/malicious@0000000000000000000000000000000000000000\n\n      - name: Verify signed assets before publication\n",
+            "      - name: Verify signed assets before encrypted handoff\n",
+            "      - name: Compromised post-signing action\n        uses: example/malicious@0000000000000000000000000000000000000000\n\n      - name: Verify signed assets before encrypted handoff\n",
         );
         let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
         assert!(
-            err.contains("before publication"),
-            "expected pre-publication action rejection, got: {err}"
+            err.contains("before encrypted handoff"),
+            "expected pre-encrypted-handoff action rejection, got: {err}"
         );
     }
 
     #[test]
-    fn release_workflow_rejects_post_publish_action_in_release_write_job() {
+    fn release_workflow_rejects_action_in_release_create_job() {
         let root = workspace_root();
         let release_workflow =
             std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
         let weakened = release_workflow.replace(
-            "        run: make github-release VERSION=\"${RELEASE_VERSION}\"\n",
-            "        run: make github-release VERSION=\"${RELEASE_VERSION}\"\n\n      - name: Compromised post-publish action\n        uses: example/malicious@0000000000000000000000000000000000000000\n",
+            "      - name: Publish GitHub Release\n",
+            "      - name: Compromised publish action\n        uses: example/malicious@0000000000000000000000000000000000000000\n\n      - name: Publish GitHub Release\n",
         );
         let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
         assert!(
-            err.contains("after publication in the release-write job"),
-            "expected post-publication action rejection, got: {err}"
+            err.contains("inside the release-create job"),
+            "expected release-create action rejection, got: {err}"
         );
     }
 
@@ -4895,6 +5204,22 @@ mod tests {
         assert!(
             err.contains("attest-official job must contain `contents: read`"),
             "expected attestation token-scope failure, got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_workflow_rejects_artifact_metadata_write_on_attestation_job() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened = release_workflow.replace(
+            "      attestations: write\n",
+            "      attestations: write\n      artifact-metadata: write\n",
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(
+            err.contains("artifact metadata write"),
+            "expected attestation artifact metadata permission failure, got: {err}"
         );
     }
 
@@ -4947,14 +5272,12 @@ mod tests {
     }
 
     #[test]
-    fn release_workflow_rejects_missing_repo_context_for_release_uploads() {
+    fn release_workflow_rejects_missing_repo_context_for_release_downloads() {
         let root = workspace_root();
         let release_workflow =
             std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
-        let weakened = release_workflow.replace(
-            "          GH_TOKEN: ${{ github.token }}\n          GH_REPO: ${{ github.repository }}\n        run: |\n          set -euo pipefail\n          artifact_name=\"release-sbom-${RELEASE_VERSION}\"\n",
-            "          GH_TOKEN: ${{ github.token }}\n        run: |\n          set -euo pipefail\n          artifact_name=\"release-sbom-${RELEASE_VERSION}\"\n",
-        );
+        let weakened =
+            release_workflow.replacen("          GH_REPO: ${{ github.repository }}\n", "", 1);
         let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
         assert!(
             err.contains("GH_REPO: ${{ github.repository }}"),
@@ -4963,66 +5286,98 @@ mod tests {
     }
 
     #[test]
-    fn release_workflow_rejects_sbom_attachment_without_attestation_need() {
+    fn release_workflow_rejects_raw_signed_asset_artifact_upload() {
         let root = workspace_root();
         let release_workflow =
             std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
         let weakened = release_workflow.replace(
-            "      - publish-official\n      - attest-official\n      - sbom-official\n",
-            "      - publish-official\n      - sbom-official\n",
+            "          path: ${{ env.SIGNED_ASSET_HANDOFF_DIR }}/signed-release-assets.tar.enc\n",
+            "          path: |\n            dist/release/*.zip\n            dist/release/*.zip.sha256\n            dist/release/SHA256SUMS\n",
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(
+            err.contains("raw signed asset path") || err.contains("signed-release-assets.tar.enc"),
+            "expected raw signed asset artifact rejection, got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_workflow_rejects_current_run_name_download_in_publish_job() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened = release_workflow.replace(
+            r#"          gh api -H "Accept: application/vnd.github+json" "/repos/${GH_REPO}/actions/artifacts/${SIGNED_ASSET_HANDOFF_ARTIFACT_ID}/zip" > "${artifact_zip}""#,
+            r#"          gh run download "${GITHUB_RUN_ID}" --name "encrypted-signed-release-handoff-${RELEASE_VERSION}" --dir "${handoff_dir}""#,
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(
+            err.contains("artifact-id") || err.contains("gh run download"),
+            "expected current-run name-download rejection, got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_workflow_rejects_publish_without_attestation_need() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened = release_workflow.replace(
+            "      - sign-official\n      - attest-official\n      - sbom-official\n",
+            "      - sign-official\n      - sbom-official\n",
         );
         let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
         assert!(
             err.contains("attest-official"),
-            "expected SBOM attachment attestation dependency failure, got: {err}"
+            "expected publish attestation dependency failure, got: {err}"
         );
     }
 
     #[test]
-    fn release_workflow_rejects_action_in_sbom_attachment_write_job() {
+    fn release_workflow_rejects_release_upload_mutation_primitive() {
         let root = workspace_root();
         let release_workflow =
             std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
         let weakened = release_workflow.replace(
-            "      - name: Attach SBOM to the GitHub Release\n",
-            "      - uses: example/malicious@0000000000000000000000000000000000000000\n\n      - name: Attach SBOM to the GitHub Release\n",
+            "          gh release create \"v${RELEASE_VERSION}\" \\\n",
+            "          gh release upload \"v${RELEASE_VERSION}\" \"dist/release/xPare-v${RELEASE_VERSION}-sbom.spdx.json\" --clobber\n          gh release create \"v${RELEASE_VERSION}\" \\\n",
         );
         let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
         assert!(
-            err.contains("inside the release-write SBOM attachment job"),
-            "expected SBOM attachment action rejection, got: {err}"
+            err.contains("gh release upload") || err.contains("--clobber"),
+            "expected release mutation primitive rejection, got: {err}"
         );
     }
 
     #[test]
-    fn release_workflow_rejects_missing_incomplete_draft_cleanup() {
+    fn release_workflow_rejects_release_delete_mutation_primitive() {
         let root = workspace_root();
         let release_workflow =
             std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
         let weakened = release_workflow.replace(
-            "          gh release delete \"v${RELEASE_VERSION}\" --yes\n",
-            "          echo \"incomplete draft left for manual cleanup\"\n",
+            "          gh release create \"v${RELEASE_VERSION}\" \\\n",
+            "          gh release delete \"v${RELEASE_VERSION}\" --yes\n          gh release create \"v${RELEASE_VERSION}\" \\\n",
         );
         let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
         assert!(
-            err.contains("required metadata failures do not leave a publishable incomplete draft"),
-            "expected incomplete-draft cleanup failure, got: {err}"
+            err.contains("gh release delete"),
+            "expected release delete primitive rejection, got: {err}"
         );
     }
 
     #[test]
-    fn release_workflow_rejects_incomplete_draft_cleanup_that_deletes_tag() {
+    fn release_workflow_rejects_existing_release_guard_left_only_in_echo() {
         let root = workspace_root();
         let release_workflow =
             std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
         let weakened = release_workflow.replace(
-            "          gh release delete \"v${RELEASE_VERSION}\" --yes\n",
-            "          gh release delete \"v${RELEASE_VERSION}\" --yes --cleanup-tag\n",
+            "          if gh release view \"v${RELEASE_VERSION}\" >/dev/null 2>&1; then\n",
+            "          echo \"if gh release view v${RELEASE_VERSION} then\"\n",
         );
         let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
         assert!(
-            err.contains("not the tag"),
-            "expected tag-preservation cleanup failure, got: {err}"
+            err.contains("Publish GitHub Release step"),
+            "expected executable release-view guard failure, got: {err}"
         );
     }
 
@@ -5085,18 +5440,57 @@ mod tests {
     }
 
     #[test]
-    fn release_workflow_rejects_missing_pre_publish_manifest_check() {
+    fn release_workflow_rejects_missing_pre_handoff_manifest_check() {
         let root = workspace_root();
         let release_workflow =
             std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
         let weakened = release_workflow.replace(
-            "      - name: Verify signed assets before publication\n",
+            "      - name: Verify signed assets before encrypted handoff\n",
             "      - name: Publish without manifest verification\n",
         );
         let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
         assert!(
-            err.contains("Verify signed assets before publication"),
+            err.contains("Verify signed assets before encrypted handoff"),
             "got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_workflow_rejects_manifest_check_before_sbom_download() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let verify_step_start = release_workflow
+            .find("      - name: Verify signed assets before release creation\n")
+            .unwrap();
+        let publish_step_start = release_workflow
+            .find("      - name: Publish GitHub Release\n")
+            .unwrap();
+        let verify_step = &release_workflow[verify_step_start..publish_step_start];
+        let shortened = release_workflow.replace(verify_step, "").replace(
+            "      - name: Download release SBOM\n",
+            &format!("{verify_step}      - name: Download release SBOM\n"),
+        );
+        let err = validate_release_workflow_credential_boundary(&shortened).unwrap_err();
+        assert!(
+            err.contains("Download release SBOM"),
+            "expected SBOM-before-final-verification ordering failure, got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_workflow_rejects_publish_without_sbom_asset() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened = release_workflow.replace(
+            "            \"dist/release/xPare-v${RELEASE_VERSION}-sbom.spdx.json\" \\\n",
+            "",
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(
+            err.contains("xPare-v${RELEASE_VERSION}-sbom.spdx.json"),
+            "expected publish SBOM asset failure, got: {err}"
         );
     }
 
@@ -5110,6 +5504,126 @@ mod tests {
         );
         let err = validate_release_posture(&weakened, GOOD_MINIMAL).unwrap_err();
         assert!(err.contains("explicit keychain"), "got: {err}");
+    }
+
+    #[test]
+    fn release_posture_rejects_existing_release_upload_path() {
+        let root = workspace_root();
+        let release = std::fs::read_to_string(root.join("shells/macos/release.sh")).unwrap();
+        let weakened = release.replace(
+            r#"            die "release v${version} already exists; refusing to replace release assets. Delete the draft release before rerunning, or create a new tag for a corrected public release.""#,
+            r#"            gh release upload "v${version}" "${zip}" "${zip}.sha256" "${sums}" --clobber"#,
+        );
+        let err = validate_release_posture(&weakened, GOOD_MINIMAL).unwrap_err();
+        assert!(
+            err.contains("gh release upload") || err.contains("--clobber"),
+            "expected existing-release upload failure, got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_posture_rejects_release_upload_helper_outside_github_release_case() {
+        let root = workspace_root();
+        let release = std::fs::read_to_string(root.join("shells/macos/release.sh")).unwrap();
+        let weakened = release.replace(
+            "verify_zip_stapled() {\n",
+            "replace_release_assets() {\n    gh release upload \"v${version}\" \"${zip}\" \"${zip}.sha256\" \"${sums}\" --clobber\n}\n\nverify_zip_stapled() {\n",
+        );
+        let err = validate_release_posture(&weakened, GOOD_MINIMAL).unwrap_err();
+        assert!(
+            err.contains("gh release upload") || err.contains("--clobber"),
+            "expected global release upload primitive ban, got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_posture_allows_clobber_only_in_comments() {
+        let root = workspace_root();
+        let release = std::fs::read_to_string(root.join("shells/macos/release.sh")).unwrap();
+        let commented = release.replace(
+            "        # set and the attested subject set stay in sync).\n",
+            "        # set and the attested subject set stay in sync).\n        # Historical note: never use gh release upload --clobber here.\n",
+        );
+        validate_release_posture(&commented, GOOD_MINIMAL).unwrap();
+    }
+
+    #[test]
+    fn release_posture_rejects_commented_existing_release_guard() {
+        let root = workspace_root();
+        let release = std::fs::read_to_string(root.join("shells/macos/release.sh")).unwrap();
+        let weakened = release.replace(
+            r#"        if gh release view "v${version}" >/dev/null 2>&1; then"#,
+            r#"        # if gh release view "v${version}" >/dev/null 2>&1; then"#,
+        );
+        let err = validate_release_posture(&weakened, GOOD_MINIMAL).unwrap_err();
+        assert!(
+            err.contains("existing release"),
+            "expected missing executable release-view guard failure, got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_posture_rejects_existing_release_guard_left_only_in_echo() {
+        let root = workspace_root();
+        let release = std::fs::read_to_string(root.join("shells/macos/release.sh")).unwrap();
+        let weakened = release.replace(
+            r#"        if gh release view "v${version}" >/dev/null 2>&1; then"#,
+            r#"        echo "if gh release view v${version} then""#,
+        );
+        let err = validate_release_posture(&weakened, GOOD_MINIMAL).unwrap_err();
+        assert!(
+            err.contains("not echo or comment"),
+            "expected echoed release-view guard failure, got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_posture_rejects_existing_release_refusal_left_only_in_echo() {
+        let root = workspace_root();
+        let release = std::fs::read_to_string(root.join("shells/macos/release.sh")).unwrap();
+        let weakened = release.replace(
+            r#"            die "release v${version} already exists; refusing to replace release assets. Delete the draft release before rerunning, or create a new tag for a corrected public release.""#,
+            r#"            echo "release v${version} already exists; refusing to replace release assets""#,
+        );
+        let err = validate_release_posture(&weakened, GOOD_MINIMAL).unwrap_err();
+        assert!(
+            err.contains("github-release existing-release guard"),
+            "expected executable release refusal failure, got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_posture_rejects_existing_release_guard_after_create() {
+        let root = workspace_root();
+        let release = std::fs::read_to_string(root.join("shells/macos/release.sh")).unwrap();
+        let weakened = release
+            .replacen(
+                r#"        if gh release view "v${version}" >/dev/null 2>&1; then"#,
+                "        if false; then",
+                1,
+            )
+            .replace(
+                r#"            gh release create "v${version}" "${zip}" "${zip}.sha256" "${sums}" "${sbom}" \"#,
+                r#"            gh release create "v${version}" "${zip}" "${zip}.sha256" "${sums}" "${sbom}" \
+            gh release view "v${version}" >/dev/null 2>&1"#,
+            );
+        let err = validate_release_posture(&weakened, GOOD_MINIMAL).unwrap_err();
+        assert!(
+            err.contains("before release creation"),
+            "expected release-view order failure, got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_posture_rejects_missing_sbom_in_create() {
+        let root = workspace_root();
+        let release = std::fs::read_to_string(root.join("shells/macos/release.sh")).unwrap();
+        let weakened = release.replace(
+            r#"            gh release create "v${version}" "${zip}" "${zip}.sha256" "${sums}" "${sbom}" \"#,
+            r#"            gh release create "v${version}" "${zip}" "${zip}.sha256" "${sums}" \"#,
+        );
+        let err = validate_release_posture(&weakened, GOOD_MINIMAL).unwrap_err();
+        assert!(err.contains("SBOM"), "got: {err}");
     }
 
     // --- check-c-ffi-surface ---
