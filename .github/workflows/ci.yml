@@ -203,6 +203,63 @@ jobs:
         run: cargo run -p xtask -- check-swift
 
   # ----------------------------------------------------------------------------
+  # Developer preview artifact: after the required Linux gate is green on protected
+  # main, build the runnable macOS bundle and upload a short-retention, explicitly
+  # unsigned preview. This is for maintainer/dev testing only; tagged releases remain
+  # the user download surface.
+  # ----------------------------------------------------------------------------
+  main-preview:
+    name: main dev preview (unsigned app artifact)
+    runs-on: macos-latest
+    needs: xtask-ci
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Install Rust (pinned stable)
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - name: Cache cargo
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-main-preview-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Compute preview label
+        run: |
+          set -euo pipefail
+          short_sha="${GITHUB_SHA::12}"
+          echo "PREVIEW_VERSION=0.0.0-main.${short_sha}" >> "${GITHUB_ENV}"
+
+      - name: Package unsigned main preview
+        run: make preview VERSION="${PREVIEW_VERSION}"
+
+      - name: Stage unsigned main preview artifact
+        run: |
+          set -euo pipefail
+          mkdir -p dist/main-preview
+          cp dist/release/xPare-v"${PREVIEW_VERSION}"-macos-*-unsigned-preview.zip dist/main-preview/
+          cp dist/release/xPare-v"${PREVIEW_VERSION}"-macos-*-unsigned-preview.zip.sha256 dist/main-preview/
+
+      - name: Upload unsigned main preview artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: xPare-main-${{ github.sha }}-unsigned-preview
+          retention-days: 14
+          path: dist/main-preview/*
+
+  # ----------------------------------------------------------------------------
   # Nightly fuzz smoke: run each cargo-fuzz target for a few seconds to catch
   # regressions in the never-panics invariant. continue-on-error so a nightly
   # toolchain/libFuzzer hiccup never blocks merges; the property/corpus tests in

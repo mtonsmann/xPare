@@ -46,6 +46,32 @@ unsigned/ad-hoc and must not be promoted as end-user downloads.
    requires published notarized releases first; see
    [`deferred-work.md`](deferred-work.md).
 
+## Developer preview artifacts
+
+CI also publishes a short-retention, explicitly unsigned **main dev preview**
+artifact after the required Linux gate succeeds on a push to `main`. This exists
+only so maintainers and technical testers can run the latest protected-main tree
+without compiling it locally. It is an Actions artifact, not a GitHub Release
+asset; it is SHA-labeled, retained briefly, and must not be linked as the normal
+install path.
+
+The main dev preview uses the same `make preview` packaging path as tag
+validation, so it is ad-hoc signed/unsigned-preview material and needs no Apple
+secrets. It is not notarized, not an official binary, and not a substitute for a
+tagged Developer ID release.
+
+To grab the current protected-main preview:
+
+1. Open the repository's **Actions** tab.
+2. Choose the latest successful **CI** run on the `main` branch.
+3. Download the `xPare-main-<commit-sha>-unsigned-preview` artifact.
+4. Unzip it and verify the archive against the included `.sha256` file before
+   launching the contained `xPare.app`.
+
+GitHub may require sign-in to download Actions artifacts. The artifact expires
+after 14 days, and macOS may warn because this preview is ad-hoc signed but not
+notarized.
+
 Signed assets are architecture-labeled:
 
 ```text

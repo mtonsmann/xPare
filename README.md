@@ -189,8 +189,9 @@ launches it — a ✂ icon appears in the menu bar and the default hotkey **⌃�
 > Developer ID. See [the macOS posture](docs/guardrails/macos-posture.md) and
 > [`shells/macos/README.md`](shells/macos/README.md).
 
-Release packaging — an unsigned preview (`make preview`, no Apple account needed) and
-a gated Developer ID sign + notarize flow (`make dist`) — is documented in
+Release packaging — local unsigned previews (`make preview`, no Apple account
+needed), the CI main dev preview artifact, and the gated Developer ID sign +
+notarize flow (`make dist`) — is documented in
 [`docs/release-model.md`](docs/release-model.md).
 
 ## Repository layout
