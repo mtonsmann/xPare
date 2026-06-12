@@ -811,6 +811,48 @@ struct StripControllerTests {
         #expect(pb.writes.isEmpty)
     }
 
+    /// Oversized decoded dimensions are refused as a size failure and never become
+    /// an empty/no-op OCR result.
+    @Test func oversizedDecodedImageDimensionsAreReportedAsTooLarge() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let recognizer = ThrowingImageTextRecognizer(error:
+            ImageTextRecognitionError.oversizedImageDimensions(
+                width: 10_000,
+                height: 10_000,
+                maxPixelCount: 30_000_000))
+        let pb = FakePasteboard(image: sampleImage(), rawImageBytes: 4)
+        let controller = StripController(
+            pasteboard: pb,
+            imageTextRecognizer: recognizer,
+            defaults: defaults
+        )
+
+        let outcome = await controller.extractImageText()
+        #expect(outcome == .tooLarge(bytes: 400_000_000))
+        #expect(recognizer.callCount == 1)
+        #expect(pb.writes.isEmpty)
+    }
+
+    /// Other unreadable-image recognizer failures remain content-free no-ops.
+    @Test func unreadableImageRecognitionIsNotApplicable() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let recognizer = ThrowingImageTextRecognizer(error: ImageTextRecognitionError.unreadableImage)
+        let pb = FakePasteboard(image: sampleImage(), rawImageBytes: 4)
+        let controller = StripController(
+            pasteboard: pb,
+            imageTextRecognizer: recognizer,
+            defaults: defaults
+        )
+
+        let outcome = await controller.extractImageText()
+        #expect(outcome == .notApplicable)
+        #expect(pb.writes.isEmpty)
+    }
+
     /// Vision OCR can be slow; the recognizer must run off the main thread just
     /// like the core transform does.
     @Test func imageTextRecognitionRunsOffTheMainThread() async throws {
@@ -961,6 +1003,56 @@ struct StripControllerTests {
         #expect(read.image.data == imageData)
         #expect(read.image.pasteboardType == NSPasteboard.PasteboardType.png.rawValue)
     }
+
+    /// A too-large preferred image representation must not hide a later bounded
+    /// representation of the same clipboard image.
+    @Test func systemPasteboardSkipsOversizedImageRepresentationAndReadsLaterBoundedOne() throws {
+        let name = NSPasteboard.Name("SafetyStripImageAlternates.\(UUID().uuidString)")
+        let rawPasteboard = NSPasteboard(name: name)
+        rawPasteboard.clearContents()
+        defer { rawPasteboard.clearContents() }
+
+        let jpegType = NSPasteboard.PasteboardType("public.jpeg")
+        let jpegData = Data([0xff, 0xd8, 0xff, 0xd9])
+        rawPasteboard.declareTypes([.png, jpegType], owner: nil)
+        guard rawPasteboard.setData(Data(repeating: 0, count: 100), forType: .png),
+              rawPasteboard.setData(jpegData, forType: jpegType) else {
+            return // Named pasteboards may be unavailable in headless/sandboxed agents.
+        }
+
+        let pasteboard = SystemPasteboard(pasteboard: rawPasteboard)
+        let result = pasteboard.readImage(maxRepresentationBytes: 16)
+        guard case .content(let read) = result else {
+            Issue.record("expected bounded alternate image content, got \(result)")
+            return
+        }
+        #expect(read.image.data == jpegData)
+        #expect(read.image.pasteboardType == jpegType.rawValue)
+    }
+
+    /// The alternate-representation scan is intentionally finite: after one
+    /// oversized image representation is skipped, a second oversized representation
+    /// returns `.tooLarge` instead of materializing every advertised image type.
+    @Test func systemPasteboardStopsAfterRepeatedOversizedImageRepresentations() throws {
+        let name = NSPasteboard.Name("SafetyStripImageOversizedAlternates.\(UUID().uuidString)")
+        let rawPasteboard = NSPasteboard(name: name)
+        rawPasteboard.clearContents()
+        defer { rawPasteboard.clearContents() }
+
+        let jpegType = NSPasteboard.PasteboardType("public.jpeg")
+        let heicType = NSPasteboard.PasteboardType("public.heic")
+        let boundedHeic = Data([0x00, 0x00, 0x00, 0x18])
+        rawPasteboard.declareTypes([.png, jpegType, heicType], owner: nil)
+        guard rawPasteboard.setData(Data(repeating: 0, count: 100), forType: .png),
+              rawPasteboard.setData(Data(repeating: 1, count: 120), forType: jpegType),
+              rawPasteboard.setData(boundedHeic, forType: heicType) else {
+            return // Named pasteboards may be unavailable in headless/sandboxed agents.
+        }
+
+        let pasteboard = SystemPasteboard(pasteboard: rawPasteboard)
+        let result = pasteboard.readImage(maxRepresentationBytes: 16)
+        #expect(result == .tooLarge(bytes: 120, changeCount: rawPasteboard.changeCount))
+    }
 }
 
 private func sampleImage() -> PasteboardImage {
@@ -1072,6 +1164,29 @@ private final class RecordingImageTextRecognizer: ImageTextRecognizing, @uncheck
             Thread.sleep(forTimeInterval: delay)
         }
         return output
+    }
+}
+
+private final class ThrowingImageTextRecognizer: ImageTextRecognizing, @unchecked Sendable {
+    private let lock = NSLock()
+    private let error: Error
+    private var _callCount = 0
+
+    init(error: Error) {
+        self.error = error
+    }
+
+    var callCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return _callCount
+    }
+
+    func recognizeText(in image: PasteboardImage) throws -> String {
+        lock.lock()
+        _callCount += 1
+        lock.unlock()
+        throw error
     }
 }
 
