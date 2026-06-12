@@ -431,21 +431,24 @@ config schema or the CLI flags — requires a major version.
 
 ### D17 — CodeQL is additive security review signal
 
-Built-in CodeQL runs over Rust, Python, and GitHub Actions with the
-`security-extended` query suite, but it is **not** the required gate and should
-not be branch-protection-required until the first alert baseline has been
-triaged. Swift CodeQL is deferred until the extractor completes reliably in CI;
-the Swift shell remains covered by deterministic `cargo xtask ci` posture checks.
+CodeQL runs over Rust, Python, and GitHub Actions with the `security-extended`
+query suite, plus repo-specific Rust/Python policy packs under
+`.github/codeql/queries/`. It is **not** the required gate and should not be
+branch-protection-required until the alert baseline has been triaged. Swift
+CodeQL is deferred until the extractor completes reliably in CI; the Swift shell
+remains covered by deterministic `cargo xtask ci` posture checks.
 The required local/CI gate remains `cargo xtask ci`; CodeQL is defense in depth
-for flow-sensitive issues that deterministic repo checks do not model well. The
-workflow is deliberately SHA-pinned and least-privilege, with
-`check-codeql-workflow-posture` preventing it from drifting into a moving-tag or
-broad-permission setup while baseline noise is still unknown.
+for flow-sensitive or API-resolution issues that deterministic repo checks do
+not model well. The workflow is deliberately SHA-pinned and least-privilege, with
+`check-codeql-workflow-posture` preventing it from drifting into a moving-tag,
+broad-permission, or custom-pack-disconnected setup while baseline noise is still
+unknown.
 
 Rejected alternatives: `security-and-quality` as the initial suite (too noisy
-for a privacy utility with strong deterministic gates), custom QL before seeing
-the built-in baseline (premature maintenance burden), and making CodeQL a merge
-requirement on day one (could block unrelated work on untriaged false positives).
+for a privacy utility with strong deterministic gates), custom Actions QL while
+actionlint/zizmor/posture checks already cover workflow lessons with lower noise,
+and making CodeQL a merge requirement on day one (could block unrelated work on
+untriaged false positives).
 
 ### Other settled choices
 

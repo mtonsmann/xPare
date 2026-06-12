@@ -75,12 +75,13 @@ capability-constrained**, and the constraint is enforced mechanically.
     no network, subprocess, multiprocessing, or dynamic code execution. These are
     enforced with `check-swift-package-deps` and `check-python-tooling-posture`.
 11. **CodeQL is additive, not a new required gate yet.** The CodeQL workflow is a
-    GitHub code-scanning baseline using `security-extended`. Keep its actions pinned
-    to peeled release commit SHAs, not annotated tag object SHAs; each pin needs the
-    exact release-version comment (`# vX.Y.Z`) that matches the peeled commit.
-    Keep permissions minimal: `contents: read` plus job-scoped
-    `security-events: write`. Keep the Swift build explicit. Do not put CodeQL in
-    branch protection until the first alert baseline is triaged.
+    GitHub code-scanning baseline using `security-extended` plus repo-specific
+    Rust/Python policy packs. Keep its actions pinned to peeled release commit
+    SHAs, not annotated tag object SHAs; each pin needs the exact release-version
+    comment (`# vX.Y.Z`) that matches the peeled commit. Keep permissions minimal:
+    `contents: read` plus job-scoped `security-events: write`, and keep custom
+    packs wired only to their owning language jobs. Do not put CodeQL in branch
+    protection until the alert baseline is triaged.
 
 ## How the checks work
 
@@ -104,8 +105,9 @@ capability-constrained**, and the constraint is enforced mechanically.
   import set, rejects network/process/dynamic-exec tokens, and syntax-checks them
   with `python3 -m py_compile`.
 - `check-codeql-workflow-posture` verifies `.github/workflows/codeql.yml` stays
-  additive, SHA-pinned, least-privilege, uses `security-extended`, and builds the
-  Swift shell explicitly.
+  additive, SHA-pinned, least-privilege, uses `security-extended`, keeps the
+  Rust/Python custom query packs wired, and leaves GitHub Actions analysis on the
+  built-in suite.
 - `check-fuzz` is the optional fuzz/tooling gate: it installs the nightly toolchain
   and pinned `cargo-fuzz` on demand, discovers targets with `cargo fuzz list`, builds
   all targets, and smoke-runs them when `XP_FUZZ_SMOKE_SECONDS=N` is set. The
@@ -143,8 +145,8 @@ not how to silence it.
   or any change to `NETWORK_BANLIST`.
 - Any new SwiftPM package/product/binary/system dependency, or widening of the
   Python helper import/capability allowlist.
-- Any change that makes CodeQL required, broadens its permissions, moves actions
-  back to tags, or changes the query suite.
+- Any change that makes CodeQL required, broadens its permissions, disconnects a
+  custom query pack, moves actions back to tags, or changes the query suite.
 - Anything pulling in `unsafe` or network capability — that is also a
   [memory-safety](memory-safety.md) / [privacy](privacy-and-data-handling.md)
   posture change.

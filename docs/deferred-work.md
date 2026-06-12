@@ -17,6 +17,18 @@ Scope split:
 
 Nothing here is committed scope; it's a memory aid for the next maintainer.
 
+## From exec-plan 0016 — custom CodeQL policy queries
+
+- **Swift custom CodeQL rules.** The high-value repo-specific CodeQL rules are still
+  on the Swift shell boundary: clipboard content flowing to persistence/log/network
+  sinks, stale pasteboard writes after async transforms without a dominating
+  `changeCount` check, direct `xp_transform`/`xp_buffer_free` calls outside the
+  safe wrapper, and FFI output buffers not freed on every success path. These are
+  better modeled as Swift data/control-flow queries than as token scans, but Swift
+  CodeQL remains deferred until the extractor completes reliably in CI; the current
+  protection remains the deterministic Swift posture checks in `cargo xtask ci`.
+  (0016 → Swift CodeQL follow-up)
+
 ## From exec-plan 0001 — initial re-architecture
 
 - **Block-level embedded-HTML stripping in `strip_markdown`.** Accumulate consecutive

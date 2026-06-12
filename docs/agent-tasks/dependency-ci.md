@@ -24,8 +24,9 @@ automation.
   (`cargo-deny`, `zizmor`, `cargo-fuzz`) in `xtask` must move in lockstep with the CI
   install step.
 - CodeQL is an additive GitHub code-scanning signal, not the required local gate.
-  Keep its workflow SHA-pinned, least-privilege, on `security-extended`, and out of
-  branch protection until baseline triage.
+  Keep its workflow SHA-pinned, least-privilege, on `security-extended`, keep
+  repo-specific custom packs wired by language, and keep it out of branch
+  protection until baseline triage.
 - Fix the code to satisfy a check; do not weaken the check. A scoped `deny.toml`
   ignore/exception needs a documented risk decision and a reason.
 

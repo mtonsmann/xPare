@@ -22,7 +22,7 @@
 //!   check-python-tooling-posture assert Python helper imports/calls stay capability-light
 //!   check-real-clipboard-tests assert default tests do not touch NSPasteboard.general
 //!   check-pasteboard-write-shape assert clipboard writes stay plain-string only
-//!   check-codeql-workflow-posture assert CodeQL stays additive, pinned, and least-privilege
+//!   check-codeql-workflow-posture assert CodeQL stays additive, pinned, and custom packs stay wired
 //!   check-release-posture     assert official signing cannot broaden entitlements
 //!   check-supply-chain  cargo-deny: advisories + licenses + bans + sources
 //!   check-unused-deps   cargo-machete: fail on a declared-but-unused dependency
@@ -114,7 +114,7 @@ fn usage() {
          \x20 check-python-tooling-posture assert Python helper imports/calls stay capability-light\n\
          \x20 check-real-clipboard-tests assert default tests do not touch NSPasteboard.general\n\
          \x20 check-pasteboard-write-shape assert clipboard writes stay plain-string only\n\
-         \x20 check-codeql-workflow-posture assert CodeQL stays additive, pinned, and least-privilege\n\
+         \x20 check-codeql-workflow-posture assert CodeQL stays additive, pinned, and custom packs stay wired\n\
          \x20 check-release-posture      assert official signing cannot broaden entitlements\n\
          \x20 check-supply-chain   cargo-deny: advisories + licenses + bans + sources\n\
          \x20 check-unused-deps    cargo-machete: fail on a declared-but-unused dependency\n\
@@ -1638,18 +1638,34 @@ fn validate_codeql_workflow_posture(text: &str) -> Result<(), String> {
         "permissions:\n  contents: read",
         "security-events: write",
         "languages: rust",
-        "languages: python, actions",
+        "languages: python",
+        "languages: actions",
         "build-mode: none",
         "queries: security-extended",
+        "queries: security-extended,./.github/codeql/queries/rust",
+        "queries: security-extended,./.github/codeql/queries/python",
+        "./.github/codeql/queries/rust",
+        "./.github/codeql/queries/python",
         "dependency-caching: true",
         "category: \"/language:rust\"",
-        "category: \"/language:python-actions\"",
+        "category: \"/language:python\"",
+        "category: \"/language:actions\"",
     ] {
         if !text.contains(required) {
             errors.push(format!(
                 "missing required CodeQL workflow snippet `{required}`"
             ));
         }
+    }
+    if text.contains("languages: python, actions") {
+        errors.push(
+            "analyze Python and GitHub Actions in separate CodeQL jobs so custom Python \
+             query packs attach only to a Python database"
+                .into(),
+        );
+    }
+    if text.contains("category: \"/language:python-actions\"") {
+        errors.push("use separate CodeQL categories for Python and GitHub Actions".into());
     }
     if text.contains("github/codeql-action/autobuild") {
         errors.push("CodeQL autobuild is disabled; keep analysis explicit and reviewable".into());
@@ -1706,10 +1722,81 @@ fn validate_codeql_action_pin(
     }
 }
 
-/// Assert CodeQL remains additive, least-privilege, and commit-pinned.
+fn validate_codeql_custom_queries(root: &Path) -> Result<(), String> {
+    let mut errors = Vec::new();
+    let required_files: [(&str, &[&str]); 5] = [
+        (
+            ".github/codeql/queries/rust/qlpack.yml",
+            &["name: xpare/rust-policy-queries", "codeql/rust-all"],
+        ),
+        (
+            ".github/codeql/queries/rust/src/ShippedRustCapabilitySurface.ql",
+            &[
+                "@id xpare/rust-shipped-capability-surface",
+                "import rust",
+                "processExecutionTarget",
+                "coreFilesystemCallTarget",
+                "coreFilesystemSourceTarget",
+                "networkSourceTarget",
+                "resolvedUseTreePath",
+                "getUseTreeList",
+                "getAUseTree",
+                "PathTypeRepr",
+                "UseTree",
+            ],
+        ),
+        (
+            ".github/codeql/queries/python/qlpack.yml",
+            &["name: xpare/python-policy-queries", "codeql/python-all"],
+        ),
+        (
+            ".github/codeql/queries/python/src/PythonHelperBannedImports.ql",
+            &[
+                "@id xpare/python-helper-banned-import",
+                "ImportingStmt",
+                "bannedImportRoot",
+            ],
+        ),
+        (
+            ".github/codeql/queries/python/src/PythonHelperBannedCalls.ql",
+            &[
+                "@id xpare/python-helper-banned-call",
+                "semmle.python.ApiGraphs",
+                "bannedBuiltinCall",
+                "bannedModuleCall",
+            ],
+        ),
+    ];
+
+    for (rel, snippets) in required_files {
+        match std::fs::read_to_string(root.join(rel)) {
+            Ok(text) => {
+                for snippet in snippets {
+                    if !text.contains(snippet) {
+                        errors.push(format!(
+                            "{rel} is missing required CodeQL query snippet `{snippet}`"
+                        ));
+                    }
+                }
+            }
+            Err(e) => errors.push(format!(
+                "could not read required CodeQL query file {rel}: {e}"
+            )),
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("\n  "))
+    }
+}
+
+/// Assert CodeQL remains additive, least-privilege, commit-pinned, and custom-pack wired.
 fn check_codeql_workflow_posture() -> Result<(), String> {
+    let root = workspace_root();
     let rel = ".github/workflows/codeql.yml";
-    let text = std::fs::read_to_string(workspace_root().join(rel))
+    let text = std::fs::read_to_string(root.join(rel))
         .map_err(|e| format!("check-codeql-workflow-posture: FAIL — could not read {rel}: {e}"))?;
     validate_codeql_workflow_posture(&text).map_err(|e| {
         format!(
@@ -1717,12 +1804,21 @@ fn check_codeql_workflow_posture() -> Result<(), String> {
              \n\
              CodeQL is being introduced as additive security-review signal, not as a required \
              merge gate yet. Keep actions pinned, permissions minimal, queries set to \
-             `security-extended`, and the Swift build explicit so first-triage noise can be \
-             understood before branch protection changes."
+             `security-extended`, custom query packs wired by language, and Python/Actions \
+             split so first-triage noise can be understood before branch protection changes."
+        )
+    })?;
+    validate_codeql_custom_queries(&root).map_err(|e| {
+        format!(
+            "check-codeql-workflow-posture: FAIL —\n  {e}\n\
+             \n\
+             The custom CodeQL packs encode repo-specific review lessons that are awkward to \
+             enforce with built-in CodeQL alone. Keep these query packs checked in and wired \
+             unless the replacement mechanical guard is called out in the PR."
         )
     })?;
     println!(
-        "check-codeql-workflow-posture: CodeQL workflow is additive, pinned, and least-privilege."
+        "check-codeql-workflow-posture: CodeQL workflow is additive, pinned, least-privilege, and custom packs are wired."
     );
     Ok(())
 }
@@ -4492,12 +4588,12 @@ jobs:
         with:
           languages: rust
           build-mode: none
-          queries: security-extended
+          queries: security-extended,./.github/codeql/queries/rust
           dependency-caching: true
       - uses: github/codeql-action/analyze@{pin} # {version}
         with:
           category: "/language:rust"
-  python-actions:
+  python:
     permissions:
       contents: read
       security-events: write
@@ -4505,11 +4601,24 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: github/codeql-action/init@{pin} # {version}
         with:
-          languages: python, actions
+          languages: python
+          queries: security-extended,./.github/codeql/queries/python
+      - uses: github/codeql-action/analyze@{pin} # {version}
+        with:
+          category: "/language:python"
+  actions:
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: github/codeql-action/init@{pin} # {version}
+        with:
+          languages: actions
           queries: security-extended
       - uses: github/codeql-action/analyze@{pin} # {version}
         with:
-          category: "/language:python-actions"
+          category: "/language:actions"
 "#
         );
         validate_codeql_workflow_posture(&text).unwrap();
