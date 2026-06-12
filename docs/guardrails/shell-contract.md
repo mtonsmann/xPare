@@ -113,6 +113,13 @@ live under `shells/macos/`; this guardrail documents the contract they implement
   line-coverage floor (plus SwiftLint if present). CI runs this best-effort on macOS
   (`continue-on-error`, since the image may lack full Xcode), so the shell's tests run
   in CI, not just locally. It supersedes the old bare `swift build` smoke.
+- **Shell posture tripwires:** `cargo xtask check-swift-no-network-apis`,
+  `cargo xtask check-shipped-command-exec`,
+  `cargo xtask check-real-clipboard-tests`, and
+  `cargo xtask check-pasteboard-write-shape` keep the shipped Swift shell free of
+  direct network/browser APIs, subprocess spawning, default real-clipboard tests, and
+  broadened plain-string pasteboard writes. `writeFileURL(_:)` remains allowed only
+  as the opt-in paste-as-file path described in the privacy guardrail.
 - **Entitlements (macOS):** `cargo xtask check-entitlements` — see
   [macos-posture](macos-posture.md).
 - The ABI the shell links against is frozen by `cargo xtask check-abi`.

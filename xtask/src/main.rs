@@ -16,6 +16,13 @@
 //!   check-agent-workflow      assert the AI-native workflow docs exist with required headings
 //!   check-c-ffi-surface       assert C/SwiftPM interop stays header-only and tiny
 //!   check-test-hygiene        assert every ignored test has a reason and the count is ratcheted
+//!   check-swift-no-network-apis assert shipped Swift cannot introduce network/browser APIs
+//!   check-shipped-command-exec assert shipped app surfaces cannot spawn commands
+//!   check-swift-package-deps assert the Swift package has no external dependencies
+//!   check-python-tooling-posture assert Python helper imports/calls stay capability-light
+//!   check-real-clipboard-tests assert default tests do not touch NSPasteboard.general
+//!   check-pasteboard-write-shape assert clipboard writes stay plain-string only
+//!   check-codeql-workflow-posture assert CodeQL stays additive, pinned, and least-privilege
 //!   check-release-posture     assert official signing cannot broaden entitlements
 //!   check-supply-chain  cargo-deny: advisories + licenses + bans + sources
 //!   check-unused-deps   cargo-machete: fail on a declared-but-unused dependency
@@ -53,6 +60,13 @@ fn main() -> ExitCode {
         Some("check-agent-workflow") => report(check_agent_workflow()),
         Some("check-c-ffi-surface") => report(check_c_ffi_surface()),
         Some("check-test-hygiene") => report(check_test_hygiene()),
+        Some("check-swift-no-network-apis") => report(check_swift_no_network_apis()),
+        Some("check-shipped-command-exec") => report(check_shipped_command_exec()),
+        Some("check-swift-package-deps") => report(check_swift_package_deps()),
+        Some("check-python-tooling-posture") => report(check_python_tooling_posture()),
+        Some("check-real-clipboard-tests") => report(check_real_clipboard_tests()),
+        Some("check-pasteboard-write-shape") => report(check_pasteboard_write_shape()),
+        Some("check-codeql-workflow-posture") => report(check_codeql_workflow_posture()),
         Some("check-release-posture") => report(check_release_posture()),
         Some("check-supply-chain") => report(check_supply_chain()),
         Some("check-unused-deps") => report(check_unused_deps()),
@@ -94,6 +108,13 @@ fn usage() {
          \x20 check-agent-workflow       assert the AI-native workflow docs exist with required headings\n\
          \x20 check-c-ffi-surface        assert C/SwiftPM interop stays header-only and tiny\n\
          \x20 check-test-hygiene         assert every #[ignore] has a reason and the count is ratcheted\n\
+         \x20 check-swift-no-network-apis assert shipped Swift has no network/browser API surface\n\
+         \x20 check-shipped-command-exec assert shipped app surfaces cannot spawn commands\n\
+         \x20 check-swift-package-deps   assert SwiftPM has no external dependencies\n\
+         \x20 check-python-tooling-posture assert Python helper imports/calls stay capability-light\n\
+         \x20 check-real-clipboard-tests assert default tests do not touch NSPasteboard.general\n\
+         \x20 check-pasteboard-write-shape assert clipboard writes stay plain-string only\n\
+         \x20 check-codeql-workflow-posture assert CodeQL stays additive, pinned, and least-privilege\n\
          \x20 check-release-posture      assert official signing cannot broaden entitlements\n\
          \x20 check-supply-chain   cargo-deny: advisories + licenses + bans + sources\n\
          \x20 check-unused-deps    cargo-machete: fail on a declared-but-unused dependency\n\
@@ -1053,6 +1074,612 @@ fn check_c_ffi_surface() -> Result<(), String> {
             errors.join("\n  ")
         ))
     }
+}
+
+// ---------------------------------------------------------------------------
+// source posture checks (Swift, Python, pasteboard shape, CodeQL workflow)
+// ---------------------------------------------------------------------------
+
+/// The CodeQL action major currently pinned in `.github/workflows/codeql.yml`.
+/// Keep init/analyze on the same audited commit so the workflow cannot drift to a
+/// moving tag while still looking superficially "pinned".
+const CODEQL_ACTION_PIN: &str = "411bbbe57033eedfc1a82d68c01345aa96c737d7";
+
+/// Shipped Swift and Rust source roots scanned by the app-surface posture checks.
+const SHIPPED_SWIFT_ROOTS: &[&str] = &["shells/macos/Sources"];
+const SHIPPED_RUST_ROOTS: &[&str] = &["core/src", "core-ffi/src", "cli/src"];
+
+/// Network/browser/authentication API tokens that are incompatible with xPare's
+/// no-network privacy posture in the shipped macOS shell. The dependency check
+/// catches linked network crates; this catches direct platform APIs that do not
+/// show up in Cargo metadata.
+const SWIFT_NETWORK_API_TOKENS: &[&str] = &[
+    "URLSession",
+    "URLRequest",
+    "NSURLConnection",
+    "import Network",
+    "NWConnection",
+    "NWListener",
+    "NWBrowser",
+    "NWPathMonitor",
+    "import WebKit",
+    "WKWebView",
+    "import SafariServices",
+    "SFSafariViewController",
+    "import AuthenticationServices",
+    "ASWebAuthenticationSession",
+    "NSWorkspace.shared.open",
+];
+
+/// Process-spawning tokens banned from shipped Swift and Rust surfaces. Release
+/// scripts and xtask may invoke tools; the app/core/CLI must not gain a command
+/// execution surface as part of clipboard handling.
+const SWIFT_COMMAND_EXEC_TOKENS: &[&str] = &[
+    "Process(",
+    "Process.run",
+    "NSTask",
+    "posix_spawn",
+    "system(",
+    "popen(",
+];
+const RUST_COMMAND_EXEC_TOKENS: &[&str] = &[
+    "std::process::Command",
+    "process::Command",
+    "Command::new(",
+    ".spawn(",
+    "std::os::unix::process",
+];
+
+/// The icon helper is intentionally stdlib-only and capability-light.
+const PYTHON_ALLOWED_IMPORTS: &[&str] = &[
+    "__future__",
+    "argparse",
+    "math",
+    "pathlib",
+    "struct",
+    "zlib",
+];
+const PYTHON_BANNED_TOKENS: &[&str] = &[
+    "subprocess",
+    "socket",
+    "urllib",
+    "http.client",
+    "requests",
+    "ftplib",
+    "telnetlib",
+    "asyncio",
+    "multiprocessing",
+    "os.system(",
+    "os.popen(",
+    "eval(",
+    "exec(",
+];
+
+fn rel_path(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .display()
+        .to_string()
+        .replace('\\', "/")
+}
+
+fn collect_files_under(root: &Path, rel_roots: &[&str], exts: &[&str]) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    for rel in rel_roots {
+        let dir = root.join(rel);
+        if dir.is_dir() {
+            collect_source_files(&dir, exts, &mut files);
+        }
+    }
+    files.sort();
+    files
+}
+
+fn token_hits_in_files(root: &Path, files: &[PathBuf], tokens: &[&str]) -> Vec<String> {
+    let mut hits = Vec::new();
+    for path in files {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        let rel = rel_path(root, path);
+        for (line_no, line) in text.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with("*") {
+                continue;
+            }
+            for token in tokens {
+                if line.contains(token) {
+                    hits.push(format!(
+                        "{rel}:{}: banned token `{token}`: {}",
+                        line_no + 1,
+                        line.trim()
+                    ));
+                }
+            }
+        }
+    }
+    hits
+}
+
+/// Assert the shipped Swift app surface has no direct network/browser API usage.
+fn check_swift_no_network_apis() -> Result<(), String> {
+    let root = workspace_root();
+    let files = collect_files_under(&root, SHIPPED_SWIFT_ROOTS, &["swift"]);
+    let hits = token_hits_in_files(&root, &files, SWIFT_NETWORK_API_TOKENS);
+    if hits.is_empty() {
+        println!(
+            "check-swift-no-network-apis: scanned {} shipped Swift file(s); no network/browser API tokens found.",
+            files.len()
+        );
+        Ok(())
+    } else {
+        Err(format!(
+            "check-swift-no-network-apis: FAIL — shipped Swift source references network, browser, \
+             or authentication API token(s):\n  {}\n\
+             \n\
+             xPare's privacy posture is no network anywhere and no browser/auth callback surface. \
+             Keep those APIs out of the macOS shell; if this is a deliberate posture change, update \
+             SECURITY.md, the guardrail, entitlements, and this check in the same PR.",
+            hits.join("\n  ")
+        ))
+    }
+}
+
+/// Assert shipped app/core/CLI surfaces do not spawn subprocesses.
+fn check_shipped_command_exec() -> Result<(), String> {
+    let root = workspace_root();
+    let swift_files = collect_files_under(&root, SHIPPED_SWIFT_ROOTS, &["swift"]);
+    let rust_files = collect_files_under(&root, SHIPPED_RUST_ROOTS, &["rs"]);
+    let mut hits = token_hits_in_files(&root, &swift_files, SWIFT_COMMAND_EXEC_TOKENS);
+    hits.extend(token_hits_in_files(
+        &root,
+        &rust_files,
+        RUST_COMMAND_EXEC_TOKENS,
+    ));
+    if hits.is_empty() {
+        println!(
+            "check-shipped-command-exec: scanned {} Swift and {} Rust shipped file(s); no command execution surface found.",
+            swift_files.len(),
+            rust_files.len()
+        );
+        Ok(())
+    } else {
+        Err(format!(
+            "check-shipped-command-exec: FAIL — shipped source references command execution token(s):\n  {}\n\
+             \n\
+             xPare may run tools in release scripts and xtask, but shipped clipboard handling must not \
+             spawn commands. Remove the command execution surface or make the compatibility/security \
+             posture change explicit in docs and this guard.",
+            hits.join("\n  ")
+        ))
+    }
+}
+
+fn validate_swift_package_deps(text: &str) -> Result<(), String> {
+    let mut hits = Vec::new();
+    for (line_no, line) in text.lines().enumerate() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("//") {
+            continue;
+        }
+        for token in [
+            ".package(",
+            ".product(",
+            ".binaryTarget(",
+            ".systemLibrary(",
+        ] {
+            if trimmed.contains(token) {
+                hits.push(format!("line {}: `{}`", line_no + 1, trimmed));
+            }
+        }
+    }
+    if hits.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "external SwiftPM dependency declaration(s):\n  {}",
+            hits.join("\n  ")
+        ))
+    }
+}
+
+/// Assert the macOS Swift package remains dependency-free except for local targets.
+fn check_swift_package_deps() -> Result<(), String> {
+    let path = workspace_root().join("shells/macos/Package.swift");
+    let text = std::fs::read_to_string(&path).map_err(|e| {
+        format!(
+            "check-swift-package-deps: FAIL — could not read {}: {e}",
+            path.display()
+        )
+    })?;
+    validate_swift_package_deps(&text).map_err(|e| {
+        format!(
+            "check-swift-package-deps: FAIL — {e}\n\
+             \n\
+             The shipped macOS shell intentionally has no external SwiftPM packages. If a new \
+             package is truly needed, justify it in docs/guardrails/dependency-posture.md and \
+             update this check in the same PR; otherwise keep dependencies local."
+        )
+    })?;
+    println!("check-swift-package-deps: SwiftPM package declares only local targets.");
+    Ok(())
+}
+
+fn python_import_roots(line: &str) -> Vec<String> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+        return Vec::new();
+    }
+    if let Some(rest) = trimmed.strip_prefix("import ") {
+        return rest
+            .split(',')
+            .filter_map(|part| {
+                part.split_whitespace()
+                    .next()
+                    .and_then(|name| name.split('.').next())
+                    .filter(|name| !name.is_empty())
+                    .map(str::to_string)
+            })
+            .collect();
+    }
+    if let Some(rest) = trimmed.strip_prefix("from ") {
+        return rest
+            .split_whitespace()
+            .next()
+            .and_then(|name| name.split('.').next())
+            .filter(|name| !name.is_empty())
+            .map(|name| vec![name.to_string()])
+            .unwrap_or_default();
+    }
+    Vec::new()
+}
+
+fn validate_python_helper_posture(text: &str) -> Result<(), String> {
+    let allowed: HashSet<&str> = PYTHON_ALLOWED_IMPORTS.iter().copied().collect();
+    let mut hits = Vec::new();
+    for (line_no, line) in text.lines().enumerate() {
+        for root in python_import_roots(line) {
+            if !allowed.contains(root.as_str()) {
+                hits.push(format!(
+                    "line {}: import `{root}` is outside the stdlib helper allowlist",
+                    line_no + 1
+                ));
+            }
+        }
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        for token in PYTHON_BANNED_TOKENS {
+            if line.contains(token) {
+                hits.push(format!(
+                    "line {}: banned capability token `{token}`: {}",
+                    line_no + 1,
+                    line.trim()
+                ));
+            }
+        }
+    }
+    if hits.is_empty() {
+        Ok(())
+    } else {
+        Err(hits.join("\n  "))
+    }
+}
+
+fn python_syntax_check(files: &[PathBuf]) -> Result<(), String> {
+    if files.is_empty() {
+        return Ok(());
+    }
+    let python = resolve_tool("python3").ok_or_else(|| {
+        "check-python-tooling-posture: FAIL — `python3` is not on PATH; install Python 3 to syntax-check helper scripts."
+            .to_string()
+    })?;
+    let pycache = workspace_root().join("target").join("python-pycache");
+    std::fs::create_dir_all(&pycache).map_err(|e| {
+        format!(
+            "check-python-tooling-posture: FAIL — could not create {}: {e}",
+            pycache.display()
+        )
+    })?;
+    let mut command = Command::new(&python);
+    command.args(["-m", "py_compile"]).args(files);
+    let status = command
+        .env("PYTHONPYCACHEPREFIX", &pycache)
+        .current_dir(workspace_root())
+        .status()
+        .map_err(|e| format!("check-python-tooling-posture: FAIL — could not run python3: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "check-python-tooling-posture: FAIL — `python3 -m py_compile` reported a syntax error (exited {status})."
+        ))
+    }
+}
+
+/// Assert Python helpers stay stdlib-only and capability-light.
+fn check_python_tooling_posture() -> Result<(), String> {
+    let root = workspace_root();
+    let files = collect_files_under(&root, &["shells/macos", "scripts"], &["py"]);
+    let mut hits = Vec::new();
+    for path in &files {
+        let text = std::fs::read_to_string(path).map_err(|e| {
+            format!(
+                "check-python-tooling-posture: FAIL — could not read {}: {e}",
+                path.display()
+            )
+        })?;
+        if let Err(err) = validate_python_helper_posture(&text) {
+            hits.push(format!("{}:\n  {err}", rel_path(&root, path)));
+        }
+    }
+    if !hits.is_empty() {
+        return Err(format!(
+            "check-python-tooling-posture: FAIL — Python helper script(s) gained disallowed imports/capabilities:\n  {}\n\
+             \n\
+             Helper scripts should stay pure-stdlib and capability-light: no network, subprocess, \
+             multiprocessing, or dynamic code execution. If a real tooling need appears, justify it \
+             in the dependency guardrail and update the allowlist deliberately.",
+            hits.join("\n  ")
+        ));
+    }
+    python_syntax_check(&files)?;
+    println!(
+        "check-python-tooling-posture: {} Python helper file(s) are syntax-valid and capability-light.",
+        files.len()
+    );
+    Ok(())
+}
+
+/// Assert default Swift tests do not touch the user's real clipboard. Comments may
+/// explain the invariant; executable code may not reference `NSPasteboard.general`.
+fn check_real_clipboard_tests() -> Result<(), String> {
+    let root = workspace_root();
+    let files = collect_files_under(&root, &["shells/macos/Tests"], &["swift"]);
+    let mut hits = Vec::new();
+    for path in &files {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        let rel = rel_path(&root, path);
+        for (line_no, line) in text.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            if line.contains("NSPasteboard.general") {
+                hits.push(format!("{rel}:{}: {}", line_no + 1, line.trim()));
+            }
+        }
+    }
+    if hits.is_empty() {
+        println!(
+            "check-real-clipboard-tests: scanned {} Swift test file(s); default tests avoid NSPasteboard.general.",
+            files.len()
+        );
+        Ok(())
+    } else {
+        Err(format!(
+            "check-real-clipboard-tests: FAIL — default tests reference the real clipboard:\n  {}\n\
+             \n\
+             Default tests must use named/synthetic pasteboards so local and CI runs never read or \
+             mutate the user's clipboard. Move real NSPasteboard.general exercise behind an explicit \
+             opt-in target.",
+            hits.join("\n  ")
+        ))
+    }
+}
+
+fn extract_swift_function_body<'a>(text: &'a str, signature: &str) -> Option<&'a str> {
+    let start = text.find(signature)?;
+    let after_signature = &text[start..];
+    let open_rel = after_signature.find('{')?;
+    let open = start + open_rel;
+    let mut depth = 0usize;
+    let mut body_start = None;
+    for (offset, ch) in text[open..].char_indices() {
+        match ch {
+            '{' => {
+                depth += 1;
+                if depth == 1 {
+                    body_start = Some(open + offset + ch.len_utf8());
+                }
+            }
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return body_start.map(|body| &text[body..open + offset]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn validate_pasteboard_write_shape(files: &[(String, String)]) -> Result<(), String> {
+    let Some((rel, text)) = files
+        .iter()
+        .find(|(rel, _)| rel == "shells/macos/Sources/XPareKit/Pasteboard.swift")
+    else {
+        return Err("shells/macos/Sources/XPareKit/Pasteboard.swift is missing".to_string());
+    };
+    let Some(body) =
+        extract_swift_function_body(text, "public func writePlain(_ text: String) -> Int?")
+    else {
+        return Err(format!(
+            "{rel}: could not find `SystemPasteboard.writePlain(_:)`"
+        ));
+    };
+
+    let clear_count = body.matches("pasteboard.clearContents()").count();
+    let set_string_count = body.matches("pasteboard.setString(").count();
+    let mut errors = Vec::new();
+    if clear_count != 1 {
+        errors.push(format!(
+            "`writePlain(_:)` must clear pasteboard contents exactly once before rewriting; found {clear_count}"
+        ));
+    }
+    if set_string_count != 1 {
+        errors.push(format!(
+            "`writePlain(_:)` must write exactly one plain string; found {set_string_count} `setString` call(s)"
+        ));
+    }
+    if !body.contains("pasteboard.setString(text, forType: .string)") {
+        errors.push(
+            "`writePlain(_:)` must write the transformed text as NSPasteboard.PasteboardType.string"
+                .to_string(),
+        );
+    }
+    for token in [
+        "writeObjects(",
+        "setData(",
+        "setPropertyList(",
+        "declareTypes(",
+        "writeFileURL(",
+    ] {
+        if body.contains(token) {
+            errors.push(format!(
+                "`writePlain(_:)` contains non-string pasteboard write token `{token}`"
+            ));
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("\n  "))
+    }
+}
+
+/// Assert the plain-string clipboard rewrite stays narrow. The opt-in paste-as-file
+/// path is covered separately by the content-persistence allow marker; this guard
+/// is only about `writePlain(_:)`.
+fn check_pasteboard_write_shape() -> Result<(), String> {
+    let root = workspace_root();
+    let rel = "shells/macos/Sources/XPareKit/Pasteboard.swift";
+    let text = std::fs::read_to_string(root.join(rel))
+        .map_err(|e| format!("check-pasteboard-write-shape: FAIL — could not read {rel}: {e}"))?;
+    validate_pasteboard_write_shape(&[(rel.to_string(), text)]).map_err(|e| {
+        format!(
+            "check-pasteboard-write-shape: FAIL —\n  {e}\n\
+             \n\
+             `SystemPasteboard.writePlain(_:)` is the in-place plain-string rewrite path. It must \
+             clear the pasteboard once and write exactly one `.string` payload. The separate \
+             opt-in paste-as-file exception may write a file URL through `writeFileURL(_:)`, but \
+             broadening the plain rewrite path is a clipboard-safety posture change."
+        )
+    })?;
+    println!(
+        "check-pasteboard-write-shape: SystemPasteboard.writePlain clears once and writes exactly one plain string."
+    );
+    Ok(())
+}
+
+fn validate_codeql_workflow_posture(text: &str) -> Result<(), String> {
+    let mut errors = Vec::new();
+    for (line_no, line) in text.lines().enumerate() {
+        let trimmed = line.trim();
+        let uses = trimmed
+            .strip_prefix("uses: ")
+            .or_else(|| trimmed.strip_prefix("- uses: "));
+        if let Some(rest) = uses {
+            if !rest.contains('@') {
+                errors.push(format!(
+                    "line {}: action is not versioned: {trimmed}",
+                    line_no + 1
+                ));
+            }
+            if rest.starts_with("github/codeql-action/")
+                && !rest.contains(&format!("@{CODEQL_ACTION_PIN}"))
+            {
+                errors.push(format!(
+                    "line {}: CodeQL action must be pinned to {CODEQL_ACTION_PIN}: {trimmed}",
+                    line_no + 1
+                ));
+            }
+            if rest.starts_with("actions/checkout@v") {
+                errors.push(format!(
+                    "line {}: checkout must be pinned to a commit SHA, not a moving tag: {trimmed}",
+                    line_no + 1
+                ));
+            }
+            if rest.starts_with("dtolnay/rust-toolchain@stable") {
+                errors.push(format!(
+                    "line {}: rust-toolchain action must be pinned to a commit SHA: {trimmed}",
+                    line_no + 1
+                ));
+            }
+        }
+        for broad_perm in [
+            "contents: write",
+            "pull-requests: write",
+            "issues: write",
+            "id-token: write",
+            "actions: write",
+        ] {
+            if trimmed == broad_perm {
+                errors.push(format!(
+                    "line {}: CodeQL workflow grants disallowed permission `{broad_perm}`",
+                    line_no + 1
+                ));
+            }
+        }
+    }
+
+    for required in [
+        "Additive signal only",
+        "Keep this workflow out of branch protection",
+        "permissions:\n  contents: read",
+        "security-events: write",
+        "languages: rust",
+        "languages: python, actions",
+        "build-mode: none",
+        "queries: security-extended",
+        "dependency-caching: true",
+        "category: \"/language:rust\"",
+        "category: \"/language:python-actions\"",
+    ] {
+        if !text.contains(required) {
+            errors.push(format!(
+                "missing required CodeQL workflow snippet `{required}`"
+            ));
+        }
+    }
+    if text.contains("github/codeql-action/autobuild") {
+        errors.push("CodeQL autobuild is disabled; keep analysis explicit and reviewable".into());
+    }
+    if text.contains("safetystrip") || text.contains("SafetyStrip") {
+        errors.push("workflow contains stale SafetyStrip naming".into());
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("\n  "))
+    }
+}
+
+/// Assert CodeQL remains additive, least-privilege, and commit-pinned.
+fn check_codeql_workflow_posture() -> Result<(), String> {
+    let rel = ".github/workflows/codeql.yml";
+    let text = std::fs::read_to_string(workspace_root().join(rel))
+        .map_err(|e| format!("check-codeql-workflow-posture: FAIL — could not read {rel}: {e}"))?;
+    validate_codeql_workflow_posture(&text).map_err(|e| {
+        format!(
+            "check-codeql-workflow-posture: FAIL —\n  {e}\n\
+             \n\
+             CodeQL is being introduced as additive security-review signal, not as a required \
+             merge gate yet. Keep actions pinned, permissions minimal, queries set to \
+             `security-extended`, and the Swift build explicit so first-triage noise can be \
+             understood before branch protection changes."
+        )
+    })?;
+    println!(
+        "check-codeql-workflow-posture: CodeQL workflow is additive, pinned, and least-privilege."
+    );
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -3036,6 +3663,34 @@ fn run_ci() -> ExitCode {
         eprintln!("{msg}");
         return ExitCode::FAILURE;
     }
+    if let Err(msg) = check_swift_no_network_apis() {
+        eprintln!("{msg}");
+        return ExitCode::FAILURE;
+    }
+    if let Err(msg) = check_shipped_command_exec() {
+        eprintln!("{msg}");
+        return ExitCode::FAILURE;
+    }
+    if let Err(msg) = check_swift_package_deps() {
+        eprintln!("{msg}");
+        return ExitCode::FAILURE;
+    }
+    if let Err(msg) = check_python_tooling_posture() {
+        eprintln!("{msg}");
+        return ExitCode::FAILURE;
+    }
+    if let Err(msg) = check_real_clipboard_tests() {
+        eprintln!("{msg}");
+        return ExitCode::FAILURE;
+    }
+    if let Err(msg) = check_pasteboard_write_shape() {
+        eprintln!("{msg}");
+        return ExitCode::FAILURE;
+    }
+    if let Err(msg) = check_codeql_workflow_posture() {
+        eprintln!("{msg}");
+        return ExitCode::FAILURE;
+    }
     if let Err(msg) = check_test_hygiene() {
         eprintln!("{msg}");
         return ExitCode::FAILURE;
@@ -3638,6 +4293,180 @@ mod tests {
                 .is_file(),
             "allowlisted paste-as-file store is missing — update the allowlist with the move"
         );
+    }
+
+    // --- source posture checks ---
+
+    #[test]
+    fn swift_package_dependency_guard_rejects_external_package() {
+        let text = r#"
+let package = Package(
+    name: "x",
+    dependencies: [
+        .package(url: "https://example.com/pkg.git", from: "1.0.0"),
+    ],
+    targets: [
+        .target(name: "App", dependencies: [.product(name: "Pkg", package: "pkg")])
+    ])
+"#;
+        let err = validate_swift_package_deps(text).unwrap_err();
+        assert!(err.contains(".package("), "got: {err}");
+        assert!(err.contains(".product("), "got: {err}");
+    }
+
+    #[test]
+    fn swift_package_dependency_guard_allows_local_target_dependencies() {
+        let text = r#"
+let package = Package(
+    name: "x",
+    targets: [
+        .target(name: "XPareCore", dependencies: ["CXPare"]),
+        .target(name: "XPareKit", dependencies: ["XPareCore"]),
+        .testTarget(name: "XPareKitTests", dependencies: ["XPareKit"]),
+    ])
+"#;
+        validate_swift_package_deps(text).unwrap();
+    }
+
+    #[test]
+    fn python_helper_posture_accepts_icon_generator_imports() {
+        let text = r#"
+from __future__ import annotations
+
+import argparse
+import math
+import struct
+import zlib
+from pathlib import Path
+"#;
+        validate_python_helper_posture(text).unwrap();
+    }
+
+    #[test]
+    fn python_helper_posture_rejects_network_and_process_imports() {
+        let text = r#"
+import subprocess
+from urllib.request import urlopen
+
+subprocess.run(["say", "oops"])
+"#;
+        let err = validate_python_helper_posture(text).unwrap_err();
+        assert!(err.contains("subprocess"), "got: {err}");
+        assert!(err.contains("urllib"), "got: {err}");
+    }
+
+    #[test]
+    fn pasteboard_write_shape_accepts_plain_string_rewrite_only() {
+        let text = r#"
+public final class SystemPasteboard {
+    public func writePlain(_ text: String) -> Int? {
+        pasteboard.clearContents()
+        guard pasteboard.setString(text, forType: .string) else { return nil }
+        return pasteboard.changeCount
+    }
+
+    public func writeFileURL(_ url: URL) -> Int? {
+        pasteboard.clearContents()
+        guard pasteboard.writeObjects([url as NSURL]) else { return nil }
+        return pasteboard.changeCount
+    }
+}
+"#;
+        validate_pasteboard_write_shape(&[(
+            "shells/macos/Sources/XPareKit/Pasteboard.swift".to_string(),
+            text.to_string(),
+        )])
+        .unwrap();
+    }
+
+    #[test]
+    fn pasteboard_write_shape_rejects_extra_string_write() {
+        let text = r#"
+public final class SystemPasteboard {
+    public func writePlain(_ text: String) -> Int? {
+        pasteboard.clearContents()
+        _ = pasteboard.setString(text, forType: .string)
+        guard pasteboard.setString("extra", forType: .string) else { return nil }
+        return pasteboard.changeCount
+    }
+}
+"#;
+        let err = validate_pasteboard_write_shape(&[(
+            "shells/macos/Sources/XPareKit/Pasteboard.swift".to_string(),
+            text.to_string(),
+        )])
+        .unwrap_err();
+        assert!(err.contains("exactly one plain string"), "got: {err}");
+    }
+
+    #[test]
+    fn codeql_workflow_posture_rejects_unpinned_actions() {
+        let text = r#"
+# Additive signal only.
+# Keep this workflow out of branch protection.
+permissions:
+  contents: read
+jobs:
+  rust:
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: rust
+          build-mode: none
+          queries: security-extended
+          dependency-caching: true
+      - uses: github/codeql-action/analyze@v4
+"#;
+        let err = validate_codeql_workflow_posture(text).unwrap_err();
+        assert!(err.contains("pinned"), "got: {err}");
+    }
+
+    #[test]
+    fn codeql_workflow_posture_accepts_pinned_security_extended() {
+        let pin = CODEQL_ACTION_PIN;
+        let text = format!(
+            r#"# CodeQL security analysis.
+# Additive signal only: the required local/CI gate remains `cargo xtask ci`.
+# Keep this workflow out of branch protection until the first alert baseline has
+# been triaged and false positives are understood.
+name: CodeQL
+permissions:
+  contents: read
+jobs:
+  rust:
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: github/codeql-action/init@{pin} # v4
+        with:
+          languages: rust
+          build-mode: none
+          queries: security-extended
+          dependency-caching: true
+      - uses: github/codeql-action/analyze@{pin} # v4
+        with:
+          category: "/language:rust"
+  python-actions:
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: github/codeql-action/init@{pin} # v4
+        with:
+          languages: python, actions
+          queries: security-extended
+      - uses: github/codeql-action/analyze@{pin} # v4
+        with:
+          category: "/language:python-actions"
+"#
+        );
+        validate_codeql_workflow_posture(&text).unwrap();
     }
 
     // --- check-clipboard-safety ---

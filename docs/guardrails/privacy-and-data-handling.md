@@ -14,9 +14,11 @@ sanctioned, opt-in exception — the paste-as-file feature — bounded by rule 2
 ## The rules
 
 1. **No network. Anywhere.** Not in the core, not in any crate that could be linked
-   into a shipped artifact or run at build time. There must be no code path that can
-   open a socket. (Enforced by `check-no-network` over the whole workspace tree, and
-   by the macOS sandbox granting no network entitlement.)
+   into a shipped artifact or run at build time, and not through direct Swift
+   platform APIs. There must be no code path that can open a socket, browser view,
+   or auth callback surface. (Enforced by `check-no-network` over the workspace
+   tree, `check-swift-no-network-apis` over the shipped Swift shell, and by the
+   macOS sandbox granting no network entitlement.)
 2. **No persistence of content — with one sanctioned, opt-in exception.** Clipboard
    text is never written to a file, database, cache, temp file, defaults/registry,
    or any durable store. The only disk I/O the project does is the CLI reading a
@@ -72,6 +74,9 @@ sanctioned, opt-in exception — the paste-as-file feature — bounded by rule 2
    the FFI has its own hard backstop. When a platform exposes raw rich representation
    bytes, check them before decoding; still do not document the ceiling as a
    universal streaming pre-parse limit for every native format.
+10. **No shipped command execution path.** Clipboard handling must not spawn
+    subprocesses or delegate clipboard-derived content to shell commands. Release
+    scripts and `xtask` may run tools; shipped app/core/CLI surfaces may not.
 
 ## Why each rule has teeth
 
@@ -86,11 +91,13 @@ guardrails.
 
 | Rule | Check |
 |---|---|
-| No network anywhere | `cargo xtask check-no-network` (banlist across the whole tree) + sandbox has no network entitlement |
+| No network anywhere | `cargo xtask check-no-network` (banlist across the whole tree) + `cargo xtask check-swift-no-network-apis` (Swift network/browser/auth API tokens) + sandbox has no network entitlement |
 | Core has no OS/filesystem/network deps | `cargo xtask check-core-deps` (strict transitive allowlist) |
 | No log sink in the core | `#![deny(clippy::print_stdout, print_stderr, dbg_macro)]` + `clippy -D warnings` + no logging crate |
 | No content logged/persisted (incl. shells) | `cargo xtask check-no-content-logging` (scans shipped Rust + Swift source; the paste-as-file allow-marker is honored only in `PasteFileStore.swift`) |
-| Default checks avoid the real clipboard | `cargo xtask check-clipboard-safety` |
+| No command execution in shipped surfaces | `cargo xtask check-shipped-command-exec` |
+| Default checks avoid the real clipboard | `cargo xtask check-clipboard-safety` + `cargo xtask check-real-clipboard-tests` |
+| Plain-string pasteboard rewrite stays narrow | `cargo xtask check-pasteboard-write-shape` (the opt-in paste-as-file path remains the separate sanctioned exception) |
 | In-memory only / wipe | pipeline intermediates in `Zeroizing`; fused pipeline scratch storage zeroized before release/reallocation and drop; output buffer zeroized in `xp_buffer_free`; covered by `cargo test` and `cargo xtask check-pipeline-zeroization` |
 | Minimal entitlements | `cargo xtask check-entitlements`; `cargo xtask check-release-posture`; `release.sh dist` signs executable and bundle with the checked-in entitlements and verifies both signed payloads |
 
@@ -103,8 +110,12 @@ update `SECURITY.md` and the relevant guardrail, and update the enforcing check 
 *match* the new (justified) posture, never to hide a regression:
 
 - a new dependency capable of network access (or that pulls one in),
+- any direct network/browser/auth API usage in the shipped shell,
 - any new persistence of content, any new log/telemetry path, or a new data path
   that lets content escape the transform,
+- any shipped command-execution path,
 - a new entitlement,
+- any broadening of the plain-string pasteboard rewrite path or expansion of the
+  paste-as-file exception beyond its single audited writer,
 - weakening the core's `print*`/`dbg!` denies, pipeline intermediate wiping, or
   fused scratch storage wipe-before-release posture.

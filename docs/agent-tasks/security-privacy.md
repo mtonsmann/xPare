@@ -14,21 +14,28 @@ logging, network, telemetry, or in-memory lifetime / zeroization.
   `shells/macos/release.sh`.
 - The enforcing `xtask` checks: `check-no-network`, `check-no-content-logging`,
   `check-pipeline-zeroization`, `check-clipboard-safety`, `check-entitlements`,
-  `check-release-posture`.
+  `check-release-posture`, `check-swift-no-network-apis`,
+  `check-shipped-command-exec`, `check-real-clipboard-tests`,
+  `check-pasteboard-write-shape`.
 
 ## Hard constraints
 
 - **No network anywhere** — not in any crate, build step, or entitlement.
+- **No shipped command execution surface** — process spawning belongs in `xtask` or
+  reviewed release shell scripts, not the app/core/CLI/helper surfaces.
 - **No clipboard content logged or persisted.** Log fixed operational states only;
   persist user *settings*, never clipboard-derived text.
+- **Default tests avoid the real clipboard.** Use fake or named pasteboards unless a
+  real-clipboard exercise is behind an explicit opt-in target.
 - **In-memory only.** Pipeline intermediates stay in `Zeroizing`; fused scratch is
   wiped before release/growth; `xp_buffer_free` zeroizes the output. Do not weaken
   any of these.
 - **Minimal entitlements.** The macOS entitlements file is exactly
   `com.apple.security.app-sandbox = true`. No network/device/personal-info/automation/
   file-access/codesign-weakening/accessibility entitlement.
-- Any new entitlement, network-capable dependency, data path, or weakened wipe is a
-  **posture change** — justify it in the PR and update `SECURITY.md`.
+- Any new entitlement, network-capable dependency/API, subprocess path, data path,
+  pasteboard representation, or weakened wipe is a **posture change** — justify it
+  in the PR and update `SECURITY.md`.
 
 ## Implementation rules
 
@@ -46,8 +53,9 @@ logging, network, telemetry, or in-memory lifetime / zeroization.
 ## Required evidence
 
 - The full `cargo xtask ci` run.
-- An explicit posture statement: network (none), content logging (none), zeroization
-  (preserved), entitlements (still minimal) — or the justified change.
+- An explicit posture statement: network (none), command execution (none in shipped
+  app surfaces), content logging (none), default real-clipboard use (none),
+  zeroization (preserved), entitlements (still minimal) — or the justified change.
 
 ## Proof gaps to report
 

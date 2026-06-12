@@ -1,8 +1,9 @@
 # Guardrail — no content logging & clipboard safety
 
-Two mechanical checks that protect the clipboard-privacy posture, ported from the
-upstream FormatStripper `guardrails.py` and enforced here by the in-tree `xtask`
-(so they run identically locally and in CI, with no extra toolchain).
+Mechanical checks that protect the clipboard-privacy posture, with the original
+content/logging checks ported from the upstream FormatStripper `guardrails.py` and
+enforced here by the in-tree `xtask` (so they run identically locally and in CI,
+with no extra toolchain).
 
 ## When to consult
 
@@ -30,6 +31,11 @@ upstream FormatStripper `guardrails.py` and enforced here by the in-tree `xtask`
    `make checks`, `make build`, `make test`, `make app`, `make run`, `make preview`,
    and `make dist` must use synthetic pasteboards only, so the gate is safe to run
    anywhere and never reads or mutates the user's real clipboard.
+4. **The ordinary pasteboard rewrite stays plain-string only.** The macOS shell's
+   `writePlain(_:)` path clears the pasteboard and writes one `.string`
+   representation. Rich formats or extra representations on that path are a
+   privacy/shell posture change. The opt-in paste-as-file feature is the separate,
+   documented file-reference exception.
 
 ## Enforcing checks
 
@@ -37,11 +43,13 @@ upstream FormatStripper `guardrails.py` and enforced here by the in-tree `xtask`
 |------|-------|---------|
 | 1, 2 | `check-no-content-logging` — scans shipped source (`core/src`, `cli/src`, `shells/macos/Sources`) for a line that both calls a log/persist sink **and** names clipboard-derived content; honors the paste-as-file allow-marker only inside `PasteFileStore.swift` and flags the marker anywhere else | `cargo xtask check-no-content-logging` |
 | 3 | `check-clipboard-safety` — fails if a default Make target depends on a `*general*` (real-clipboard) smoke | `cargo xtask check-clipboard-safety` |
+| 3 | `check-real-clipboard-tests` — fails if default Swift tests touch `NSPasteboard.general` | `cargo xtask check-real-clipboard-tests` |
+| 4 | `check-pasteboard-write-shape` — fails if `writePlain(_:)` is broader than clear-once + one plain string | `cargo xtask check-pasteboard-write-shape` |
 
-Both run inside `cargo xtask ci` (and `make checks`). The same gate also runs
-`check-release-posture` for the official signing path and `check-c-ffi-surface`
-for the C/SwiftPM bridge, because clipboard safety depends on those boundary
-surfaces staying narrow and fail-closed.
+These run inside `cargo xtask ci` (and `make checks`). The same gate also runs
+`check-release-posture`, `check-swift-no-network-apis`,
+`check-shipped-command-exec`, and `check-c-ffi-surface`, because clipboard safety
+depends on those boundary surfaces staying narrow and fail-closed.
 
 ### Heuristic scope (and why it is tuned)
 
@@ -64,5 +72,7 @@ tests are not scanned — they legitimately name these words.
   on why it cannot contain clipboard content.
 - Any new clipboard-touching Make/CI target, confirming it is opt-in (not a
   dependency of a default target).
+- Any new pasteboard write representation, confirming it is an intentional posture
+  change and covered by updated shell/privacy docs.
 - Never silence a finding by weakening the check — fix the code (log a state, not the
   content; persist a setting, not the payload; make the real-clipboard smoke opt-in).
