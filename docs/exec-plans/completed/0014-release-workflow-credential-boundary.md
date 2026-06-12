@@ -27,6 +27,9 @@ assets to satisfy the diff.
 - Third-party metadata actions must not be in the trusted path from signed asset
   capture to GitHub Release publication.
 - Third-party metadata actions must not run with release-asset write permission.
+- Draft GitHub Releases must not become a durable handoff point for required
+  metadata: if required post-publication metadata fails, the incomplete draft
+  must be deleted before a maintainer can publish it.
 
 ## New Invariants
 
@@ -52,6 +55,14 @@ assets to satisfy the diff.
 - Provenance attestation and SBOM generation must run in jobs without
   `contents: write`; the later SBOM attachment job may have release write only
   if it contains no `uses:` actions and uploads the fixed SBOM workflow artifact.
+- Provenance attestation must use the signed-release checksum subject list
+  captured before publication; it must not download assets from the draft
+  release or require draft-visible release credentials.
+- Any run-only release-write metadata job must set explicit repository context
+  for `gh` (`GH_REPO` or an equivalent `--repo`) because there may be no checkout
+  remote in that job.
+- The incomplete-draft cleanup job may delete only a still-draft release and must
+  never delete the tag.
 
 ## Threats / Bug Classes Considered
 
@@ -63,6 +74,12 @@ assets to satisfy the diff.
   verification and `make github-release` run.
 - A compromised post-publication metadata action uses a job-level release write
   token to clobber already-verified draft release assets.
+- A required metadata job fails after `make github-release` creates a draft,
+  leaving a maintainer-visible draft missing provenance or SBOM metadata.
+- A metadata job without checkout lacks repository context, so `gh release`
+  commands fail after the draft has already been created.
+- A read-only metadata job tries to download a draft release, which requires
+  draft-visible release access and reintroduces release-write token pressure.
 - A notary profile is accidentally stored in the login keychain and survives
   temporary keychain deletion.
 - A short-form action step bypasses the release workflow structural guard.
@@ -76,6 +93,9 @@ assets to satisfy the diff.
   binding, fail-open cleanup, missing signed-manifest baseline binding, quoted
   YAML action keys, cleanup failure handlers, and post-signing actions before
   publication or with release-asset write permission.
+- Add guard tests for checksum-subject attestation, no draft release download in
+  attestation, explicit `gh` repository context in release-write metadata jobs,
+  and fail-closed cleanup of incomplete draft releases.
 - Keep the current workflow passing test as the happy path.
 
 ## Verification / Proof Plan
@@ -110,12 +130,17 @@ assets to satisfy the diff.
   attestation and SBOM generation are allowed to execute third-party actions
   because they have no release-asset write permission; the SBOM attachment job
   has release write permission but only trusted `run:` steps.
+- Do not use the draft release as the metadata handoff point. The signing job
+  exports the protected checksum subject list through a job output, the
+  attestation job attests that list without release write permission or draft
+  downloads, and a separate run-only cleanup job deletes an incomplete draft if
+  required metadata fails.
 
 ## Evidence Packet
 
 - `cargo fmt --all` passed.
 - `cargo fmt --all --check` passed.
-- `cargo test -p xtask` passed: 85 tests.
+- `cargo test -p xtask` passed: 91 tests.
 - `cargo clippy -p xtask --all-targets -- -D warnings` passed.
 - `cargo run -p xtask -- check-codeql-workflow-posture` passed: CodeQL remains
   additive, pinned, least-privilege, and custom packs are wired.

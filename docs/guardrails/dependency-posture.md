@@ -72,11 +72,14 @@ capability-constrained**, and the constraint is enforced mechanically.
    actual continued notarytool command instead of accepting comments or adjacent
    prose as proof. The actions themselves are supply-chain just like crates —
    boring, audited, pinned, and kept outside the signing credential window and
-   the signed-asset publication window. Post-publication metadata actions must
-   also be isolated from release-asset write permission: attestation and SBOM
-   generation run in `contents: read` jobs, and the only later `contents: write`
-   job is a run-only SBOM attachment step that downloads the fixed workflow
-   artifact and uploads that one file.
+   the signed-asset publication window. A draft GitHub Release is not a safe
+   metadata handoff boundary: post-publication metadata actions must be isolated
+   from release-asset write permission, attestation must use the checksum subject
+   list captured before publication instead of downloading the draft, and any
+   required metadata failure must retract the incomplete draft. The only later
+   `contents: write` jobs must be run-only steps: one attaches the fixed SBOM
+   workflow artifact, and one deletes only the incomplete draft release on
+   metadata failure.
 9. **Audit the supply chain and the non-Rust surface mechanically.**
    [`cargo-deny`](https://embarkstudios.github.io/cargo-deny/) (`deny.toml`) scans the
    whole dependency tree for RustSec advisories, yanked crates, license compliance (a

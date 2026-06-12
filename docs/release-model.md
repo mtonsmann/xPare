@@ -118,13 +118,16 @@ equals the workspace version in `Cargo.toml`; a mismatch fails the release.
    action runs. The signed-asset manifest is bound to a prior step-output digest
    and diffed immediately before `make github-release` publishes the draft
    release. Metadata actions (SBOM generation and provenance attestation) run
-   only after the signed assets are already published, so a third-party action
-   cannot mutate PATH, environment, workspace files, or release scripts before
-   the trusted publication command runs. Those metadata actions are also split
-   out of the release-write job: provenance attestation and SBOM generation run
-   with `contents: read`, while the later SBOM attachment job has
-   `contents: write` but no `uses:` actions and uploads only the fixed SBOM
-   workflow artifact.
+   only after the trusted publication command, so a third-party action cannot
+   mutate PATH, environment, workspace files, or release scripts before the draft
+   is created. Those metadata actions are also split out of the release-write
+   job: provenance attestation runs from the checksum subject list captured before
+   publication instead of downloading the draft, SBOM generation runs with
+   `contents: read`, and the later SBOM attachment job has `contents: write` but
+   no `uses:` actions and uploads only the fixed SBOM workflow artifact. If any
+   required metadata job fails after draft creation, a run-only cleanup job
+   verifies the release is still a draft and deletes that incomplete draft
+   without deleting the tag.
 
 Releases are created with `--draft` (and `--prerelease` for any hyphenated
 version such as `1.0.0-rc.1`); a maintainer publishes the draft manually after

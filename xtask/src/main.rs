@@ -2720,9 +2720,11 @@ fn validate_release_workflow_credential_boundary(text: &str) -> Result<(), Strin
         "Clean temporary signing material",
         "Verify signed assets before publication",
         "Publish GitHub Release",
+        "Materialize signed subject checksums",
         "Attest build provenance",
         "Generate SBOM (SPDX JSON)",
         "Attach SBOM to the GitHub Release",
+        "Delete incomplete draft GitHub Release",
     ];
     let positions = require_ordered_release_workflow_steps(text, &steps)?;
 
@@ -2738,6 +2740,16 @@ fn validate_release_workflow_credential_boundary(text: &str) -> Result<(), Strin
     )?;
 
     let publish_job = workflow_job_slice(text, "publish-official", Some("attest-official"))?;
+    for required in [
+        "release_subject_checksums_b64: ${{ steps.signed_manifest.outputs.checksums_b64 }}",
+        "GH_REPO: ${{ github.repository }}",
+    ] {
+        if !non_comment_line_contains(publish_job, required) {
+            return Err(format!(
+                "publish-official job must contain `{required}` so release publication and metadata handoff are explicit"
+            ));
+        }
+    }
     let publish_step_start = publish_job
         .find("      - name: Publish GitHub Release\n")
         .ok_or_else(|| "missing Publish GitHub Release step in publish-official job".to_string())?;
@@ -2747,7 +2759,15 @@ fn validate_release_workflow_credential_boundary(text: &str) -> Result<(), Strin
     )?;
 
     let attest_job = workflow_job_slice(text, "attest-official", Some("sbom-official"))?;
-    for required in ["contents: read", "id-token: write", "attestations: write"] {
+    for required in [
+        "contents: read",
+        "id-token: write",
+        "attestations: write",
+        "artifact-metadata: write",
+        "RELEASE_SUBJECT_CHECKSUMS_B64: ${{ needs['publish-official'].outputs.release_subject_checksums_b64 }}",
+        "base64 -d > dist/release/signed-release-assets.sha256",
+        "subject-checksums: dist/release/signed-release-assets.sha256",
+    ] {
         if !non_comment_line_contains(attest_job, required) {
             return Err(format!(
                 "attest-official job must contain `{required}` so provenance runs without release-asset write permission"
@@ -2757,6 +2777,12 @@ fn validate_release_workflow_credential_boundary(text: &str) -> Result<(), Strin
     if non_comment_line_contains(attest_job, "contents: write") {
         return Err(
             "attest-official job must not grant release-asset write permission".to_string(),
+        );
+    }
+    if non_comment_line_contains(attest_job, "gh release download") {
+        return Err(
+            "attest-official job must not download draft release assets; attest the signed checksum subjects instead"
+                .to_string(),
         );
     }
 
@@ -2776,10 +2802,16 @@ fn validate_release_workflow_credential_boundary(text: &str) -> Result<(), Strin
         return Err("sbom-official job must not grant release-asset write permission".to_string());
     }
 
-    let attach_sbom_job = workflow_job_slice(text, "attach-sbom-official", None)?;
+    let attach_sbom_job = workflow_job_slice(
+        text,
+        "attach-sbom-official",
+        Some("retract-incomplete-official-release"),
+    )?;
     for required in [
         "contents: write",
         "actions: read",
+        "attest-official",
+        "GH_REPO: ${{ github.repository }}",
         "gh api \"repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts\"",
         r#"gh release upload "v${RELEASE_VERSION}""#,
         r#""sbom/xPare-v${RELEASE_VERSION}-sbom.spdx.json" --clobber"#,
@@ -2793,6 +2825,36 @@ fn validate_release_workflow_credential_boundary(text: &str) -> Result<(), Strin
     reject_action_steps_in_window(
         attach_sbom_job,
         "inside the release-write SBOM attachment job",
+    )?;
+
+    let cleanup_job = workflow_job_slice(text, "retract-incomplete-official-release", None)?;
+    for required in [
+        "contents: write",
+        "always()",
+        "needs['publish-official'].result == 'success'",
+        "needs['attest-official'].result != 'success'",
+        "needs['sbom-official'].result != 'success'",
+        "needs['attach-sbom-official'].result != 'success'",
+        "GH_REPO: ${{ github.repository }}",
+        r#"gh release view "v${RELEASE_VERSION}" --json isDraft --jq '.isDraft'"#,
+        "refusing to delete it after metadata failure",
+        r#"gh release delete "v${RELEASE_VERSION}" --yes"#,
+    ] {
+        if !non_comment_line_contains(cleanup_job, required) {
+            return Err(format!(
+                "retract-incomplete-official-release job must contain `{required}` so required metadata failures do not leave a publishable incomplete draft"
+            ));
+        }
+    }
+    if non_comment_line_contains(cleanup_job, "--cleanup-tag") {
+        return Err(
+            "retract-incomplete-official-release job must delete only the incomplete draft release, not the tag"
+                .to_string(),
+        );
+    }
+    reject_action_steps_in_window(
+        cleanup_job,
+        "inside the incomplete-draft release cleanup job",
     )?;
 
     let store_notary_credentials = &text[positions[1]..positions[2]];
@@ -2849,6 +2911,8 @@ fn validate_release_workflow_credential_boundary(text: &str) -> Result<(), Strin
         "shasum -a 256 -- *.zip *.zip.sha256 SHA256SUMS*",
         r#"shasum -a 256 "${SIGNED_RELEASE_MANIFEST}""#,
         r#"echo "sha256=${manifest_sha}" >> "${GITHUB_OUTPUT}""#,
+        r#"checksums_b64="$(base64 < "${SIGNED_RELEASE_MANIFEST}" | tr -d '\n')""#,
+        r#"echo "checksums_b64=${checksums_b64}" >> "${GITHUB_OUTPUT}""#,
     ] {
         if !non_comment_line_contains(capture_to_cleanup, required) {
             return Err(format!(
@@ -2857,15 +2921,11 @@ fn validate_release_workflow_credential_boundary(text: &str) -> Result<(), Strin
         }
     }
 
-    let attest_step = &text[positions[7]..positions[8]];
-    for required in [
-        "dist/release/*.zip",
-        "dist/release/*.zip.sha256",
-        "dist/release/SHA256SUMS*",
-    ] {
+    let attest_step = &text[positions[8]..positions[9]];
+    for required in ["subject-checksums: dist/release/signed-release-assets.sha256"] {
         if !non_comment_line_contains(attest_step, required) {
             return Err(format!(
-                "build provenance attestation must include signed release asset `{required}`"
+                "build provenance attestation must use signed release subject checksum input `{required}`"
             ));
         }
     }
@@ -4839,6 +4899,38 @@ mod tests {
     }
 
     #[test]
+    fn release_workflow_rejects_attestation_from_draft_release_download() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened = release_workflow.replace(
+            "          mkdir -p dist/release\n",
+            "          mkdir -p dist/release\n          gh release download \"v${RELEASE_VERSION}\"\n",
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(
+            err.contains("must not download draft release assets"),
+            "expected draft-download rejection, got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_workflow_rejects_attestation_without_checksum_subjects() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened = release_workflow.replace(
+            "          subject-checksums: dist/release/signed-release-assets.sha256\n",
+            "          subject-path: dist/release/*.zip\n",
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(
+            err.contains("subject-checksums"),
+            "expected checksum-subject attestation failure, got: {err}"
+        );
+    }
+
+    #[test]
     fn release_workflow_rejects_release_write_on_sbom_generation_job() {
         let root = workspace_root();
         let release_workflow =
@@ -4855,6 +4947,38 @@ mod tests {
     }
 
     #[test]
+    fn release_workflow_rejects_missing_repo_context_for_release_uploads() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened = release_workflow.replace(
+            "          GH_TOKEN: ${{ github.token }}\n          GH_REPO: ${{ github.repository }}\n        run: |\n          set -euo pipefail\n          artifact_name=\"release-sbom-${RELEASE_VERSION}\"\n",
+            "          GH_TOKEN: ${{ github.token }}\n        run: |\n          set -euo pipefail\n          artifact_name=\"release-sbom-${RELEASE_VERSION}\"\n",
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(
+            err.contains("GH_REPO: ${{ github.repository }}"),
+            "expected release repository context failure, got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_workflow_rejects_sbom_attachment_without_attestation_need() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened = release_workflow.replace(
+            "      - publish-official\n      - attest-official\n      - sbom-official\n",
+            "      - publish-official\n      - sbom-official\n",
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(
+            err.contains("attest-official"),
+            "expected SBOM attachment attestation dependency failure, got: {err}"
+        );
+    }
+
+    #[test]
     fn release_workflow_rejects_action_in_sbom_attachment_write_job() {
         let root = workspace_root();
         let release_workflow =
@@ -4867,6 +4991,38 @@ mod tests {
         assert!(
             err.contains("inside the release-write SBOM attachment job"),
             "expected SBOM attachment action rejection, got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_workflow_rejects_missing_incomplete_draft_cleanup() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened = release_workflow.replace(
+            "          gh release delete \"v${RELEASE_VERSION}\" --yes\n",
+            "          echo \"incomplete draft left for manual cleanup\"\n",
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(
+            err.contains("required metadata failures do not leave a publishable incomplete draft"),
+            "expected incomplete-draft cleanup failure, got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_workflow_rejects_incomplete_draft_cleanup_that_deletes_tag() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened = release_workflow.replace(
+            "          gh release delete \"v${RELEASE_VERSION}\" --yes\n",
+            "          gh release delete \"v${RELEASE_VERSION}\" --yes --cleanup-tag\n",
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(
+            err.contains("not the tag"),
+            "expected tag-preservation cleanup failure, got: {err}"
         );
     }
 
@@ -4916,16 +5072,16 @@ mod tests {
     }
 
     #[test]
-    fn release_workflow_rejects_missing_per_zip_checksum_attestation() {
+    fn release_workflow_rejects_missing_signed_subject_checksum_handoff() {
         let root = workspace_root();
         let release_workflow =
             std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
-        let weakened = release_workflow.replace("            dist/release/*.zip.sha256\n", "");
-        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
-        assert!(
-            err.contains("attestation") && err.contains("*.zip.sha256"),
-            "got: {err}"
+        let weakened = release_workflow.replace(
+            "          echo \"checksums_b64=${checksums_b64}\" >> \"${GITHUB_OUTPUT}\"\n",
+            "          # signed subject checksums no longer exported\n",
         );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(err.contains("checksums_b64"), "got: {err}");
     }
 
     #[test]

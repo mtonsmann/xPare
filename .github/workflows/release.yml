@@ -266,6 +266,7 @@ jobs:
       contents: write
     outputs:
       release_version: ${{ steps.release_version.outputs.version }}
+      release_subject_checksums_b64: ${{ steps.signed_manifest.outputs.checksums_b64 }}
     env:
       VERSION: ${{ github.ref_name }}
       NOTARY_PROFILE: xpare-notary
@@ -379,6 +380,8 @@ jobs:
           ( cd dist/release && shasum -a 256 -- *.zip *.zip.sha256 SHA256SUMS* ) > "${SIGNED_RELEASE_MANIFEST}"
           manifest_sha="$(shasum -a 256 "${SIGNED_RELEASE_MANIFEST}" | awk '{print $1}')"
           echo "sha256=${manifest_sha}" >> "${GITHUB_OUTPUT}"
+          checksums_b64="$(base64 < "${SIGNED_RELEASE_MANIFEST}" | tr -d '\n')"
+          echo "checksums_b64=${checksums_b64}" >> "${GITHUB_OUTPUT}"
 
       - name: Clean temporary signing material
         if: ${{ always() }}
@@ -403,10 +406,11 @@ jobs:
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: make github-release VERSION="${RELEASE_VERSION}"
 
   attest-official:
-    name: attest published release assets
+    name: attest signed release subjects
     needs: publish-official
     if: ${{ vars.XPARE_ENABLE_OFFICIAL_RELEASE == 'true' }}
     runs-on: ubuntu-latest
@@ -415,32 +419,27 @@ jobs:
       contents: read
       id-token: write
       attestations: write
+      artifact-metadata: write
     env:
       RELEASE_VERSION: ${{ needs['publish-official'].outputs.release_version }}
+      RELEASE_SUBJECT_CHECKSUMS_B64: ${{ needs['publish-official'].outputs.release_subject_checksums_b64 }}
     steps:
-      - name: Download published release assets
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Materialize signed subject checksums
         run: |
           set -euo pipefail
           mkdir -p dist/release
-          gh release download "v${RELEASE_VERSION}" \
-            --dir dist/release \
-            --pattern "*.zip" \
-            --pattern "*.zip.sha256" \
-            --pattern "SHA256SUMS*"
+          printf '%s' "${RELEASE_SUBJECT_CHECKSUMS_B64}" | base64 -d > dist/release/signed-release-assets.sha256
+          test -s dist/release/signed-release-assets.sha256
 
       # Signed build provenance for everything we ship: a verifier can check that
       # an asset was built by THIS workflow at THIS SHA (`gh attestation verify`).
       # This third-party action runs in a separate job without release write
-      # permission, after the signed assets are published.
+      # permission and attests the checksum subject list captured before release
+      # publication, so it does not need draft-release visibility.
       - name: Attest build provenance
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
-          subject-path: |
-            dist/release/*.zip
-            dist/release/*.zip.sha256
-            dist/release/SHA256SUMS*
+          subject-checksums: dist/release/signed-release-assets.sha256
 
   sbom-official:
     name: generate release SBOM
@@ -481,6 +480,7 @@ jobs:
     name: attach release SBOM
     needs:
       - publish-official
+      - attest-official
       - sbom-official
     if: ${{ vars.XPARE_ENABLE_OFFICIAL_RELEASE == 'true' }}
     runs-on: ubuntu-latest
@@ -494,6 +494,7 @@ jobs:
       - name: Attach SBOM to the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           artifact_name="release-sbom-${RELEASE_VERSION}"
@@ -511,3 +512,31 @@ jobs:
           unzip -q sbom.zip -d sbom
           gh release upload "v${RELEASE_VERSION}" \
             "sbom/xPare-v${RELEASE_VERSION}-sbom.spdx.json" --clobber
+
+  retract-incomplete-official-release:
+    name: delete incomplete draft release
+    needs:
+      - publish-official
+      - attest-official
+      - sbom-official
+      - attach-sbom-official
+    if: ${{ always() && vars.XPARE_ENABLE_OFFICIAL_RELEASE == 'true' && needs['publish-official'].result == 'success' && (needs['attest-official'].result != 'success' || needs['sbom-official'].result != 'success' || needs['attach-sbom-official'].result != 'success') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      RELEASE_VERSION: ${{ needs['publish-official'].outputs.release_version }}
+    steps:
+      - name: Delete incomplete draft GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          is_draft="$(gh release view "v${RELEASE_VERSION}" --json isDraft --jq '.isDraft')"
+          if [ "${is_draft}" != "true" ]; then
+            echo "Release v${RELEASE_VERSION} is not a draft; refusing to delete it after metadata failure."
+            exit 1
+          fi
+          gh release delete "v${RELEASE_VERSION}" --yes
