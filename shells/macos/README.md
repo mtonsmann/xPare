@@ -85,9 +85,13 @@ A ✂ **scissors** icon appears in the menu bar (no Dock icon — it's an
   whitespace. Toggle individual operations from the menu.
 - **Extract text from image:** copy an image, then use "Extract text from image" in
   the menu. The shell uses Apple's local Vision OCR and rewrites the clipboard with
-  recognized plain text; this is an explicit one-shot command, not continuous mode.
+  recognized plain text. Continuous mode can also OCR image-only clipboards when the
+  separate "OCR images in continuous mode" setting is enabled from Settings or the
+  menu.
 - **Continuous mode (opt-in):** enable "Continuous monitoring" to strip
-  automatically whenever the clipboard changes (500 ms poll). Off by default.
+  automatically whenever the clipboard changes (500 ms poll). "OCR images in
+  continuous mode" is a separate opt-in for image-only clipboards and stays visible
+  in the menu when enabled. Both are off by default.
 - **Quit:** the menu's "Quit SafetyStrip" (⌘Q).
 
 Notes:
@@ -122,8 +126,8 @@ suite covers:
   defaults on absent/corrupt data.
 - **`StripController`** end-to-end: HTML is stripped and written back in place;
   HTML sources force `strip_html` even if unset; unchanged plain text is not
-  rewritten; image OCR is explicit-only, size-bounded, off-main, and protected
-  against stale pasteboard writes.
+  rewritten; image OCR is opt-in for continuous mode, size-bounded, off-main, and
+  protected against stale pasteboard writes.
 
 ## Packaging & distribution
 
@@ -170,10 +174,12 @@ absent, if app-sandbox is missing/false, or if any banned key appears.
 - **Rich → plain extraction** reads the best representation: prefer
   `public.html` (handed to the core's `strip_html`), else RTF flattened to its
   plain attributed-string value, else a plain string.
-- **Image → text extraction** is explicit-only. `SystemPasteboard.readImage`
-  reads bounded PNG/JPEG/HEIC/TIFF image bytes, `VisionTextRecognizer` runs local
-  Vision OCR off the main actor, and `StripController.extractImageText` writes the
-  recognized text back only if the pasteboard generation has not changed.
+- **Image → text extraction** is shell-owned. `SystemPasteboard.readImage` reads
+  bounded PNG/JPEG/HEIC/TIFF image bytes, `VisionTextRecognizer` runs local Vision
+  OCR off the main actor, and `StripController.extractImageText` writes the
+  recognized text back only if the pasteboard generation has not changed. The menu
+  command is always manual; continuous mode only uses the OCR path for image-only
+  clipboards when `ocrImagesInContinuousMode` is enabled.
 - **Global hotkey via Carbon.** `HotkeyManager` uses `RegisterEventHotKey` /
   `InstallEventHandler` (default ⌥⌘V). This is the one global-hotkey mechanism
   that needs **neither** Accessibility **nor** Input Monitoring. `CGEventTap`

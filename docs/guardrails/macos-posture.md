@@ -54,9 +54,10 @@ should distrust, so the posture is deliberately minimal and is checked mechanica
    representation (prefer the HTML rep → core `StripHtml`), transform via the core,
    and write the result back to the same pasteboard. **Never** simulate a paste
    (synthesizing Cmd-V) — that needs Accessibility and can target the wrong app.
-   Explicit image OCR is the shell-owned exception to "transform via the core": the
-   one-shot command reads bounded image bytes, runs Apple's local Vision OCR, and
-   writes recognized plain text back in place without changing the core ABI.
+   Image OCR is the shell-owned exception to "transform via the core": the one-shot
+   command, and the separate opt-in continuous OCR setting for image-only
+   clipboards, read bounded image bytes, run Apple's local Vision OCR, and write
+   recognized plain text back in place without changing the core ABI.
 7. **No persistence or logging of pasteboard content** — see
    [privacy-and-data-handling](privacy-and-data-handling.md). Free the core's output
    buffer with `ss_buffer_free` (it is zeroized on free).
@@ -91,9 +92,10 @@ should distrust, so the posture is deliberately minimal and is checked mechanica
 ### Responsiveness
 
 12. **Transform/OCR off the main thread; indicate only when it's slow.** `stripNow`
-   runs the core transform on a background task, and explicit image OCR runs Vision
-   recognition on a detached task — the menu-bar UI must never block, even on a large
-   clipboard. It is **threshold-gated**: `onStrippingChange(true)` fires only if a run
+   runs the core transform on a background task, and image OCR runs Vision recognition
+   on a detached task whether invoked manually or by the opt-in continuous setting —
+   the menu-bar UI must never block, even on a large clipboard. It is
+   **threshold-gated**: `onStrippingChange(true)` fires only if a run
    outlasts `busyThreshold` (default 400 ms), and `(false)` when it finishes, so the
    instant common case shows nothing and only a multi-second run surfaces a
    "Stripping…" state. The pasteboard read and the in-place write stay on the main

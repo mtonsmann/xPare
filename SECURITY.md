@@ -101,9 +101,10 @@ Clipboard markup is attacker-influenced, so the core treats all input as hostile
   escaped where Markdown could reinterpret it as raw HTML, and copied code/pre
   content uses delimiters that cannot be closed by the copied backtick run. It is
   not injected into continuous mode or the canonical sanitization pipeline.
-- **Image OCR is explicit, local shell extraction** — the macOS shell's one-shot
-  "Extract text from image" command reads bounded image bytes and runs Apple's
-  local Vision OCR off the main actor. It adds no network path, no telemetry, no
+- **Image OCR is local shell extraction** — the macOS shell's "Extract text from
+  image" command reads bounded image bytes and runs Apple's local Vision OCR off the
+  main actor. The same path may run for image-only clipboard changes when the user
+  separately enables continuous image OCR. It adds no network path, no telemetry, no
   persistence, and no new entitlement; recognized text is a short-lived in-memory
   value, is checked against the shell ceiling, and is written back only if the
   pasteboard generation has not changed.

@@ -50,23 +50,28 @@ public struct Settings: Codable, Equatable, Sendable {
     /// core arrange the pipeline correctly/efficiently; `asGiven` is the "Manual
     /// order" mode where the user's drag-arranged order is honored exactly.
     public var ordering: Ordering
+    /// Whether continuous mode may OCR image-only clipboard contents. Off by
+    /// default; the manual OCR command remains available regardless of this setting.
+    public var ocrImagesInContinuousMode: Bool
 
     public init(
         mode: StripMode = .onDemand,
         operations: [SafetyStripCore.Operation] = Settings.defaultOperations,
         hotkey: HotkeyCombo = .defaultCombo,
         pollIntervalMs: Int = 500,
-        ordering: Ordering = .canonical
+        ordering: Ordering = .canonical,
+        ocrImagesInContinuousMode: Bool = false
     ) {
         self.mode = mode
         self.operations = operations
         self.hotkey = hotkey
         self.pollIntervalMs = pollIntervalMs
         self.ordering = ordering
+        self.ocrImagesInContinuousMode = ocrImagesInContinuousMode
     }
 
     private enum CodingKeys: String, CodingKey {
-        case mode, operations, hotkey, pollIntervalMs, ordering
+        case mode, operations, hotkey, pollIntervalMs, ordering, ocrImagesInContinuousMode
     }
 
     /// Decode tolerantly so a settings blob saved by an older build (missing newer
@@ -80,6 +85,8 @@ public struct Settings: Codable, Equatable, Sendable {
         hotkey = try c.decodeIfPresent(HotkeyCombo.self, forKey: .hotkey) ?? .defaultCombo
         pollIntervalMs = try c.decodeIfPresent(Int.self, forKey: .pollIntervalMs) ?? 500
         ordering = try c.decodeIfPresent(Ordering.self, forKey: .ordering) ?? .canonical
+        ocrImagesInContinuousMode =
+            try c.decodeIfPresent(Bool.self, forKey: .ocrImagesInContinuousMode) ?? false
     }
 
     /// A sensible starting pipeline: coerce rich text to plain (HTML strip is
