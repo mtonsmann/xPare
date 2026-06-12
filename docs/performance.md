@@ -7,16 +7,17 @@ guardrail. The full method (ceiling model, optimization waves, acceptance rules)
 lives in
 [`docs/exec-plans/active/0002-performance-ceiling-and-optimization-loop.md`](exec-plans/active/0002-performance-ceiling-and-optimization-loop.md).
 
-## What we measure (three layers)
+## What we measure (four layers)
 
 | Layer | Command | What it tells you |
 |-------|---------|-------------------|
 | Complexity gate | `cargo test -p safetystrip-core --test perf_guard` (runs in `make ci`) | Linear-time behavior holds; an O(n²)/DoS regression is caught. Always-on, cannot flake. |
 | Statistical benches | `make bench`, `make bench-large` | criterion MiB/s with confidence intervals + outlier detection — the authoritative measurement. |
 | Throughput baseline | `make perf PERF_MIB=128 PERF_SAMPLES=7` | A quick roofline-calibrated MiB/s table for a same-machine regression read; optional hard floor. |
+| Swift shell guards | `make shell-perf` | CI-safe synthetic performance guards for shell-owned orchestration that core benches cannot exercise. |
 
-All three use **synthetic, generated buffers**. None reads, logs, or persists real
-clipboard content.
+All four use **synthetic, generated buffers or fakes**. None reads, logs, or
+persists real clipboard content.
 
 ## How to run
 
@@ -31,7 +32,33 @@ make perf PERF_MIB=128 PERF_SAMPLES=7 PERF_MIN_MIB_PER_SEC=90
 # Statistical detail:
 make bench           # clipboard-scale
 make bench-large     # heavy log files up to 256 MB
+
+# Shell-owned paths (synthetic pasteboards/fakes only):
+make shell-perf
 ```
+
+## Feature coverage map
+
+Every feature needs performance evidence at the layer that owns the work.
+
+| Feature class | Repeatable performance coverage |
+|---|---|
+| Core HTML/Markdown stripping | `perf_guard` adversarial linear-time cases; `make bench`; `make perf` rows `strip-html-*`, `strip-markdown-*` |
+| Core HTML → Markdown conversion | `make perf` row `html-to-markdown-heavy` |
+| Core whitespace/case/line rewrites | `make perf` rows for collapse, trim, blank removal, unwrap, case, dedupe, sort, prefix, suffix, join, split |
+| Core reductions | `make perf` rows `extract-emails`, `extract-urls`; large bench row `extract_urls` |
+| Core IOC/URL/privacy rewrites | `perf_guard` adversarial cases; `make perf` rows for defang, refang, clean URLs, and mask identifiers |
+| Core large-log behavior | ignored 256 MiB `perf_guard` case; `make bench-large` |
+| Swift settings/config assembly | `make shell-perf` `settingsPersistenceAndConfigAssemblyStayBounded` |
+| Swift strip/run-once orchestration | `make shell-perf` controller orchestration guards with injected fast transformers |
+| Swift pasteboard preflight | `make shell-perf` named-pasteboard raw representation preflight; no `NSPasteboard.general` |
+| Swift monitor/hotkey routing | `make shell-perf` monitor polling and hotkey dispatch guards |
+| Swift image OCR command path | `make shell-perf` OCR orchestration guard with injected fast recognizer; no Vision benchmark |
+
+The compile-only coverage map in `core/tests/throughput.rs` deliberately matches
+every `Operation`, `CaseKind`, and `BracketStyle` without a wildcard. Adding a new
+core feature now forces an explicit performance-scenario update during test
+compilation.
 
 ## Local baseline
 

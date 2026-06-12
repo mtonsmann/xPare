@@ -19,6 +19,9 @@ PERF_MIN_MIB_PER_SEC ?=
 FUZZ_SMOKE_SECONDS ?= 30
 FUZZ_HOURS ?= 8
 FUZZ_TARGETS ?=
+SWIFT_DEVELOPER_DIR ?= $(shell xcode-select -p)
+SWIFT_TESTING_FRAMEWORK_DIR ?= $(SWIFT_DEVELOPER_DIR)/Library/Developer/Frameworks
+SWIFT_TESTING_LIBRARY_DIR ?= $(SWIFT_DEVELOPER_DIR)/Library/Developer/usr/lib
 
 # Release packaging (see shells/macos/release.sh and docs/release-model.md).
 # dist/github-release are gated and need Developer ID credentials + a vX.Y.Z tag.
@@ -29,7 +32,7 @@ CERT_NAME ?=
 NOTARY_PROFILE ?=
 SIGN_ENTITLEMENTS ?=
 
-.PHONY: help build test lint fmt fmt-check ci checks supply-chain lint-actions lint-shell header bench bench-large perf fuzz fuzz-smoke fuzz-overnight zizmor app run preview dist github-release clean clean-release
+.PHONY: help build test lint fmt fmt-check ci checks supply-chain lint-actions lint-shell header bench bench-large perf shell-perf fuzz fuzz-smoke fuzz-overnight zizmor app run preview dist github-release clean clean-release
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -86,6 +89,15 @@ bench-large: ## Run the heavy log-file benchmarks up to 256 MB (slow)
 perf: ## Throughput baseline (PERF_MIB=128 PERF_SAMPLES=7 [PERF_MIN_MIB_PER_SEC=N])
 	SS_PERF_MIB=$(PERF_MIB) SS_PERF_SAMPLES=$(PERF_SAMPLES) SS_PERF_MIN_MIB_PER_SEC=$(PERF_MIN_MIB_PER_SEC) \
 		$(CARGO) test -p safetystrip-core --release --test throughput -- --ignored --nocapture
+
+shell-perf: ## Synthetic Swift shell performance guards (no real clipboard/Vision)
+	$(CARGO) build -p safetystrip-ffi --release
+	DYLD_FRAMEWORK_PATH="$(SWIFT_TESTING_FRAMEWORK_DIR):$${DYLD_FRAMEWORK_PATH}" \
+		DYLD_LIBRARY_PATH="$(SWIFT_TESTING_LIBRARY_DIR):$${DYLD_LIBRARY_PATH}" \
+		swift test --package-path shells/macos --filter ShellPerformanceCoverageTests \
+		-Xswiftc -F -Xswiftc "$(SWIFT_TESTING_FRAMEWORK_DIR)" \
+		-Xlinker -rpath -Xlinker "$(SWIFT_TESTING_FRAMEWORK_DIR)" \
+		-Xlinker -rpath -Xlinker "$(SWIFT_TESTING_LIBRARY_DIR)"
 
 fuzz: ## Build all fuzz targets (auto-installs nightly/cargo-fuzz if needed)
 	$(CARGO) run -p xtask -- check-fuzz

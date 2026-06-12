@@ -729,39 +729,6 @@ struct StripControllerTests {
                 "image text recognition must run off the main thread")
     }
 
-    /// CI-safe performance guard for Swift-only OCR orchestration. This does not
-    /// benchmark Apple's Vision framework; it catches accidental slow paths in the
-    /// shell-owned loop around bounded image reads, detached recognizer calls,
-    /// generation checks, and writeback.
-    @Test func imageTextCommandOverheadStaysBoundedWithFastRecognizer() async throws {
-        let (defaults, suite) = try isolatedDefaults()
-        defer { defaults.removePersistentDomain(forName: suite) }
-
-        let image = sampleImage()
-        let recognizer = RecordingImageTextRecognizer(output: "text")
-        let pb = FakePasteboard()
-        let controller = StripController(
-            pasteboard: pb,
-            imageTextRecognizer: recognizer,
-            defaults: defaults,
-            busyThreshold: .seconds(60)
-        )
-
-        let iterations = 100
-        let start = DispatchTime.now().uptimeNanoseconds
-        for _ in 0..<iterations {
-            pb.externalSetImage(image, rawImageBytes: image.data.count)
-            let outcome = await controller.extractImageText()
-            #expect(outcome == .stripped(changed: true))
-        }
-        let elapsedMs = Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000
-
-        #expect(recognizer.callCount == iterations)
-        #expect(pb.writes.count == iterations)
-        #expect(elapsedMs < 2_000,
-                "Swift OCR command orchestration took \(elapsedMs) ms for \(iterations) runs")
-    }
-
     /// If the clipboard changes while OCR is running, stale recognized text must not
     /// overwrite the newer clipboard generation.
     @Test func staleImageTextRecognitionDoesNotOverwriteNewerClipboard() async throws {
