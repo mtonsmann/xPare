@@ -46,6 +46,20 @@ unsigned/ad-hoc and must not be promoted as end-user downloads.
    requires published notarized releases first; see
    [`deferred-work.md`](deferred-work.md).
 
+## Developer preview artifacts
+
+CI also publishes a short-retention, explicitly unsigned **main dev preview**
+artifact after the required Linux gate succeeds on a push to `main`. This exists
+only so maintainers and technical testers can run the latest protected-main tree
+without compiling it locally. It is an Actions artifact, not a GitHub Release
+asset; it is SHA-labeled, retained briefly, and must not be linked as the normal
+install path.
+
+The main dev preview uses the same `make preview` packaging path as tag
+validation, so it is ad-hoc signed/unsigned-preview material and needs no Apple
+secrets. It is not notarized, not an official binary, and not a substitute for a
+tagged Developer ID release.
+
 Signed assets are architecture-labeled:
 
 ```text
