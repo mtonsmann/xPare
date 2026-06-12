@@ -76,9 +76,11 @@ capability-constrained**, and the constraint is enforced mechanically.
     enforced with `check-swift-package-deps` and `check-python-tooling-posture`.
 11. **CodeQL is additive, not a new required gate yet.** The CodeQL workflow is a
     GitHub code-scanning baseline using `security-extended`. Keep its actions pinned
-    to commit SHAs, permissions minimal (`contents: read` plus job-scoped
-    `security-events: write`), and the Swift build explicit. Do not put it in branch
-    protection until the first alert baseline is triaged.
+    to peeled release commit SHAs, not annotated tag object SHAs; each pin needs the
+    exact release-version comment (`# vX.Y.Z`) that matches the peeled commit.
+    Keep permissions minimal: `contents: read` plus job-scoped
+    `security-events: write`. Keep the Swift build explicit. Do not put CodeQL in
+    branch protection until the first alert baseline is triaged.
 
 ## How the checks work
 
@@ -92,6 +94,10 @@ capability-constrained**, and the constraint is enforced mechanically.
 - `check-shell` runs `shellcheck` over every shell script; `check-workflows` runs
   `actionlint` (correctness) then `zizmor --offline` (security) over
   `.github/workflows/`.
+- `check-codeql-workflow-posture` keeps the additive CodeQL workflow
+  least-privilege and pins `github/codeql-action/*` to the audited peeled release
+  commit with an exact version comment. This blocks the `ref-version-mismatch`
+  class where an annotated tag object SHA is mistaken for the commit SHA.
 - `check-swift-package-deps` rejects external SwiftPM package/product/binary/system
   dependency declarations in `shells/macos/Package.swift`.
 - `check-python-tooling-posture` scans Python helpers for the small allowed stdlib

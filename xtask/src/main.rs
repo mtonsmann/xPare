@@ -1080,10 +1080,19 @@ fn check_c_ffi_surface() -> Result<(), String> {
 // source posture checks (Swift, Python, pasteboard shape, CodeQL workflow)
 // ---------------------------------------------------------------------------
 
-/// The CodeQL action major currently pinned in `.github/workflows/codeql.yml`.
+/// The CodeQL action release currently pinned in `.github/workflows/codeql.yml`.
 /// Keep init/analyze on the same audited commit so the workflow cannot drift to a
-/// moving tag while still looking superficially "pinned".
-const CODEQL_ACTION_PIN: &str = "411bbbe57033eedfc1a82d68c01345aa96c737d7";
+/// moving tag while still looking superficially "pinned". This must be the peeled
+/// release commit SHA, not the annotated tag object SHA; GitHub Advanced Security
+/// reports `zizmor/ref-version-mismatch` for annotated tag object pins.
+const CODEQL_ACTION_PIN: &str = "8aad20d150bbac5944a9f9d289da16a4b0d87c1e";
+const CODEQL_ACTION_VERSION_COMMENT: &str = "v4.36.2";
+const CODEQL_ACTION_ANNOTATED_TAG_OBJECT_PINS: &[&str] = &[
+    // refs/tags/v4 -> tag object -> CODEQL_ACTION_PIN
+    "411bbbe57033eedfc1a82d68c01345aa96c737d7",
+    // refs/tags/v4.36.2 -> tag object -> CODEQL_ACTION_PIN
+    "1a818fd5f97ed0ee9a823421bd5b171add01227f",
+];
 
 /// Shipped Swift and Rust source roots scanned by the app-surface posture checks.
 const SHIPPED_SWIFT_ROOTS: &[&str] = &["shells/macos/Sources"];
@@ -1591,13 +1600,8 @@ fn validate_codeql_workflow_posture(text: &str) -> Result<(), String> {
                     line_no + 1
                 ));
             }
-            if rest.starts_with("github/codeql-action/")
-                && !rest.contains(&format!("@{CODEQL_ACTION_PIN}"))
-            {
-                errors.push(format!(
-                    "line {}: CodeQL action must be pinned to {CODEQL_ACTION_PIN}: {trimmed}",
-                    line_no + 1
-                ));
+            if rest.starts_with("github/codeql-action/") {
+                validate_codeql_action_pin(line_no + 1, rest, trimmed, &mut errors);
             }
             if rest.starts_with("actions/checkout@v") {
                 errors.push(format!(
@@ -1658,6 +1662,47 @@ fn validate_codeql_workflow_posture(text: &str) -> Result<(), String> {
         Ok(())
     } else {
         Err(errors.join("\n  "))
+    }
+}
+
+fn validate_codeql_action_pin(
+    line_no: usize,
+    action_ref: &str,
+    trimmed_line: &str,
+    errors: &mut Vec<String>,
+) {
+    let (action_and_pin, comment) = match action_ref.split_once('#') {
+        Some((left, right)) => (left.trim(), Some(right.trim())),
+        None => (action_ref.trim(), None),
+    };
+    let pin = match action_and_pin.rsplit_once('@') {
+        Some((_, pin)) => pin.trim(),
+        None => {
+            errors.push(format!(
+                "line {line_no}: CodeQL action is missing an @ pin: {trimmed_line}"
+            ));
+            return;
+        }
+    };
+
+    if CODEQL_ACTION_ANNOTATED_TAG_OBJECT_PINS.contains(&pin) {
+        errors.push(format!(
+            "line {line_no}: CodeQL action pin uses an annotated tag object SHA; \
+             use peeled release commit {CODEQL_ACTION_PIN} with \
+             `# {CODEQL_ACTION_VERSION_COMMENT}`: {trimmed_line}"
+        ));
+    }
+    if pin != CODEQL_ACTION_PIN {
+        errors.push(format!(
+            "line {line_no}: CodeQL action must be pinned to peeled release commit \
+             {CODEQL_ACTION_PIN}: {trimmed_line}"
+        ));
+    }
+    if comment != Some(CODEQL_ACTION_VERSION_COMMENT) {
+        errors.push(format!(
+            "line {line_no}: CodeQL action pin must carry exact version comment \
+             `# {CODEQL_ACTION_VERSION_COMMENT}`: {trimmed_line}"
+        ));
     }
 }
 
@@ -4427,6 +4472,7 @@ jobs:
     #[test]
     fn codeql_workflow_posture_accepts_pinned_security_extended() {
         let pin = CODEQL_ACTION_PIN;
+        let version = CODEQL_ACTION_VERSION_COMMENT;
         let text = format!(
             r#"# CodeQL security analysis.
 # Additive signal only: the required local/CI gate remains `cargo xtask ci`.
@@ -4442,13 +4488,13 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-      - uses: github/codeql-action/init@{pin} # v4
+      - uses: github/codeql-action/init@{pin} # {version}
         with:
           languages: rust
           build-mode: none
           queries: security-extended
           dependency-caching: true
-      - uses: github/codeql-action/analyze@{pin} # v4
+      - uses: github/codeql-action/analyze@{pin} # {version}
         with:
           category: "/language:rust"
   python-actions:
@@ -4457,16 +4503,63 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-      - uses: github/codeql-action/init@{pin} # v4
+      - uses: github/codeql-action/init@{pin} # {version}
         with:
           languages: python, actions
           queries: security-extended
-      - uses: github/codeql-action/analyze@{pin} # v4
+      - uses: github/codeql-action/analyze@{pin} # {version}
         with:
           category: "/language:python-actions"
 "#
         );
         validate_codeql_workflow_posture(&text).unwrap();
+    }
+
+    #[test]
+    fn codeql_workflow_posture_rejects_annotated_tag_object_pin() {
+        let pin = CODEQL_ACTION_ANNOTATED_TAG_OBJECT_PINS[0];
+        let version = CODEQL_ACTION_VERSION_COMMENT;
+        let text = format!(
+            r#"# CodeQL security analysis.
+# Additive signal only: the required local/CI gate remains `cargo xtask ci`.
+# Keep this workflow out of branch protection until the first alert baseline has
+# been triaged and false positives are understood.
+name: CodeQL
+permissions:
+  contents: read
+jobs:
+  rust:
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: github/codeql-action/init@{pin} # {version}
+        with:
+          languages: rust
+          build-mode: none
+          queries: security-extended
+          dependency-caching: true
+      - uses: github/codeql-action/analyze@{pin} # {version}
+        with:
+          category: "/language:rust"
+  python-actions:
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: github/codeql-action/init@{pin} # {version}
+        with:
+          languages: python, actions
+          queries: security-extended
+      - uses: github/codeql-action/analyze@{pin} # {version}
+        with:
+          category: "/language:python-actions"
+"#
+        );
+        let err = validate_codeql_workflow_posture(&text).unwrap_err();
+        assert!(err.contains("annotated tag object SHA"), "got: {err}");
     }
 
     // --- check-clipboard-safety ---

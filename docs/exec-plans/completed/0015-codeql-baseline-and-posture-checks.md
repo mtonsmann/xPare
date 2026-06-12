@@ -41,8 +41,11 @@ change is intended.
 - Analyze Swift on macOS and build the Rust FFI staticlib before SwiftPM build so
   CodeQL sees the shell compile path.
 - Analyze Python and GitHub Actions workflow files in a separate no-build job.
-- Pin `github/codeql-action@v4` by full commit SHA
-  `411bbbe57033eedfc1a82d68c01345aa96c737d7`.
+- Pin `github/codeql-action@v4.36.2` by peeled release commit SHA
+  `8aad20d150bbac5944a9f9d289da16a4b0d87c1e`. The earlier
+  `411bbbe57033eedfc1a82d68c01345aa96c737d7` value was the annotated `v4` tag
+  object, not the commit, and was closed in
+  `0016-codeql-action-pin-comment-closure.md`.
 - Keep repo-specific invariants in `xtask`, where failures are deterministic and
   remediated locally.
 - Keep `security-events: write` at job scope, not workflow scope, so `zizmor`
