@@ -78,9 +78,10 @@ own (e.g. `cargo xtask check-abi`) for a fast inner loop.
 > package the tag (see [Fuzzing](#fuzzing-never-panics-invariant)).
 
 CodeQL runs as a separate GitHub code-scanning workflow using the
-`security-extended` query suite. It is additive review signal only: do not add it
-to branch protection until the initial alert baseline has been triaged and false
-positives are understood. Workflow posture is still checked locally with
+`security-extended` query suite plus repo-specific Rust/Python policy packs in
+`.github/codeql/queries/`. It is additive review signal only: do not add it to
+branch protection until the alert baseline has been triaged and false positives
+are understood. Workflow and custom-pack posture are still checked locally with
 `cargo xtask check-codeql-workflow-posture`.
 
 ### `make` shortcuts (optional)

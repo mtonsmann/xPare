@@ -91,7 +91,7 @@ spawn subprocesses), `check-swift-package-deps` (SwiftPM remains local-target-on
 capability-light), `check-real-clipboard-tests` (default Swift tests avoid the
 real general pasteboard), `check-pasteboard-write-shape` (plain string rewrite
 stays clear-once + `.string` write), `check-codeql-workflow-posture` (CodeQL
-stays additive, pinned, and least-privilege),
+stays additive, pinned, least-privilege, and custom-pack wired),
 `check-release-posture` (official signing cannot broaden entitlements),
 `check-supply-chain` (cargo-deny: advisories, licenses, bans, sources),
 `check-unused-deps` (cargo-machete: no declared-but-unused dependency),
@@ -223,7 +223,7 @@ therefore CI). Fix the code to satisfy the check; never weaken the check.
 | No tangled functions or scaffolding macros | `cognitive_complexity` + `too_many_arguments` thresholds; `clippy::todo`/`unimplemented`/`dbg_macro` denied | `[workspace.lints]`, `clippy.toml` |
 | No declared-but-unused dependency | `check-unused-deps` (cargo-machete over the whole workspace) | `xtask`, `CARGO_MACHETE_VERSION` |
 | Non-Rust automation surfaces stay dependency-light | `check-swift-package-deps` + `check-python-tooling-posture` | `xtask`, `shells/macos/Package.swift`, Python helpers |
-| CodeQL remains additive/pinned before baseline triage | `check-codeql-workflow-posture`; CodeQL uses `security-extended` outside branch protection | `xtask`, `.github/workflows/codeql.yml` |
+| CodeQL remains additive/pinned before baseline triage | `check-codeql-workflow-posture`; CodeQL uses `security-extended` plus repo-specific Rust/Python policy packs outside branch protection | `xtask`, `.github/workflows/codeql.yml`, `.github/codeql/queries/` |
 | Every ignored test justified, count ratcheted | `check-test-hygiene` (bare `#[ignore]` fails; total `#[ignore]`s ≤ ceiling) | `xtask` `MAX_IGNORED_TESTS` |
 | No broken doc links or invalid doc HTML | `check-docs` (`cargo doc --no-deps` with `RUSTDOCFLAGS=-D warnings`) | `xtask` |
 | Public API (FFI/ABI contract) fully documented | `#![deny(missing_docs)]` on the shipped libs | `core/src/lib.rs`, `core-ffi/src/lib.rs` |

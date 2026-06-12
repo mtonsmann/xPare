@@ -39,7 +39,7 @@ jobs:
         with:
           languages: rust
           build-mode: none
-          queries: security-extended
+          queries: security-extended,./.github/codeql/queries/rust
           dependency-caching: true
 
       - name: Analyze
@@ -47,8 +47,8 @@ jobs:
         with:
           category: "/language:rust"
 
-  python-actions:
-    name: python + actions
+  python:
+    name: python
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -62,10 +62,33 @@ jobs:
       - name: Initialize CodeQL
         uses: github/codeql-action/init@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
         with:
-          languages: python, actions
+          languages: python
+          queries: security-extended,./.github/codeql/queries/python
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
+        with:
+          category: "/language:python"
+
+  actions:
+    name: actions
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
+        with:
+          languages: actions
           queries: security-extended
 
       - name: Analyze
         uses: github/codeql-action/analyze@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
         with:
-          category: "/language:python-actions"
+          category: "/language:actions"
