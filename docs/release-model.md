@@ -131,15 +131,20 @@ equals the workspace version in `Cargo.toml`; a mismatch fails the release.
 5. **publish-official**: waits for signing, attestation, and SBOM generation,
    downloads the encrypted signed-asset handoff and SBOM by artifact ID through
    the Actions artifact API, verifies the encrypted handoff digest, decrypts it,
-   revalidates the digest-bound signed manifest, and creates the complete draft
-   GitHub Release in one `gh release create` command. This is the only
+   revalidates the digest-bound signed manifest, creates the draft GitHub Release
+   with the expected assets, and verifies the draft asset list before the job
+   exits. `gh release create` uses separate create/upload API calls, so an ERR
+   trap deletes only this same tag's still-draft release if creation or asset-set
+   verification fails. This is the only
    official-release job with `contents: write`; it has no `uses:` actions,
-   same-run artifact-name download, release upload, clobber, or delete path.
+   same-run artifact-name download, release upload, or clobber path. The only
+   release delete path is the scoped same-run cleanup for a partial draft.
 
 Releases are created with `--draft` (and `--prerelease` for any hyphenated
 version such as `1.0.0-rc.1`); a maintainer publishes the draft manually after
 inspecting it. The draft is not a metadata staging area: all required assets and
-metadata must be ready before it is created. `github-release` creates the draft
+metadata must be ready before it is created, and the workflow verifies the
+resulting draft contains exactly those assets. `github-release` creates the draft
 once and refuses to replace assets on any existing release, including drafts.
 Delete the draft before rerunning, or publish a new tag for a corrected public
 release artifact.

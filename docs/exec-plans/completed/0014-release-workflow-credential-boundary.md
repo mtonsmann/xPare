@@ -65,8 +65,9 @@ the assets to satisfy the diff.
 - Provenance attestation and SBOM generation must run in jobs without
   `contents: write`; the later publication job may have release write only if it
   contains no `uses:` actions, downloads fixed artifact IDs, verifies and
-  decrypts the signed handoff, re-verifies the signed manifest, and creates a
-  complete draft once.
+  decrypts the signed handoff, re-verifies the signed manifest, creates the
+  draft only after metadata is ready, verifies the resulting asset set, and
+  deletes only its own still-draft release on create or verification failure.
 - The checksum-subject attestation job must not request artifact metadata write
   permission unless the workflow later publishes registry storage records.
 - Provenance attestation must use the signed-release checksum subject list
@@ -76,8 +77,9 @@ the assets to satisfy the diff.
   (`GH_REPO` or an equivalent `--repo`) because there may be no checkout remote in
   that job.
 - Release workflow and local release scripts must not contain release upload,
-  clobber, release delete, release asset delete, or raw release-asset upload API
-  paths in executable text.
+  clobber, release asset delete, or raw release-asset upload API paths in
+  executable text. Release delete is allowed only as scoped same-run cleanup for
+  an incomplete draft that the current publish job just created.
 - `github-release` must inspect whether a release already exists and fail before
   release creation if it does; the `github-release)` case must include the staged
   SBOM in the one-shot `gh release create` command.

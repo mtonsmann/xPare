@@ -76,18 +76,20 @@ capability-constrained**, and the constraint is enforced mechanically.
    validates the actual continued notarytool and release-create commands instead
    of accepting comments or adjacent prose as proof, rejects raw signed asset
    uploads as public workflow artifacts, rejects same-run `gh run download` name
-   lookups, and rejects release
-   upload, clobber, and delete primitives. The actions themselves are supply-chain
-   just like crates — boring, audited, pinned, kept outside the signing credential
-   window, and separated from release write permission. A draft GitHub Release is
-   not a safe metadata handoff boundary: attestation must use the checksum subject
-   list captured before publication, SBOM generation must run with read-only
-   contents permission, checksum-only attestation must not request artifact
-   metadata write permission, and the only release-write job must be run-only,
-   download fixed artifact IDs, decrypt and re-verify the signed handoff, and
-   create the complete draft once. `github-release` must also create a complete
-   draft once, include the staged SBOM, and fail closed for any existing release
-   so it never races a maintainer publication while replacing release assets.
+   lookups, and rejects release upload, clobber, and unscoped delete primitives.
+   The actions themselves are supply-chain just like crates — boring, audited,
+   pinned, kept outside the signing credential window, and separated from release
+   write permission. A draft GitHub Release is not a safe metadata handoff
+   boundary: attestation must use the checksum subject list captured before
+   publication, SBOM generation must run with read-only contents permission,
+   checksum-only attestation must not request artifact metadata write permission,
+   and the only release-write job must be run-only, download fixed artifact IDs,
+   decrypt and re-verify the signed handoff, create the draft only after all
+   metadata is ready, verify the resulting asset set, and delete only its own
+   still-draft release if creation or verification fails. `github-release` must
+   also create a complete draft once, include the staged SBOM, and fail closed for
+   any existing release so it never races a maintainer publication while
+   replacing release assets.
 9. **Audit the supply chain and the non-Rust surface mechanically.**
    [`cargo-deny`](https://embarkstudios.github.io/cargo-deny/) (`deny.toml`) scans the
    whole dependency tree for RustSec advisories, yanked crates, license compliance (a

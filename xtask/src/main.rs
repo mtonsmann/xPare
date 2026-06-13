@@ -2824,7 +2824,6 @@ fn reject_release_mutation_primitives(text: &str, label: &str) -> Result<(), Str
     for banned in [
         "gh release upload",
         "--clobber",
-        "gh release delete",
         "gh release delete-asset",
         "uploads/releases/assets",
     ] {
@@ -2833,6 +2832,22 @@ fn reject_release_mutation_primitives(text: &str, label: &str) -> Result<(), Str
                 "{label} must not mutate or delete existing release assets: banned `{banned}`"
             ));
         }
+    }
+    Ok(())
+}
+
+fn non_comment_lines_containing<'a>(text: &'a str, snippet: &str) -> Vec<&'a str> {
+    text.lines()
+        .map(str::trim_start)
+        .filter(|line| !line.starts_with('#') && line.contains(snippet))
+        .collect()
+}
+
+fn reject_release_delete_lines(text: &str, label: &str) -> Result<(), String> {
+    if non_comment_line_contains(text, "gh release delete") {
+        return Err(format!(
+            "{label} must not delete releases outside scoped same-run draft cleanup"
+        ));
     }
     Ok(())
 }
@@ -3271,15 +3286,30 @@ fn validate_release_workflow_credential_boundary(text: &str) -> Result<(), Strin
     }
 
     let publish_step = &text[positions[15]..];
+    reject_release_delete_lines(&text[..positions[15]], "official release workflow")?;
     require_non_comment_lines_in_order(
         publish_step,
         &[
+            "release_create_started=false",
+            "cleanup_partial_draft_release() {",
+            r#"draft_state="$(gh release view "v${RELEASE_VERSION}" --json isDraft --jq .isDraft"#,
+            r#"if [ "${draft_state}" = "true" ]; then"#,
+            r#"gh release delete "v${RELEASE_VERSION}" --yes"#,
+            "exit \"${status}\"",
+            "}",
+            "trap cleanup_partial_draft_release ERR",
             r#"if gh release view "v${RELEASE_VERSION}" >/dev/null 2>&1; then"#,
             r#"echo "Release v${RELEASE_VERSION} already exists; refusing to replace release assets.""#,
             "exit 1",
             "fi",
             "create_flags=(--draft)",
+            "release_create_started=true",
             r#"gh release create "v${RELEASE_VERSION}""#,
+            r#"expected_assets="${RUNNER_TEMP}/release-assets.expected""#,
+            r#"gh release view "v${RELEASE_VERSION}" --json assets --jq '.assets[].name'"#,
+            r#"diff -u "${expected_assets}" "${actual_assets}""#,
+            "release_create_started=false",
+            "trap - ERR",
         ],
         "Publish GitHub Release step",
     )?;
@@ -3306,6 +3336,35 @@ fn validate_release_workflow_credential_boundary(text: &str) -> Result<(), Strin
                 "Publish GitHub Release command must include `{required}`"
             ));
         }
+    }
+    let release_delete_lines = non_comment_lines_containing(publish_step, "gh release delete");
+    match release_delete_lines.as_slice() {
+        [line] if *line == r#"gh release delete "v${RELEASE_VERSION}" --yes"# => {}
+        [] => {
+            return Err(
+                "Publish GitHub Release step must delete a same-run partial draft on failure"
+                    .to_string(),
+            );
+        }
+        _ => {
+            return Err(
+                "Publish GitHub Release step must contain only the scoped partial-draft `gh release delete` cleanup"
+                    .to_string(),
+            );
+        }
+    }
+    let asset_view_command = continued_shell_command_starting_with(
+        publish_step,
+        r#"gh release view "v${RELEASE_VERSION}" --json assets --jq '.assets[].name'"#,
+    )
+    .ok_or_else(|| {
+        "Publish GitHub Release step must inspect release asset names after creation".to_string()
+    })?;
+    if !asset_view_command.contains(r#"sort > "${actual_assets}""#) {
+        return Err(
+            "Publish GitHub Release step must sort actual release asset names for verification"
+                .to_string(),
+        );
     }
 
     Ok(())
@@ -5481,6 +5540,88 @@ mod tests {
         assert!(
             err.contains("gh release delete"),
             "expected release delete primitive rejection, got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_workflow_rejects_missing_partial_draft_cleanup() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let cleanup_start = release_workflow
+            .find("          release_create_started=false\n")
+            .unwrap();
+        let guard_start = release_workflow
+            .find("          if gh release view \"v${RELEASE_VERSION}\" >/dev/null 2>&1; then\n")
+            .unwrap();
+        let weakened = format!(
+            "{}{}",
+            &release_workflow[..cleanup_start],
+            &release_workflow[guard_start..]
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(
+            err.contains("partial draft") || err.contains("cleanup_partial_draft_release"),
+            "expected missing partial draft cleanup failure, got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_workflow_rejects_missing_post_create_asset_verification() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let verify_start = release_workflow
+            .find("          expected_assets=\"${RUNNER_TEMP}/release-assets.expected\"\n")
+            .unwrap();
+        let verification_end_marker =
+            "          release_create_started=false\n          trap - ERR\n";
+        let cleanup_end = verify_start
+            + release_workflow[verify_start..]
+                .find(verification_end_marker)
+                .unwrap()
+            + verification_end_marker.len();
+        let weakened = format!(
+            "{}          release_create_started=false\n          trap - ERR\n{}",
+            &release_workflow[..verify_start],
+            &release_workflow[cleanup_end..]
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(
+            err.contains("assets") || err.contains("diff -u"),
+            "expected missing post-create asset verification failure, got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_workflow_rejects_unscoped_release_delete_before_publish_step() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened = release_workflow.replace(
+            "      - name: Publish GitHub Release\n",
+            "      - name: Delete unrelated release\n        run: gh release delete \"v${RELEASE_VERSION}\" --yes\n\n      - name: Publish GitHub Release\n",
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(
+            err.contains("outside scoped same-run draft cleanup"),
+            "expected unscoped release delete failure, got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_workflow_rejects_partial_draft_cleanup_that_deletes_tag() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened = release_workflow.replace(
+            r#"gh release delete "v${RELEASE_VERSION}" --yes"#,
+            r#"gh release delete "v${RELEASE_VERSION}" --yes --cleanup-tag"#,
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(
+            err.contains("scoped partial-draft"),
+            "expected tag-deleting draft cleanup failure, got: {err}"
         );
     }
 
