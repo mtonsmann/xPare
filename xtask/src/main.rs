@@ -3111,6 +3111,7 @@ fn validate_release_workflow_credential_boundary(text: &str) -> Result<(), Strin
         r#"iv_hex="$(openssl rand -hex 16)""#,
         r#"( cd dist/release && tar -cf "${tarball}" -- *.zip *.zip.sha256 SHA256SUMS )"#,
         r#"openssl enc -aes-256-cbc -K "${key_hex}" -iv "${iv_hex}""#,
+        r#"raw_signed_asset_remaining="$(find dist/release"#,
         r#"echo "SIGNED_ASSET_HANDOFF_DIR=${handoff_dir}""#,
         r#"} >> "${GITHUB_ENV}""#,
         r#"echo "key_hex=${key_hex}""#,
@@ -3121,6 +3122,59 @@ fn validate_release_workflow_credential_boundary(text: &str) -> Result<(), Strin
         if !non_comment_line_contains(encrypt_signed_handoff, required) {
             return Err(format!(
                 "signed release handoff encryption must contain `{required}`"
+            ));
+        }
+    }
+    require_non_comment_lines_in_order(
+        encrypt_signed_handoff,
+        &[
+            r#"( cd dist/release && tar -cf "${tarball}" -- *.zip *.zip.sha256 SHA256SUMS )"#,
+            r#"openssl enc -aes-256-cbc -K "${key_hex}" -iv "${iv_hex}""#,
+            r#"rm -f -- dist/release/*.zip"#,
+            r#"raw_signed_asset_remaining="$(find dist/release"#,
+            r#"if [ -n "${raw_signed_asset_remaining}" ]; then"#,
+            r#"echo "raw signed release asset remains"#,
+            "exit 1",
+            "fi",
+            r#"encrypted_sha="$(shasum -a 256 "${encrypted}""#,
+        ],
+        "signed release handoff raw-asset cleanup",
+    )?;
+    let remove_raw_assets = continued_shell_command_starting_with(
+        encrypt_signed_handoff,
+        "rm -f -- dist/release/*.zip",
+    )
+    .ok_or_else(|| {
+        "signed release handoff encryption must remove raw signed assets before any action upload"
+            .to_string()
+    })?;
+    for required in [
+        "dist/release/*.zip",
+        "dist/release/*.zip.sha256",
+        "dist/release/SHA256SUMS*",
+    ] {
+        if !remove_raw_assets.contains(required) {
+            return Err(format!(
+                "raw signed asset cleanup must remove `{required}` before any action upload"
+            ));
+        }
+    }
+    let find_raw_assets = continued_shell_command_starting_with(
+        encrypt_signed_handoff,
+        r#"raw_signed_asset_remaining="$(find dist/release"#,
+    )
+    .ok_or_else(|| {
+        "signed release handoff encryption must verify raw signed assets are absent before any action upload"
+            .to_string()
+    })?;
+    for required in [
+        "-name '*.zip'",
+        "-name '*.zip.sha256'",
+        "-name 'SHA256SUMS*'",
+    ] {
+        if !find_raw_assets.contains(required) {
+            return Err(format!(
+                "raw signed asset absence check must inspect `{required}` before any action upload"
             ));
         }
     }
@@ -5298,6 +5352,71 @@ mod tests {
         assert!(
             err.contains("raw signed asset path") || err.contains("signed-release-assets.tar.enc"),
             "expected raw signed asset artifact rejection, got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_workflow_rejects_missing_raw_signed_asset_cleanup_before_upload_action() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened = release_workflow.replace(
+            "          rm -f -- dist/release/*.zip dist/release/*.zip.sha256 dist/release/SHA256SUMS*\n",
+            "",
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(
+            err.contains("raw signed assets") || err.contains("raw-asset cleanup"),
+            "expected missing raw signed asset cleanup failure, got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_workflow_rejects_incomplete_raw_signed_asset_cleanup_before_upload_action() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened = release_workflow.replace(
+            "          rm -f -- dist/release/*.zip dist/release/*.zip.sha256 dist/release/SHA256SUMS*\n",
+            "          rm -f -- dist/release/*.zip\n",
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(
+            err.contains("dist/release/*.zip.sha256") || err.contains("dist/release/SHA256SUMS*"),
+            "expected incomplete raw signed asset cleanup failure, got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_workflow_rejects_echoed_raw_signed_asset_cleanup_before_upload_action() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened = release_workflow.replace(
+            "          rm -f -- dist/release/*.zip dist/release/*.zip.sha256 dist/release/SHA256SUMS*\n",
+            "          echo \"rm -f -- dist/release/*.zip dist/release/*.zip.sha256 dist/release/SHA256SUMS*\"\n",
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(
+            err.contains("raw signed assets") || err.contains("raw-asset cleanup"),
+            "expected echoed raw signed asset cleanup failure, got: {err}"
+        );
+    }
+
+    #[test]
+    fn release_workflow_rejects_missing_raw_signed_asset_absence_check_before_upload_action() {
+        let root = workspace_root();
+        let release_workflow =
+            std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        let weakened = release_workflow.replace(
+            "          raw_signed_asset_remaining=\"$(find dist/release -maxdepth 1 -type f \\( -name '*.zip' -o -name '*.zip.sha256' -o -name 'SHA256SUMS*' \\) -print -quit)\"\n          if [ -n \"${raw_signed_asset_remaining}\" ]; then\n            echo \"raw signed release asset remains after handoff encryption: ${raw_signed_asset_remaining}\"\n            exit 1\n          fi\n",
+            "",
+        );
+        let err = validate_release_workflow_credential_boundary(&weakened).unwrap_err();
+        assert!(
+            err.contains("raw_signed_asset_remaining")
+                || err.contains("raw signed assets are absent"),
+            "expected missing raw signed asset absence check failure, got: {err}"
         );
     }
 

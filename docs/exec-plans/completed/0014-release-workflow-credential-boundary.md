@@ -49,6 +49,10 @@ the assets to satisfy the diff.
   before any post-signing third-party action.
 - No `uses:` action may run after signed assets are captured and before
   digest-bound verification and encryption hand them off as a workflow artifact.
+- Raw signed assets must be removed from `dist/release/` and absence-checked
+  before the encrypted handoff upload action runs; the action's configured
+  upload path is not a confinement boundary for a compromised or behavior-changing
+  action.
 - Required release workflow step names must be unique and must come from actual
   workflow step entries, not comments or run-script text.
 - Notary keychain enforcement must inspect the actual continued `notarytool
@@ -104,6 +108,9 @@ the assets to satisfy the diff.
   draft-status check and asset upload.
 - A public workflow artifact becomes a distributable endpoint for signed official
   binaries before attestation, SBOM, and human-reviewed draft publication finish.
+- A post-signing upload action can read raw signed assets still present in
+  `dist/release/` even when its configured artifact path points only at the
+  encrypted handoff blob.
 - A same-run `gh run download` artifact-name lookup fails in the current release
   workflow even though an artifact ID download would succeed.
 - A notary profile is accidentally stored in the login keychain and survives
@@ -124,8 +131,9 @@ the assets to satisfy the diff.
   release clobber prevention in `github-release`, commented/echoed guard
   bypasses, release mutation primitive bans, complete-SBOM publication,
   guard-after-create ordering mistakes, raw signed asset artifact uploads, and
-  same-run artifact-name downloads, and excess attestation artifact metadata
-  permission.
+  same-run artifact-name downloads, excess attestation artifact metadata
+  permission, and raw signed asset cleanup plus absence checks before the
+  encrypted handoff upload action.
 - Keep the current workflow passing test as the happy path.
 
 ## Verification / Proof Plan

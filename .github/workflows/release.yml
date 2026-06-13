@@ -421,6 +421,12 @@ jobs:
           ( cd dist/release && tar -cf "${tarball}" -- *.zip *.zip.sha256 SHA256SUMS )
           openssl enc -aes-256-cbc -K "${key_hex}" -iv "${iv_hex}" -in "${tarball}" -out "${encrypted}"
           rm -f "${tarball}"
+          rm -f -- dist/release/*.zip dist/release/*.zip.sha256 dist/release/SHA256SUMS*
+          raw_signed_asset_remaining="$(find dist/release -maxdepth 1 -type f \( -name '*.zip' -o -name '*.zip.sha256' -o -name 'SHA256SUMS*' \) -print -quit)"
+          if [ -n "${raw_signed_asset_remaining}" ]; then
+            echo "raw signed release asset remains after handoff encryption: ${raw_signed_asset_remaining}"
+            exit 1
+          fi
           encrypted_sha="$(shasum -a 256 "${encrypted}" | awk '{print $1}')"
           {
             echo "SIGNED_ASSET_HANDOFF_DIR=${handoff_dir}"

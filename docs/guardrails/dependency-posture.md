@@ -65,14 +65,18 @@ capability-constrained**, and the constraint is enforced mechanically.
    between signed-asset manifest capture and the digest-bound pre-handoff
    verification. The signed zip, per-zip checksum, and aggregate-checksum manifest
    must be re-verified before the encrypted handoff artifact is uploaded and
-   again before the draft release is created. The baseline manifest cannot stand
-   alone as a mutable `$RUNNER_TEMP` file: bind it to a prior step output digest
-   before later third-party actions run, and validate that binding before every
-   asset comparison. That guard validates real workflow step keys, normalizes
-   YAML key spelling used by action steps, validates the actual continued
-   notarytool and release-create commands instead of accepting comments or
-   adjacent prose as proof, rejects raw signed asset uploads as public workflow
-   artifacts, rejects same-run `gh run download` name lookups, and rejects release
+   again before the draft release is created. After encryption, raw signed files
+   must be removed from `dist/release/` and absence-checked before the first
+   post-signing third-party action runs; constraining an upload-artifact `path`
+   is not enough because the action still executes on the same runner filesystem.
+   The baseline manifest cannot stand alone as a mutable `$RUNNER_TEMP` file:
+   bind it to a prior step output digest before later third-party actions run,
+   and validate that binding before every asset comparison. That guard validates
+   real workflow step keys, normalizes YAML key spelling used by action steps,
+   validates the actual continued notarytool and release-create commands instead
+   of accepting comments or adjacent prose as proof, rejects raw signed asset
+   uploads as public workflow artifacts, rejects same-run `gh run download` name
+   lookups, and rejects release
    upload, clobber, and delete primitives. The actions themselves are supply-chain
    just like crates — boring, audited, pinned, kept outside the signing credential
    window, and separated from release write permission. A draft GitHub Release is

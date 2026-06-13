@@ -118,8 +118,9 @@ equals the workspace version in `Cargo.toml`; a mismatch fails the release.
    keychain plus decoded Apple credential files before any post-signing `uses:`
    action runs. The signed-asset manifest is bound to a prior step-output digest
    and diffed immediately before handoff. The raw signed assets are then tarred
-   and encrypted with a per-run key before upload; only the encrypted handoff
-   blob is stored as a short-retention workflow artifact. This job has no release
+   and encrypted with a per-run key, deleted from `dist/release/`, and
+   absence-checked before the upload action runs; only the encrypted handoff blob
+   is stored as a short-retention workflow artifact. This job has no release
    write permission.
 3. **attest-official**: uses the signed checksum subject list from `sign-official`
    to create build-provenance attestations before the draft release exists. It has
