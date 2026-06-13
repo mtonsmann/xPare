@@ -57,8 +57,39 @@ capability-constrained**, and the constraint is enforced mechanically.
    over-broad `GITHUB_TOKEN` permissions) through `cargo xtask ci`
    (`check-workflows`, which also runs `actionlint` for correctness), so an agent
    catches workflow issues locally before pushing; `.github/dependabot.yml` bumps
-   the pinned SHAs so the pins don't rot. The actions themselves are supply-chain
-   just like crates — boring, audited, pinned.
+   the pinned SHAs so the pins don't rot. The official release workflow has one
+   extra project-specific invariant inside `check-workflows`: Apple signing/notary
+   material may exist only around `make dist`; the notary profile must be stored
+   in and consumed from the temporary keychain; cleanup must fail closed before
+   any post-signing `uses:` action; and no third-party `uses:` action may run
+   between signed-asset manifest capture and the digest-bound pre-handoff
+   verification. The signed zip, per-zip checksum, and aggregate-checksum manifest
+   must be re-verified before the encrypted handoff artifact is uploaded and
+   again before the draft release is created. After encryption, raw signed files
+   must be removed from `dist/release/` and absence-checked before the first
+   post-signing third-party action runs; constraining an upload-artifact `path`
+   is not enough because the action still executes on the same runner filesystem.
+   The baseline manifest cannot stand alone as a mutable `$RUNNER_TEMP` file:
+   bind it to a prior step output digest before later third-party actions run,
+   and validate that binding before every asset comparison. That guard validates
+   real workflow step keys, normalizes YAML key spelling used by action steps,
+   validates the actual continued notarytool and release-create commands instead
+   of accepting comments or adjacent prose as proof, rejects raw signed asset
+   uploads as public workflow artifacts, rejects same-run `gh run download` name
+   lookups, and rejects release upload, clobber, and unscoped delete primitives.
+   The actions themselves are supply-chain just like crates — boring, audited,
+   pinned, kept outside the signing credential window, and separated from release
+   write permission. A draft GitHub Release is not a safe metadata handoff
+   boundary: attestation must use the checksum subject list captured before
+   publication, SBOM generation must run with read-only contents permission,
+   checksum-only attestation must not request artifact metadata write permission,
+   and the only release-write job must be run-only, download fixed artifact IDs,
+   decrypt and re-verify the signed handoff, create the draft only after all
+   metadata is ready, verify the resulting asset set, and delete only its own
+   still-draft release if creation or verification fails. `github-release` must
+   also create a complete draft once, include the staged SBOM, and fail closed for
+   any existing release so it never races a maintainer publication while
+   replacing release assets.
 9. **Audit the supply chain and the non-Rust surface mechanically.**
    [`cargo-deny`](https://embarkstudios.github.io/cargo-deny/) (`deny.toml`) scans the
    whole dependency tree for RustSec advisories, yanked crates, license compliance (a

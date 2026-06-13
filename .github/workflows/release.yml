@@ -4,7 +4,7 @@
 # Release Fuzz run on the exact tag SHA (budget floor: prerelease >= 10m/target,
 # final >= 30m/target — see the gate step), then runs the full gate, builds the
 # app bundle, and uploads an explicitly UNSIGNED preview artifact — it needs no
-# Apple secrets, so it works on every tag and every fork. `publish-official`
+# Apple secrets, so it works on every tag and every fork. `sign-official`
 # runs whenever the repo variable XPARE_ENABLE_OFFICIAL_RELEASE == 'true' AND a
 # required reviewer approves the `release` environment deployment (the human
 # gate sits BEFORE signing, so a stolen tag push cannot mint a signed binary);
@@ -15,10 +15,12 @@
 # and an App Store Connect API key for notarization (MACOS_NOTARY_KEY_P8_BASE64
 # + MACOS_NOTARY_KEY_ID + MACOS_NOTARY_ISSUER_ID — a per-key-revocable,
 # Developer-role key; no personal Apple ID credential ever reaches CI). It
-# signs with the checked App Sandbox entitlements, notarizes, publishes the
-# GitHub Release, then attaches a build-provenance attestation and an SPDX
-# SBOM to the assets. Signing/notary credentials are NEVER required for
-# pull-request CI (see .github/workflows/ci.yml).
+# signs with the checked App Sandbox entitlements, notarizes, immediately wipes
+# Apple signing/notary material, and encrypts the signed asset handoff before any
+# workflow artifact upload. Provenance and SBOM metadata finish before
+# `publish-official` decrypts the handoff and creates a complete draft GitHub
+# Release once. Signing/notary credentials are NEVER required for pull-request CI
+# (see .github/workflows/ci.yml).
 name: Release
 
 on:
@@ -243,8 +245,8 @@ jobs:
           echo "Set repo variable XPARE_ENABLE_OFFICIAL_RELEASE=true and add the"
           echo "Apple Developer ID + notary secrets to publish signed assets."
 
-  publish-official:
-    name: sign, notarize, and publish
+  sign-official:
+    name: sign and notarize
     needs: validate
     # The job-level `if` is evaluated BEFORE environment protection, so when the
     # variable is unset (signing not configured) the job skips cleanly without
@@ -260,12 +262,15 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 120
     permissions:
-      # Publishes the GitHub Release and uploads its assets.
-      contents: write
-      # Build-provenance attestation: sign with the workflow's OIDC identity and
-      # store the attestation.
-      id-token: write
-      attestations: write
+      contents: read
+    outputs:
+      release_version: ${{ steps.release_version.outputs.version }}
+      release_subject_checksums_b64: ${{ steps.signed_manifest.outputs.checksums_b64 }}
+      signed_manifest_sha256: ${{ steps.signed_manifest.outputs.sha256 }}
+      signed_asset_handoff_artifact_id: ${{ steps.upload_signed_handoff.outputs.artifact-id }}
+      signed_asset_handoff_key_hex: ${{ steps.signed_handoff.outputs.key_hex }}
+      signed_asset_handoff_iv_hex: ${{ steps.signed_handoff.outputs.iv_hex }}
+      signed_asset_handoff_sha256: ${{ steps.signed_handoff.outputs.sha256 }}
     env:
       VERSION: ${{ github.ref_name }}
       NOTARY_PROFILE: xpare-notary
@@ -287,6 +292,7 @@ jobs:
         run: cargo run -p xtask -- check-entitlements
 
       - name: Normalize release version
+        id: release_version
         run: |
           set -euo pipefail
           version="${VERSION#v}"
@@ -295,6 +301,7 @@ jobs:
             exit 1
           fi
           echo "RELEASE_VERSION=${version}" >> "${GITHUB_ENV}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
 
       # `runner.temp` is not available in job-level `env:`, so derive the signing
       # paths from $RUNNER_TEMP here and export them for the later steps.
@@ -304,6 +311,7 @@ jobs:
             echo "KEYCHAIN_PATH=${RUNNER_TEMP}/xpare-signing.keychain-db"
             echo "CERTIFICATE_PATH=${RUNNER_TEMP}/developer-id.p12"
             echo "NOTARY_KEY_PATH=${RUNNER_TEMP}/notary-authkey.p8"
+            echo "SIGNED_RELEASE_MANIFEST=${RUNNER_TEMP}/signed-release-assets.sha256"
           } >> "${GITHUB_ENV}"
 
       - name: Validate required Apple secrets
@@ -330,7 +338,7 @@ jobs:
           # Throwaway keychain password: cryptographically random, never derived
           # from predictable run metadata (run_id/run_attempt are public). It
           # guards the imported signing key for this job only and dies with the
-          # keychain in the cleanup step.
+          # keychain in the immediate post-dist cleanup step.
           KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
           echo "${MACOS_CERTIFICATE_P12_BASE64}" | base64 -d > "${CERTIFICATE_PATH}"
           security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
@@ -351,8 +359,7 @@ jobs:
         # account credential ever reaches the runner. `store-credentials` wraps
         # the key in the same keychain profile `release.sh dist` already
         # consumes, so the local NOTARY_PROFILE flow is identical. The .p8 stays
-        # on disk in RUNNER_TEMP for the job's lifetime (notarytool may read it
-        # through the stored profile) and is shredded in the cleanup step.
+        # on disk only until the immediate post-dist cleanup step.
         env:
           MACOS_NOTARY_KEY_P8_BASE64: ${{ secrets.MACOS_NOTARY_KEY_P8_BASE64 }}
           MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
@@ -364,46 +371,282 @@ jobs:
           xcrun notarytool store-credentials "${NOTARY_PROFILE}" \
             --key "${NOTARY_KEY_PATH}" \
             --key-id "${MACOS_NOTARY_KEY_ID}" \
-            --issuer "${MACOS_NOTARY_ISSUER_ID}"
+            --issuer "${MACOS_NOTARY_ISSUER_ID}" \
+            --keychain "${KEYCHAIN_PATH}"
 
       - name: Sign and notarize (make dist)
-        run: make dist VERSION="${RELEASE_VERSION}" CERT_NAME="${CERT_NAME}" NOTARY_PROFILE="${NOTARY_PROFILE}" SIGN_ENTITLEMENTS="${GITHUB_WORKSPACE}/shells/macos/xPare.entitlements"
+        run: make dist VERSION="${RELEASE_VERSION}" CERT_NAME="${CERT_NAME}" NOTARY_PROFILE="${NOTARY_PROFILE}" NOTARY_KEYCHAIN="${KEYCHAIN_PATH}" SIGN_ENTITLEMENTS="${GITHUB_WORKSPACE}/shells/macos/xPare.entitlements"
+
+      - name: Capture signed asset manifest
+        id: signed_manifest
+        run: |
+          set -euo pipefail
+          ( cd dist/release && shasum -a 256 -- *.zip *.zip.sha256 SHA256SUMS* ) > "${SIGNED_RELEASE_MANIFEST}"
+          manifest_sha="$(shasum -a 256 "${SIGNED_RELEASE_MANIFEST}" | awk '{print $1}')"
+          echo "sha256=${manifest_sha}" >> "${GITHUB_OUTPUT}"
+          checksums_b64="$(base64 < "${SIGNED_RELEASE_MANIFEST}" | tr -d '\n')"
+          echo "checksums_b64=${checksums_b64}" >> "${GITHUB_OUTPUT}"
+
+      - name: Clean temporary signing material
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          if [ -e "${KEYCHAIN_PATH}" ]; then
+            security delete-keychain "${KEYCHAIN_PATH}"
+          fi
+          rm -f "${CERTIFICATE_PATH}" "${NOTARY_KEY_PATH}"
+
+      - name: Verify signed assets before encrypted handoff
+        env:
+          SIGNED_MANIFEST_SHA256: ${{ steps.signed_manifest.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          expected_manifest_sha="${SIGNED_MANIFEST_SHA256}"
+          printf '%s  %s\n' "${expected_manifest_sha}" "${SIGNED_RELEASE_MANIFEST}" | shasum -a 256 --check --strict -
+          current_manifest="${RUNNER_TEMP}/signed-release-assets.current.sha256"
+          ( cd dist/release && shasum -a 256 -- *.zip *.zip.sha256 SHA256SUMS* ) > "${current_manifest}"
+          diff -u "${SIGNED_RELEASE_MANIFEST}" "${current_manifest}"
+
+      - name: Encrypt signed release handoff
+        id: signed_handoff
+        run: |
+          set -euo pipefail
+          handoff_dir="${RUNNER_TEMP}/signed-release-handoff"
+          rm -rf "${handoff_dir}"
+          mkdir -p "${handoff_dir}"
+          tarball="${handoff_dir}/signed-release-assets.tar"
+          encrypted="${handoff_dir}/signed-release-assets.tar.enc"
+          key_hex="$(openssl rand -hex 32)"
+          iv_hex="$(openssl rand -hex 16)"
+          ( cd dist/release && tar -cf "${tarball}" -- *.zip *.zip.sha256 SHA256SUMS )
+          openssl enc -aes-256-cbc -K "${key_hex}" -iv "${iv_hex}" -in "${tarball}" -out "${encrypted}"
+          rm -f "${tarball}"
+          rm -f -- dist/release/*.zip dist/release/*.zip.sha256 dist/release/SHA256SUMS*
+          raw_signed_asset_remaining="$(find dist/release -maxdepth 1 -type f \( -name '*.zip' -o -name '*.zip.sha256' -o -name 'SHA256SUMS*' \) -print -quit)"
+          if [ -n "${raw_signed_asset_remaining}" ]; then
+            echo "raw signed release asset remains after handoff encryption: ${raw_signed_asset_remaining}"
+            exit 1
+          fi
+          encrypted_sha="$(shasum -a 256 "${encrypted}" | awk '{print $1}')"
+          {
+            echo "SIGNED_ASSET_HANDOFF_DIR=${handoff_dir}"
+          } >> "${GITHUB_ENV}"
+          {
+            echo "key_hex=${key_hex}"
+            echo "iv_hex=${iv_hex}"
+            echo "sha256=${encrypted_sha}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Upload encrypted signed release handoff
+        id: upload_signed_handoff
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: encrypted-signed-release-handoff-${{ env.RELEASE_VERSION }}
+          path: ${{ env.SIGNED_ASSET_HANDOFF_DIR }}/signed-release-assets.tar.enc
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  attest-official:
+    name: attest signed release subjects
+    needs: sign-official
+    if: ${{ vars.XPARE_ENABLE_OFFICIAL_RELEASE == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    env:
+      RELEASE_VERSION: ${{ needs['sign-official'].outputs.release_version }}
+      RELEASE_SUBJECT_CHECKSUMS_B64: ${{ needs['sign-official'].outputs.release_subject_checksums_b64 }}
+    steps:
+      - name: Materialize signed subject checksums
+        run: |
+          set -euo pipefail
+          mkdir -p dist/release
+          printf '%s' "${RELEASE_SUBJECT_CHECKSUMS_B64}" | base64 -d > dist/release/signed-release-assets.sha256
+          test -s dist/release/signed-release-assets.sha256
 
       # Signed build provenance for everything we ship: a verifier can check that
       # an asset was built by THIS workflow at THIS SHA (`gh attestation verify`).
+      # This third-party action runs in a separate job without release write
+      # permission and attests the checksum subject list captured before release
+      # publication, so it does not need draft-release visibility.
       - name: Attest build provenance
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
-          subject-path: |
-            dist/release/*.zip
-            dist/release/SHA256SUMS*
+          subject-checksums: dist/release/signed-release-assets.sha256
+
+  sbom-official:
+    name: generate release SBOM
+    needs: validate
+    if: ${{ vars.XPARE_ENABLE_OFFICIAL_RELEASE == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      release_sbom_artifact_id: ${{ steps.upload_sbom.outputs.artifact-id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Normalize release version
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          if ! [[ "${version}" =~ ^[0-9]+(\.[0-9]+){2}(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$ ]]; then
+            echo "Release tags must look like vX.Y.Z or vX.Y.Z-<prerelease> (dotted prerelease such as v1.0.0-rc.1 is allowed)."
+            exit 1
+          fi
+          echo "RELEASE_VERSION=${version}" >> "${GITHUB_ENV}"
 
       # SPDX SBOM of the workspace (syft catalogs the Cargo lockfile), staged
-      # next to the zips and attached to the release after it exists below.
+      # as a workflow artifact. This third-party action has no release write
+      # permission; a later run-only job creates the draft with exactly this
+      # SBOM file already present.
       - name: Generate SBOM (SPDX JSON)
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
           path: .
           format: spdx-json
-          output-file: dist/release/xPare-v${{ env.RELEASE_VERSION }}-sbom.spdx.json
+          output-file: xPare-v${{ env.RELEASE_VERSION }}-sbom.spdx.json
           upload-artifact: false
           upload-release-assets: false
+
+      - name: Upload SBOM workflow artifact
+        id: upload_sbom
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-sbom-${{ env.RELEASE_VERSION }}
+          path: xPare-v${{ env.RELEASE_VERSION }}-sbom.spdx.json
+          if-no-files-found: error
+
+  publish-official:
+    name: publish complete draft release
+    needs:
+      - sign-official
+      - attest-official
+      - sbom-official
+    if: ${{ vars.XPARE_ENABLE_OFFICIAL_RELEASE == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      actions: read
+    env:
+      RELEASE_VERSION: ${{ needs['sign-official'].outputs.release_version }}
+      RELEASE_SUBJECT_CHECKSUMS_B64: ${{ needs['sign-official'].outputs.release_subject_checksums_b64 }}
+      SIGNED_MANIFEST_SHA256: ${{ needs['sign-official'].outputs.signed_manifest_sha256 }}
+      SIGNED_ASSET_HANDOFF_ARTIFACT_ID: ${{ needs['sign-official'].outputs.signed_asset_handoff_artifact_id }}
+      SIGNED_ASSET_HANDOFF_KEY_HEX: ${{ needs['sign-official'].outputs.signed_asset_handoff_key_hex }}
+      SIGNED_ASSET_HANDOFF_IV_HEX: ${{ needs['sign-official'].outputs.signed_asset_handoff_iv_hex }}
+      SIGNED_ASSET_HANDOFF_SHA256: ${{ needs['sign-official'].outputs.signed_asset_handoff_sha256 }}
+      RELEASE_SBOM_ARTIFACT_ID: ${{ needs['sbom-official'].outputs.release_sbom_artifact_id }}
+    steps:
+      - name: Download encrypted signed release handoff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          artifact_zip="${RUNNER_TEMP}/signed-release-handoff.zip"
+          handoff_dir="${RUNNER_TEMP}/signed-release-handoff"
+          rm -rf "${handoff_dir}"
+          mkdir -p "${handoff_dir}"
+          mkdir -p dist/release
+          gh api -H "Accept: application/vnd.github+json" "/repos/${GH_REPO}/actions/artifacts/${SIGNED_ASSET_HANDOFF_ARTIFACT_ID}/zip" > "${artifact_zip}"
+          unzip -q "${artifact_zip}" -d "${handoff_dir}"
+          encrypted="${handoff_dir}/signed-release-assets.tar.enc"
+          tarball="${handoff_dir}/signed-release-assets.tar"
+          test -s "${encrypted}"
+          printf '%s  %s\n' "${SIGNED_ASSET_HANDOFF_SHA256}" "${encrypted}" | shasum -a 256 --check --strict -
+          openssl enc -d -aes-256-cbc -K "${SIGNED_ASSET_HANDOFF_KEY_HEX}" -iv "${SIGNED_ASSET_HANDOFF_IV_HEX}" -in "${encrypted}" -out "${tarball}"
+          tar -C dist/release -xf "${tarball}"
+          rm -f "${tarball}"
+
+      - name: Download release SBOM
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          artifact_zip="${RUNNER_TEMP}/release-sbom.zip"
+          sbom_dir="${RUNNER_TEMP}/release-sbom"
+          rm -rf "${sbom_dir}"
+          mkdir -p "${sbom_dir}"
+          gh api -H "Accept: application/vnd.github+json" "/repos/${GH_REPO}/actions/artifacts/${RELEASE_SBOM_ARTIFACT_ID}/zip" > "${artifact_zip}"
+          unzip -q "${artifact_zip}" -d "${sbom_dir}"
+          sbom="${sbom_dir}/xPare-v${RELEASE_VERSION}-sbom.spdx.json"
+          test -s "${sbom}"
+          cp "${sbom}" "dist/release/xPare-v${RELEASE_VERSION}-sbom.spdx.json"
+
+      - name: Verify signed assets before release creation
+        run: |
+          set -euo pipefail
+          expected_manifest="${RUNNER_TEMP}/signed-release-assets.expected.sha256"
+          printf '%s' "${RELEASE_SUBJECT_CHECKSUMS_B64}" | base64 -d > "${expected_manifest}"
+          printf '%s  %s\n' "${SIGNED_MANIFEST_SHA256}" "${expected_manifest}" | shasum -a 256 --check --strict -
+          current_manifest="${RUNNER_TEMP}/signed-release-assets.current.sha256"
+          ( cd dist/release && shasum -a 256 -- *.zip *.zip.sha256 SHA256SUMS* ) > "${current_manifest}"
+          diff -u "${expected_manifest}" "${current_manifest}"
 
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: make github-release VERSION="${RELEASE_VERSION}"
-
-      - name: Attach SBOM to the GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          gh release upload "v${RELEASE_VERSION}" \
-            "dist/release/xPare-v${RELEASE_VERSION}-sbom.spdx.json" --clobber
-
-      - name: Clean temporary signing material
-        if: ${{ always() }}
-        run: |
-          security delete-keychain "${KEYCHAIN_PATH}" >/dev/null 2>&1 || true
-          rm -f "${CERTIFICATE_PATH}" "${NOTARY_KEY_PATH}"
+          release_create_started=false
+          cleanup_partial_draft_release() {
+            status="$?"
+            trap - ERR
+            if [ "${release_create_started}" = "true" ]; then
+              draft_state="$(gh release view "v${RELEASE_VERSION}" --json isDraft --jq .isDraft 2>/dev/null || true)"
+              if [ "${draft_state}" = "true" ]; then
+                echo "Deleting incomplete draft release v${RELEASE_VERSION} after release creation failure."
+                gh release delete "v${RELEASE_VERSION}" --yes
+              else
+                echo "Release creation failed, but v${RELEASE_VERSION} is not a draft; leaving it for manual review."
+              fi
+            fi
+            exit "${status}"
+          }
+          trap cleanup_partial_draft_release ERR
+          if gh release view "v${RELEASE_VERSION}" >/dev/null 2>&1; then
+            echo "Release v${RELEASE_VERSION} already exists; refusing to replace release assets."
+            exit 1
+          fi
+          create_flags=(--draft)
+          case "${RELEASE_VERSION}" in
+            *-*) create_flags+=(--prerelease) ;;
+          esac
+          shopt -s nullglob
+          zips=(dist/release/xPare-v"${RELEASE_VERSION}"-macos-*.zip)
+          if [ "${#zips[@]}" -ne 1 ]; then
+            echo "Expected exactly one signed zip for v${RELEASE_VERSION}; found ${#zips[@]}."
+            exit 1
+          fi
+          release_create_started=true
+          gh release create "v${RELEASE_VERSION}" \
+            "${zips[0]}" \
+            "${zips[0]}.sha256" \
+            "dist/release/SHA256SUMS" \
+            "dist/release/xPare-v${RELEASE_VERSION}-sbom.spdx.json" \
+            --title "xPare ${RELEASE_VERSION}" --generate-notes --verify-tag \
+            "${create_flags[@]}"
+          expected_assets="${RUNNER_TEMP}/release-assets.expected"
+          actual_assets="${RUNNER_TEMP}/release-assets.actual"
+          {
+            basename "${zips[0]}"
+            basename "${zips[0]}.sha256"
+            echo "SHA256SUMS"
+            echo "xPare-v${RELEASE_VERSION}-sbom.spdx.json"
+          } | sort > "${expected_assets}"
+          gh release view "v${RELEASE_VERSION}" --json assets --jq '.assets[].name' | sort > "${actual_assets}"
+          diff -u "${expected_assets}" "${actual_assets}"
+          release_create_started=false
+          trap - ERR
