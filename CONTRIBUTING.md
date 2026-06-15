@@ -16,6 +16,26 @@ Cedar-style **reference interpreter** — the optimized production `transform` i
 differentially tested against a simple one-op-at-a-time reference in
 [`core/tests/reference_transform.rs`](core/tests/reference_transform.rs).
 
+## GitHub Actions lanes
+
+The Actions workflows are organized by what the signal proves:
+
+- **Required Gate (`CI`)** — the portable deterministic merge gate:
+  `cargo xtask ci`, MSRV compile, and workflow-security signal. This is the only
+  branch-protection-quality requirement.
+- **Quality Hygiene (`Quality Hygiene`)** — best-effort anti-slop evidence across
+  Rust and the macOS shell: Rust coverage, Rust mutation testing, and
+  `cargo xtask check-swift`.
+- **Deep confidence (`Proofs` plus CI smoke jobs)** — best-effort semantic and
+  boundary evidence: event-driven Kani proofs, plus short fuzz/Miri smoke where
+  quick PR feedback is more useful than a separate path-filtered workflow.
+- **External drift (`Advisories`, `Scorecard`, CodeQL schedules)** — scheduled
+  checks only for facts that can change while the repo is quiet: published
+  advisories, ecosystem posture, and upstream analysis baselines.
+
+Deterministic heavy checks are event-driven, not cron-driven. A stable repo
+should not spend CI minutes re-proving the same source/config state.
+
 ## The full local gate
 
 ```sh
@@ -104,7 +124,7 @@ the PR.
 |---|---|---|
 | **Core transform** | `core/` transform logic, ops, pipeline | `cargo test -p xpare-core`, `cargo clippy -p xpare-core --all-targets -- -D warnings`, `cargo fmt`, and the relevant fuzz target (below). New behavior needs regression **and** adversarial-input tests (prefer a reference-interpreter clause + property over a lone example); output must stay deterministic. For dead-code / weak-test confidence, run the best-effort `cargo xtask check-mutants` (`XP_DIFF_BASE=origin/main` scopes it to your diff). See [code & test hygiene](docs/guardrails/code-and-test-hygiene.md). |
 | **FFI boundary / ABI** | `core-ffi/` (incl. `cbindgen.toml`), config serialization, capabilities/version, `CXPare` shim files | `cargo xtask check-abi`, `cargo xtask check-c-ffi-surface`, `cargo test -p xpare-ffi`. An intended ABI change means: bump `XP_ABI_VERSION`, run `cargo xtask gen-header`, and call it out in the PR (confirm a non-Swift shell could still consume the boundary). Adding a transform must **not** change the ABI. |
-| **Shell** | `shells/macos/` (Swift), reserved `windows/`/`linux/` | `cargo build -p xpare-ffi --release` then `swift build --package-path shells/macos`. Also run `cargo xtask check-swift-no-network-apis`, `cargo xtask check-shipped-command-exec`, `cargo xtask check-real-clipboard-tests`, and `cargo xtask check-pasteboard-write-shape` for shell changes. Touching entitlements → `cargo xtask check-entitlements`; touching release signing → `cargo xtask check-release-posture`; touching the build/release shell scripts → `cargo xtask check-shell`. No transform logic belongs in a shell. |
+| **Shell** | `shells/macos/` (Swift), reserved `windows/`/`linux/` | On macOS, run `cargo run -p xtask -- check-swift` (FFI staticlib build, swift-format, `swift test`, Sources coverage, and SwiftLint if present); if macOS/Swift is unavailable, explain the skip and run the narrower build checks you can. Also run `cargo xtask check-swift-no-network-apis`, `cargo xtask check-shipped-command-exec`, `cargo xtask check-real-clipboard-tests`, and `cargo xtask check-pasteboard-write-shape` for shell changes. Touching entitlements → `cargo xtask check-entitlements`; touching release signing → `cargo xtask check-release-posture`; touching the build/release shell scripts → `cargo xtask check-shell`. No transform logic belongs in a shell. |
 | **Security / privacy posture** | entitlements, logging, in-memory lifetime, data paths, anything network-adjacent | `cargo xtask check-no-network`, `cargo xtask check-swift-no-network-apis`, `cargo xtask check-shipped-command-exec`, `cargo xtask check-no-content-logging`, `cargo xtask check-real-clipboard-tests`, `cargo xtask check-pasteboard-write-shape`, `cargo xtask check-pipeline-zeroization`, `cargo xtask check-entitlements`, `cargo xtask check-release-posture`, `cargo xtask check-unsafe-forbid`. Any new entitlement, network-capable dependency/API, command-exec path, data path, or weakening of wipe-before-release zeroization is a posture change — justify it in the PR and update `SECURITY.md`. |
 | **Dependencies & CI** | crate versions, `Cargo.toml`/`Cargo.lock`, lints, `xtask`, `.github/workflows/`, shell scripts | `cargo xtask check-core-deps`, `cargo xtask check-no-network`, `cargo xtask check-swift-package-deps` (SwiftPM changes), `cargo xtask check-python-tooling-posture` (Python helper changes), `cargo xtask check-supply-chain` + `cargo xtask check-unused-deps` (any dependency/lockfile change), `cargo xtask check-workflows` + `cargo xtask check-codeql-workflow-posture` (workflow/CodeQL changes), plus `cargo test -p xtask` / `cargo clippy -p xtask --all-targets -- -D warnings` when editing `xtask`. New crates: prefer boring, audited, API-stable ones; a new core dependency must be a pure-data crate (no OS/IO/net) and added to the `xtask` allowlist with justification — and it must actually be used (`check-unused-deps`). |
 | **Docs only** | `README`, `ARCHITECTURE.md`, `DESIGN.md`, `docs/`, runbooks | `cargo fmt --all --check` (still run the formatter); if you edited Rust doc comments, `cargo xtask check-docs`. Other checks may be skipped if the PR explains why. |
@@ -297,10 +317,10 @@ XP_DIFF_BASE=origin/main cargo run -p xtask -- check-mutants
 
 Both are **heavy and deterministic**, so — like Miri and Kani — they sit **outside** the
 required `cargo xtask ci` gate. Re-running them on unchanged code proves nothing new, so
-they are event-driven, not scheduled: on demand locally, and path-filtered in
-[`hygiene.yml`](.github/workflows/hygiene.yml) (a `continue-on-error` job that scopes the
-mutation run to the PR diff via `XP_DIFF_BASE`). There is **no cron** — a stable repo
-pays nothing. See [code & test hygiene](docs/guardrails/code-and-test-hygiene.md).
+they are event-driven, not scheduled: on demand locally, and path-filtered in the
+[`Quality Hygiene`](.github/workflows/hygiene.yml) workflow (a `continue-on-error` lane
+that scopes the mutation run to the PR diff via `XP_DIFF_BASE`). There is **no cron** —
+a stable repo pays nothing. See [code & test hygiene](docs/guardrails/code-and-test-hygiene.md).
 
 ## macOS shell anti-slop (`check-swift`, best-effort)
 
@@ -327,9 +347,9 @@ like actionlint), so this phase runs there; locally it's **run-if-present** and 
 note. SourceKit is disabled for determinism (a CLT-only host can't load it).
 
 This tier is **macOS-only and best-effort**: it sits outside the required `cargo xtask ci`
-(which runs on Linux), runs in the `continue-on-error` `macos-shell` CI job, and skips
-cleanly where the Swift toolchain or sources are absent. The security-critical transform
-logic lives in the gated Rust core, not the shell. See
+(which runs on Linux), runs in the `continue-on-error` `macos-shell` job in the
+`Quality Hygiene` workflow, and skips cleanly where the Swift toolchain or sources are
+absent. The security-critical transform logic lives in the gated Rust core, not the shell. See
 [code & test hygiene](docs/guardrails/code-and-test-hygiene.md).
 
 ## Pull requests

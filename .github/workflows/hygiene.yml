@@ -1,19 +1,21 @@
-# Code & test hygiene (coverage + mutation testing).
+# Quality hygiene (Rust coverage/mutation + macOS shell anti-slop).
 #
-# These are the deepest anti-slop signal — coverage catches untested code; mutation
-# testing catches code that runs but is not asserted on (dead code or "slop" tests). But
-# both are HEAVY and DETERMINISTIC: like the Kani proofs (proofs.yml), re-running them on
-# unchanged code with pinned tool versions proves nothing new, so a *time* cadence (cron)
-# would be pure waste. The trigger is EVENT-driven, not time-driven — it runs only when
-# something that could change the result changes (the product code, the lockfile/toolchain,
-# the mutants config, or this workflow) plus on demand. On a stable repo it never fires.
+# This is the best-effort anti-slop lane across the Rust product crates and the
+# Swift macOS shell. Rust coverage catches untested code; Rust mutation testing
+# catches code that runs but is not asserted on; check-swift gives the shell its
+# own lint/test/coverage floor. These checks are HEAVY, platform-bound, or both,
+# so they stay outside the required `cargo xtask ci` gate.
+#
+# The deterministic parts are EVENT-driven, not time-driven: re-running unchanged
+# code with pinned tool versions proves nothing new, so a cron would be pure
+# waste. The trigger follows the code and tooling that can affect these results,
+# plus workflow_dispatch for deliberate full-tree/manual runs. On a stable repo it
+# never fires.
 #
 # Run locally any time: `cargo run -p xtask -- check-coverage` / `check-mutants`
-# (`XP_DIFF_BASE=origin/main cargo run -p xtask -- check-mutants` scopes to your diff).
-# Both stay OUTSIDE the required `cargo xtask ci` gate (continue-on-error): the everyday
-# signal is the stable gate plus the property/reference/corpus tests. See
-# docs/guardrails/code-and-test-hygiene.md.
-name: Hygiene
+# (`XP_DIFF_BASE=origin/main cargo run -p xtask -- check-mutants` scopes to your diff)
+# and `cargo run -p xtask -- check-swift` on macOS.
+name: Quality Hygiene
 
 on:
   workflow_dispatch:
@@ -25,6 +27,9 @@ on:
       - "core/**"
       - "core-ffi/**"
       - "cli/**"
+      - "shells/macos/**"
+      - "xtask/**"
+      - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
       - ".cargo/mutants.toml"
@@ -34,6 +39,9 @@ on:
       - "core/**"
       - "core-ffi/**"
       - "cli/**"
+      - "shells/macos/**"
+      - "xtask/**"
+      - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
       - ".cargo/mutants.toml"
@@ -154,3 +162,62 @@ jobs:
 
       - name: Run mutation testing
         run: cargo run -p xtask -- check-mutants
+
+  # --------------------------------------------------------------------------
+  # macOS shell anti-slop. `check-swift` builds the FFI staticlib, then runs
+  # swift-format, swift test, a Sources-only coverage floor, and SwiftLint when it
+  # is installed. macOS runner/toolchain availability should not block ordinary
+  # merges, so this stays best-effort like the Rust quality jobs above.
+  # --------------------------------------------------------------------------
+  macos-shell:
+    name: macOS shell anti-slop (swift-format + test + coverage)
+    runs-on: macos-latest
+    timeout-minutes: 60
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Install Rust (pinned stable)
+        id: toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      # Keyed on toolchain + lockfile like the CI cache.
+      - name: Cache cargo
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ steps.toolchain.outputs.cachekey }}-
+
+      # Pinned + sha256-verified SwiftLint (the style/complexity phase of check-swift),
+      # installed like actionlint: a release asset from a pinned tag, checksum-checked.
+      # `portable_swiftlint.zip` is a universal macOS binary that needs no Xcode to run.
+      # Bump VER and SHA together (sha256 of the asset; verify by re-downloading). check-swift
+      # runs SwiftLint only if it's on PATH, so this step is what turns that phase on in CI.
+      - name: Install SwiftLint (pinned + checksum-verified)
+        run: |
+          ver=0.63.3
+          sha=fb045e85e7cb3374f42a4840b6b85a0106302afa69035c0c6f29af4a44c810b6
+          tmp="$(mktemp -d)"
+          curl --fail --silent --show-error --location \
+            --output "${tmp}/swiftlint.zip" \
+            "https://github.com/realm/SwiftLint/releases/download/${ver}/portable_swiftlint.zip"
+          echo "${sha}  ${tmp}/swiftlint.zip" | shasum -a 256 --check --strict -
+          unzip -o -q "${tmp}/swiftlint.zip" -d "${tmp}/swiftlint"
+          sudo install -m 0755 "${tmp}/swiftlint/swiftlint" /usr/local/bin/swiftlint
+          swiftlint version
+
+      # Same command an engineer runs locally (`make swift`), so local == CI for
+      # the Swift tier too. It builds the staticlib the package links over the
+      # frozen C ABI, lints formatting, runs the tests, enforces the Sources
+      # coverage floor, and runs the SwiftLint style/complexity pass.
+      - name: cargo xtask check-swift
+        run: cargo run -p xtask -- check-swift

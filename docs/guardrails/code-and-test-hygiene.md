@@ -1,15 +1,18 @@
 # Guardrail: code & test hygiene (anti-slop)
 
-**When to consult:** adding or editing any Rust code, dependency, doc comment, or
-test — especially for large AI-authored changes, where dead code, unused deps, tangled
-functions, broken doc links, and coverage-gaming tests accumulate fastest.
+**When to consult:** adding or editing Rust code, Swift shell code, dependencies,
+doc comments, or tests — especially for large AI-authored changes, where dead code,
+unused deps, tangled functions, broken doc links, and coverage-gaming tests accumulate
+fastest.
 
 Heavily generated code rots in predictable ways: helpers nothing calls, dependencies
 left behind after the code that used them is gone, functions that grow without bound,
 doc links that dangle, and tests that execute code without asserting anything. The
-project's answer is the same as everywhere else — *agents propose; deterministic tools
-dispose*. Each kind of slop is a mechanical check that fails `cargo xtask ci`, not a
-style note. Fix the code to satisfy the check; never weaken the check.
+project’s answer is the same as everywhere else — *agents propose; deterministic tools
+dispose*. Cheap deterministic slop checks fail `cargo xtask ci`; heavy or
+platform-bound checks fail their own best-effort `xtask` subcommands in `Quality
+Hygiene`. Either way, they are mechanical checks, not style notes. Fix the code to
+satisfy the check; never weaken the check.
 
 ## The rules
 
@@ -53,14 +56,20 @@ style note. Fix the code to satisfy the check; never weaken the check.
 - **`check-docs`** builds the workspace docs with `RUSTDOCFLAGS=-D warnings`. It is
   deterministic and offline (rustdoc on the pinned stable toolchain), so it stays in the
   required gate.
-- **Coverage & mutation testing (`check-coverage`, `check-mutants`)** are the deepest
-  signal for rules 1 and 7 — a MISSED mutant is either dead code or an under-asserted
-  test, and is the only mutation outcome that fails the check (a TIMEOUT means the
-  mutation hung the suite, which is detection, not a gap; UNVIABLE is non-signal).
-  They are **heavy and deterministic**, so (like Miri and Kani) they are *not* in
-  the required `ci` gate: they run on demand, locally, and event-driven in
-  [`hygiene.yml`](../../.github/workflows/hygiene.yml). A mutation finding is fixed by
-  *strengthening a test*, and that new assertion becomes a permanent regression.
+- **Rust coverage & mutation testing (`check-coverage`, `check-mutants`)** are the
+  deepest Rust signal for rules 1 and 7 — a MISSED mutant is either dead code or an
+  under-asserted test, and is the only mutation outcome that fails the check (a TIMEOUT
+  means the mutation hung the suite, which is detection, not a gap; UNVIABLE is
+  non-signal). They are **heavy and deterministic**, so (like Miri and Kani) they are
+  *not* in the required `ci` gate: they run on demand, locally, and event-driven in the
+  [`Quality Hygiene`](../../.github/workflows/hygiene.yml) workflow. A mutation finding
+  is fixed by *strengthening a test*, and that new assertion becomes a permanent
+  regression.
+- **Swift shell anti-slop (`check-swift`)** is the shell-owned counterpart: it builds
+  the FFI staticlib, runs `swift format lint --strict`, runs `swift test`, enforces a
+  Sources-only coverage floor, and runs SwiftLint if present. It is macOS-only and
+  best-effort, so it also runs in `Quality Hygiene`, not in the required Linux `ci`
+  gate.
 
 ## Enforcing checks
 
@@ -69,6 +78,7 @@ style note. Fix the code to satisfy the check; never weaken the check.
 - `cargo xtask check-test-hygiene`
 - `cargo xtask check-docs`
 - `cargo xtask check-mutants` / `cargo xtask check-coverage` (best-effort; `XP_DIFF_BASE=<ref>` scopes to a diff)
+- `cargo xtask check-swift` (best-effort; macOS shell lint/test/coverage)
 
 ## What a PR must call out
 
@@ -79,6 +89,8 @@ style note. Fix the code to satisfy the check; never weaken the check.
   smallest item — never a crate-level blanket allow.
 - For new behavior: the reference/property/corpus coverage added (not just an example),
   and any mutation survivors knowingly left, with reasons.
+- For macOS shell behavior: whether `check-swift` ran, or why the macOS-only best-effort
+  tier was skipped.
 
 ## Tier-2 review (the residue)
 

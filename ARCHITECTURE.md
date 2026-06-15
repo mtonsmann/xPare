@@ -105,7 +105,8 @@ the bounded resource-envelope proofs), `check-coverage` (line-coverage floor rat
 cargo-llvm-cov, excluding the `xtask` harness), `check-mutants` (mutation testing via
 cargo-mutants; `XP_DIFF_BASE=<ref>` scopes to a diff) and `check-swift` (macOS shell
 lint + test + coverage floor) — fuzz/Miri/Kani/coverage/mutants/swift are
-nightly/heavy/platform-bound, best-effort, and outside the required gate —
+nightly/heavy/platform-bound, best-effort, and outside the required gate; coverage,
+mutants, and Swift shell anti-slop run in the `Quality Hygiene` workflow —
 and `ci` (a lockfile-sync gate over the root and `fuzz/` workspaces, then fmt +
 clippy + test + every structural check; see
 [`CONTRIBUTING.md`](CONTRIBUTING.md#the-full-local-gate) for the exact order).
@@ -197,8 +198,10 @@ optionally followed by URL/IOC/masking, whitespace/case, and line ops. See
 
 ## Enforced invariants
 
-These are not prose promises — each is a check that fails `cargo xtask ci` (and
-therefore CI). Fix the code to satisfy the check; never weaken the check.
+These are not prose promises. Required entries fail `cargo xtask ci` (and
+therefore CI); entries explicitly marked best-effort run in their owning Actions
+lane and local `xtask` command. Fix the code to satisfy the check; never weaken
+the check.
 
 | Invariant | Mechanism | Where |
 |---|---|---|
@@ -227,11 +230,13 @@ therefore CI). Fix the code to satisfy the check; never weaken the check.
 | Every ignored test justified, count ratcheted | `check-test-hygiene` (bare `#[ignore]` fails; total `#[ignore]`s ≤ ceiling) | `xtask` `MAX_IGNORED_TESTS` |
 | No broken doc links or invalid doc HTML | `check-docs` (`cargo doc --no-deps` with `RUSTDOCFLAGS=-D warnings`) | `xtask` |
 | Public API (FFI/ABI contract) fully documented | `#![deny(missing_docs)]` on the shipped libs | `core/src/lib.rs`, `core-ffi/src/lib.rs` |
-| Line coverage stays above a ratcheted floor | `check-coverage` (cargo-llvm-cov; `COVERAGE_FLOOR_PCT`, excludes the `xtask` harness) | `xtask`; best-effort, **outside** the `ci` gate (`hygiene.yml`) |
-| No dead code or under-asserting "slop" tests | `check-mutants` (cargo-mutants; a surviving mutant means a test to strengthen) | `xtask`, `.cargo/mutants.toml`; best-effort, **outside** the `ci` gate (`hygiene.yml`) |
+| Line coverage stays above a ratcheted floor | `check-coverage` (cargo-llvm-cov; `COVERAGE_FLOOR_PCT`, excludes the `xtask` harness) | `xtask`; best-effort, **outside** the `ci` gate (`Quality Hygiene`) |
+| No dead code or under-asserting "slop" tests | `check-mutants` (cargo-mutants; a surviving mutant means a test to strengthen) | `xtask`, `.cargo/mutants.toml`; best-effort, **outside** the `ci` gate (`Quality Hygiene`) |
+| macOS shell tests and coverage stay visible | `check-swift` (swift-format, `swift test`, Sources-only coverage floor, SwiftLint if present) | `xtask`, `shells/macos/`; best-effort, **outside** the `ci` gate (`Quality Hygiene`) |
 
-The single gate that runs all of the above is `cargo xtask ci`; CI runs the exact
-same command (`.github/workflows/ci.yml`). See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+The required invariants above are enforced by `cargo xtask ci`; CI runs the exact
+same command (`.github/workflows/ci.yml`). Best-effort quality and proof signals are
+separate Actions lanes. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 When a review discovers a new issue class, close it through
 [`docs/guardrails/review-finding-closure.md`](docs/guardrails/review-finding-closure.md):
 add the blocker to the owning test/check layer, and update this table if the
