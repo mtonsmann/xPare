@@ -110,9 +110,10 @@ live under `shells/macos/`; this guardrail documents the contract they implement
 
 - **Swift anti-slop tier:** `cargo xtask check-swift` (`make swift`) builds the FFI
   staticlib, then runs `swift format lint --strict`, `swift test`, and a Sources-only
-  line-coverage floor (plus SwiftLint if present). CI runs this best-effort on macOS
-  (`continue-on-error`, since the image may lack full Xcode), so the shell's tests run
-  in CI, not just locally. It supersedes the old bare `swift build` smoke.
+  line-coverage floor (plus SwiftLint if present). The `Quality Hygiene` workflow runs
+  this best-effort on macOS (`continue-on-error`, since the image may lack full Xcode),
+  so the shell's tests run in Actions, not just locally. It supersedes the old bare
+  `swift build` smoke.
 - **Shell posture tripwires:** `cargo xtask check-swift-no-network-apis`,
   `cargo xtask check-shipped-command-exec`,
   `cargo xtask check-real-clipboard-tests`, and

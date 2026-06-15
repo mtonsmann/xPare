@@ -141,68 +141,6 @@ jobs:
         run: cargo check --workspace --locked
 
   # ----------------------------------------------------------------------------
-  # Best-effort macOS shell anti-slop tier: `cargo xtask check-swift` builds the FFI
-  # staticlib, then runs swift-format lint, `swift test`, and the Sources coverage
-  # floor (and SwiftLint if a runner happens to have it). continue-on-error because
-  # the CI image may lack full Xcode (the repo ships on Command-Line-Tools-only
-  # environments) and the Swift tier is cross-language parity for the §13 Rust gates,
-  # not a required gate — the required suite is the Linux `xtask ci` above. check-swift
-  # skips cleanly when the Swift toolchain or sources are absent.
-  # ----------------------------------------------------------------------------
-  macos-shell:
-    name: macOS shell anti-slop (swift-format + test + coverage)
-    runs-on: macos-latest
-    timeout-minutes: 60
-    continue-on-error: true
-    steps:
-      - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          persist-credentials: false
-
-      - name: Install Rust (pinned stable)
-        id: toolchain
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-
-      # Keyed on toolchain + lockfile like the xtask-ci cache above.
-      - name: Cache cargo
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-${{ steps.toolchain.outputs.cachekey }}-
-
-      # Pinned + sha256-verified SwiftLint (the style/complexity phase of check-swift),
-      # installed like actionlint: a release asset from a pinned tag, checksum-checked.
-      # `portable_swiftlint.zip` is a universal macOS binary that needs no Xcode to run.
-      # Bump VER and SHA together (sha256 of the asset; verify by re-downloading). check-swift
-      # runs SwiftLint only if it's on PATH, so this step is what turns that phase on in CI.
-      - name: Install SwiftLint (pinned + checksum-verified)
-        run: |
-          ver=0.63.3
-          sha=fb045e85e7cb3374f42a4840b6b85a0106302afa69035c0c6f29af4a44c810b6
-          tmp="$(mktemp -d)"
-          curl --fail --silent --show-error --location \
-            --output "${tmp}/swiftlint.zip" \
-            "https://github.com/realm/SwiftLint/releases/download/${ver}/portable_swiftlint.zip"
-          echo "${sha}  ${tmp}/swiftlint.zip" | shasum -a 256 --check --strict -
-          unzip -o -q "${tmp}/swiftlint.zip" -d "${tmp}/swiftlint"
-          sudo install -m 0755 "${tmp}/swiftlint/swiftlint" /usr/local/bin/swiftlint
-          swiftlint version
-
-      # Same command an engineer runs locally (`make swift`), so local == CI for the
-      # Swift tier too. It builds the staticlib the package links over the frozen C
-      # ABI, lints formatting, runs the tests, enforces the Sources coverage floor, and
-      # (now that the step above put it on PATH) runs the SwiftLint style/complexity pass.
-      - name: cargo xtask check-swift
-        run: cargo run -p xtask -- check-swift
-
-  # ----------------------------------------------------------------------------
   # Developer preview artifact: after the required Linux gate is green on protected
   # main, build the runnable macOS bundle and upload a short-retention, explicitly
   # unsigned preview. This is for maintainer/dev testing only; tagged releases remain

@@ -145,7 +145,7 @@ you from. Full rationale: [`DESIGN.md`](../../DESIGN.md) (D8, D9) and
   signed payload is still minimal after Developer ID signing.
 - The macOS shell anti-slop tier (`cargo xtask check-swift`: swift-format lint +
   `swift test` + a Sources coverage floor, plus SwiftLint if present) runs best-effort
-  on macOS CI (the `continue-on-error` `macos-shell` job), superseding the old bare
+  in the `Quality Hygiene` workflow's `macos-shell` job, superseding the old bare
   `swift build` smoke.
 
 ## What a PR must call out
