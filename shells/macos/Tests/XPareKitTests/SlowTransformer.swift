@@ -2,8 +2,7 @@ import Foundation
 @testable import XPareCore
 
 /// A `Transforming` stub for tests: records the thread it ran on and can block for a
-/// fixed delay, so tests can prove the transform runs **off the main thread** and can
-/// drive the threshold-gated "Stripping…" indicator deterministically.
+/// fixed delay, so tests can prove the transform runs **off the main thread**.
 ///
 /// `@unchecked Sendable`: the recorded flag is guarded by an `NSLock` (it is written
 /// on the background task's thread and read back on the main actor after the call

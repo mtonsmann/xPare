@@ -247,6 +247,15 @@ This dictates two interaction models in the shell:
   persisted, never auto-run. *All reductions/conversions are commands;* so is
   `Refang` (re-activating received IOCs is a deliberate act, not a standing
   policy). The menu's *Extract / convert* section, parallel to "Strip clipboard now".
+  macOS image OCR also lives here: it is shell-owned OS integration, not a core
+  transform, and the manual "Extract text from image" command remains available
+  without changing the saved text pipeline.
+
+Continuous OCR is a separate opt-in because image-only clipboards are not part of
+the ordinary rich→plain text pipeline. When enabled, continuous mode first tries the
+text pipeline exactly as before; only an empty text read may fall through to bounded,
+local Vision OCR. Marked concealed/transient/auto-generated pasteboard content still
+short-circuits before either text or image bytes are read.
 
 The **core does not know about this split** — every op stays a plain pipeline entry,
 so the CLI and power users can still compose extraction inside a pipeline. The
@@ -614,6 +623,8 @@ out-of-memory abort**. Three layers:
   `min(XP_MAX_INPUT_BYTES, physicalMemory / 10)`, which keeps a worst-case strip under
   ~half of RAM and scales with the machine. An oversized clipboard yields a
   content-free "too large" status and is left untouched.
+  The same ceiling bounds image representations read for OCR, and Vision rejects
+  oversized decoded pixel dimensions before creating a `CGImage`.
 - **CLI:** intentionally uncapped — the right tool for multi-GB *file* work, where the
   caller manages its own memory.
 

@@ -29,6 +29,9 @@ new platform.
    ceiling applies to raw rich representation bytes when the platform exposes them,
    and to extracted text before calling the core. Do not rely on this as a universal
    streaming pre-parse limit for every native format.
+   Platform OCR is also shell-owned OS integration: read a bounded image
+   representation, run the platform's local/on-device OCR off the UI thread, and
+   write recognized text back as plain text. Do not add OCR to the core or ABI.
 2. **Clipboard write (in place).** Write the transformed text **back to the clipboard
    in place**. Never simulate a paste (e.g. synthesizing Cmd-V/Ctrl-V) — that needs
    intrusive input permissions and can fire into the wrong app. Replace the
@@ -50,6 +53,9 @@ new platform.
    write generations, drop stale completions when the clipboard generation changed,
    and coalesce callbacks while a strip is already running; those controls are shell
    concerns, not ABI changes.
+   Continuous OCR, if supported, must be a separately persisted opt-in, visible from
+   the shell UI, and image-only: the text pipeline wins when any text representation
+   is available.
 4. **Tray / menu-bar UI.** A lightweight status-area UI: toggle continuous mode,
    trigger an on-demand clean, open settings, quit. No main window required.
 5. **Global hotkey.** A configurable hotkey for the on-demand clean (default
@@ -82,8 +88,9 @@ new platform.
    destroyed before conversion.
 8. **Off-thread transform (UI responsiveness).** `xp_transform` is synchronous and,
    on large inputs (e.g. a multi-hundred-MB log pasted onto the clipboard), can take
-   ~1 s or more — far too long to run on the UI/event thread. Run the transform **off
-   the UI thread** and marshal the result back to the UI thread to apply it. This is
+   ~1 s or more — far too long to run on the UI/event thread. OCR can be similarly
+   slow. Run transform/OCR work **off the UI thread** and marshal the result back to
+   the UI thread to apply it. This is
    an **inherently per-shell** responsibility: each platform's threading/UI model
    differs, so it cannot be shared, and the C ABI stays synchronous on purpose — the
    shell owns concurrency exactly as it owns clipboard I/O and the hotkey. (The core
@@ -127,8 +134,8 @@ live under `shells/macos/`; this guardrail documents the contract they implement
 
 ## What a PR must call out
 
-- Which checklist items the change touches (clipboard read/write, change detection,
-  UI, hotkey, settings, core call).
+- Which checklist items the change touches (clipboard read/write, image OCR, change
+  detection, UI, hotkey, settings, core call).
 - Any new OS permission/entitlement the shell now requires — that is a **posture
   change** (justify it; update [macos-posture](macos-posture.md) and
   [privacy-and-data-handling](privacy-and-data-handling.md)).

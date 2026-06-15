@@ -180,6 +180,55 @@ import Testing
         #expect(raw.string(forType: .string) != "raw text to be replaced")
     }
 
+    @Test func readsBoundedImageRepresentation() {
+        let (pb, raw) = makePasteboard()
+        let png = Data([0x89, 0x50, 0x4e, 0x47])
+        guard raw.setData(png, forType: .png) else {
+            return  // Named pasteboards may be unavailable in headless/sandboxed agents.
+        }
+
+        let result = pb.readImage(maxRepresentationBytes: 16)
+        guard case .content(let read) = result else {
+            Issue.record("expected image content, got \(result)")
+            return
+        }
+        #expect(read.image.data == png)
+        #expect(read.image.pasteboardType == NSPasteboard.PasteboardType.png.rawValue)
+    }
+
+    /// A too-large preferred image representation must not hide a later bounded
+    /// representation of the same clipboard image.
+    @Test func skipsOversizedImageRepresentationAndReadsLaterBoundedOne() {
+        let (pb, raw) = makePasteboard()
+        guard raw.setData(Data(repeating: 0x41, count: 120), forType: .png),
+            raw.setData(Data([0x49, 0x49, 0x2a, 0x00]), forType: .tiff)
+        else {
+            return  // Named pasteboards may be unavailable in headless/sandboxed agents.
+        }
+
+        let result = pb.readImage(maxRepresentationBytes: 16)
+        guard case .content(let read) = result else {
+            Issue.record("expected bounded alternate image content, got \(result)")
+            return
+        }
+        #expect(read.image.pasteboardType == NSPasteboard.PasteboardType.tiff.rawValue)
+    }
+
+    /// The alternate-representation scan is intentionally finite: after one
+    /// oversized image representation is skipped, a second oversized representation
+    /// returns `.tooLarge` instead of materializing every advertised image type.
+    @Test func stopsAfterRepeatedOversizedImageRepresentations() {
+        let (pb, raw) = makePasteboard()
+        guard raw.setData(Data(repeating: 0x41, count: 120), forType: .png),
+            raw.setData(Data(repeating: 0x42, count: 100), forType: .tiff)
+        else {
+            return  // Named pasteboards may be unavailable in headless/sandboxed agents.
+        }
+
+        let result = pb.readImage(maxRepresentationBytes: 16)
+        #expect(result == .tooLarge(bytes: 120, changeCount: raw.changeCount))
+    }
+
     @Test func changeCountMirrorsTheUnderlyingPasteboard() {
         let (pb, raw) = makePasteboard()
         let start = pb.changeCount

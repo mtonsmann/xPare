@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import XPareCore
+import UniformTypeIdentifiers
 
 /// What we read off the pasteboard before stripping: the best available
 /// representation plus a hint about which one it was, so the controller can
@@ -44,6 +45,38 @@ public enum PasteboardReadResult: Equatable {
     case tooLarge(bytes: Int, changeCount: Int)
 }
 
+/// Bounded image representation read from the pasteboard for local OCR. The raw
+/// bytes are clipboard-derived content, so callers must keep them local and
+/// short-lived.
+public struct PasteboardImage: Equatable, Sendable {
+    public let data: Data
+    public let pasteboardType: String
+
+    public init(data: Data, pasteboardType: String) {
+        self.data = data
+        self.pasteboardType = pasteboardType
+    }
+}
+
+/// An image pasteboard read that carries the generation it came from.
+public struct PasteboardImageRead: Equatable, Sendable {
+    public let image: PasteboardImage
+    public let changeCount: Int
+
+    public init(image: PasteboardImage, changeCount: Int) {
+        self.image = image
+        self.changeCount = changeCount
+    }
+}
+
+/// The result of a size-aware image read. Carries no clipboard content unless a
+/// bounded image representation was accepted.
+public enum PasteboardImageReadResult: Equatable, Sendable {
+    case content(PasteboardImageRead)
+    case empty(changeCount: Int)
+    case tooLarge(bytes: Int, changeCount: Int)
+}
+
 /// Abstraction over the system pasteboard so the controller is testable without
 /// touching `NSPasteboard.general`. The real implementation is
 /// ``SystemPasteboard``.
@@ -63,6 +96,11 @@ public protocol PasteboardProtocol: AnyObject {
     /// text-like content at all. Rich raw representations are size-checked
     /// before materializing/decoding them.
     func readBest(maxRepresentationBytes: Int) -> PasteboardReadResult
+
+    /// Read a bounded image representation for local OCR. Reports `.empty`
+    /// when no image-like representation is present. Raw image bytes are
+    /// size-checked before Vision decodes or recognizes them.
+    func readImage(maxRepresentationBytes: Int) -> PasteboardImageReadResult
 
     /// Replace the pasteboard contents **in place** with a single plain string:
     /// `clearContents()` then `setString(_:forType: .string)`. No other types
@@ -87,6 +125,14 @@ public protocol PasteboardProtocol: AnyObject {
 /// `NSPasteboard.general`-backed pasteboard.
 public final class SystemPasteboard: PasteboardProtocol {
     private let pasteboard: NSPasteboard
+    private static let preferredImageTypes: [NSPasteboard.PasteboardType] = [
+        .png,
+        NSPasteboard.PasteboardType("public.jpeg"),
+        NSPasteboard.PasteboardType("public.heic"),
+        NSPasteboard.PasteboardType("public.heif"),
+        .tiff,
+    ]
+    private static let maxOversizedImageRepresentationSkips = 1
 
     public init(pasteboard: NSPasteboard = .general) {
         self.pasteboard = pasteboard
@@ -168,6 +214,39 @@ public final class SystemPasteboard: PasteboardProtocol {
         return .empty(changeCount: generation)
     }
 
+    public func readImage(maxRepresentationBytes: Int) -> PasteboardImageReadResult {
+        let generation = pasteboard.changeCount
+        let ceiling = max(0, maxRepresentationBytes)
+        var largestOversizedRepresentation: Int?
+
+        for type in imageTypesAvailableOnPasteboard() {
+            guard let data = pasteboard.data(forType: type),
+                !data.isEmpty
+            else {
+                continue
+            }
+            if data.count > ceiling {
+                let largest = max(largestOversizedRepresentation ?? 0, data.count)
+                guard largestOversizedRepresentation == nil,
+                    Self.maxOversizedImageRepresentationSkips > 0
+                else {
+                    return .tooLarge(bytes: largest, changeCount: generation)
+                }
+                largestOversizedRepresentation = largest
+                continue
+            }
+            return .content(
+                PasteboardImageRead(
+                    image: PasteboardImage(data: data, pasteboardType: type.rawValue),
+                    changeCount: generation))
+        }
+
+        if let bytes = largestOversizedRepresentation {
+            return .tooLarge(bytes: bytes, changeCount: generation)
+        }
+        return .empty(changeCount: generation)
+    }
+
     public func writePlain(_ text: String) -> Int? {
         pasteboard.clearContents()
         // `setString` can fail (pasteboard-server error). The prior contents are
@@ -196,5 +275,30 @@ public final class SystemPasteboard: PasteboardProtocol {
             ?? String(data: data, encoding: .utf16BigEndian)
             ?? String(decoding: data, as: UTF8.self)
         // swiftlint:enable optional_data_string_conversion
+    }
+
+    private func imageTypesAvailableOnPasteboard() -> [NSPasteboard.PasteboardType] {
+        guard let availableTypes = pasteboard.types else { return [] }
+        var result: [NSPasteboard.PasteboardType] = []
+
+        for type in Self.preferredImageTypes where availableTypes.contains(type) {
+            result.append(type)
+        }
+
+        for type in availableTypes {
+            guard !result.contains(type),
+                Self.isImageType(type)
+            else {
+                continue
+            }
+            result.append(type)
+        }
+
+        return result
+    }
+
+    private static func isImageType(_ pasteboardType: NSPasteboard.PasteboardType) -> Bool {
+        guard let type = UTType(pasteboardType.rawValue) else { return false }
+        return type.conforms(to: .image)
     }
 }

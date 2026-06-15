@@ -283,19 +283,34 @@ struct StripControllerTests {
         let (defaults, suite) = try isolatedDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
 
-        let slow = SlowTransformer(delay: 0.15)
+        let blocking = BlockingTransformer(output: "stripped")
         let pb = FakePasteboard(snapshot: PasteboardSnapshot(text: "<p>x</p>", kind: .html))
         let controller = StripController(
             settings: Settings(mode: .onDemand, operations: [.stripHtml]),
             pasteboard: pb,
-            transformer: slow,
+            transformer: blocking,
             defaults: defaults,
-            busyThreshold: .milliseconds(20)
+            busyThreshold: .milliseconds(1)
         )
         var events: [Bool] = []
-        controller.onStrippingChange = { events.append($0) }
+        controller.onStrippingChange = { isBusy in
+            events.append(isBusy)
+            if isBusy {
+                blocking.release()
+            }
+        }
+        let watchdog = Task {
+            try? await Task.sleep(for: .seconds(2))
+            blocking.release()
+        }
+        defer {
+            watchdog.cancel()
+            blocking.release()
+        }
 
-        _ = await controller.stripNow(trigger: .manual)
+        let outcome = await controller.stripNow(trigger: .manual)
+        #expect(outcome == .stripped(changed: true))
+        #expect(blocking.hasStarted, "test transformer should have started")
         #expect(events == [true, false], "a slow run shows then clears the busy indicator")
     }
 
@@ -627,6 +642,7 @@ struct StripControllerTests {
         #expect(pb.writes == ["[email]"])
     }
 }
+
 private final class BlockingTransformer: Transforming, @unchecked Sendable {
     private let lock = NSLock()
     private let proceed = DispatchSemaphore(value: 0)
@@ -648,6 +664,102 @@ private final class BlockingTransformer: Transforming, @unchecked Sendable {
     }
 
     func transform(_ input: String, config: TransformConfig) throws -> String {
+        lock.lock()
+        _hasStarted = true
+        lock.unlock()
+        proceed.wait()
+        return output
+    }
+}
+
+private final class RecordingImageTextRecognizer: ImageTextRecognizing, @unchecked Sendable {
+    private let lock = NSLock()
+    private let output: String
+    private let delay: TimeInterval
+    private var _callCount = 0
+    private var _images: [PasteboardImage] = []
+    private var _ranOnMainThread: Bool?
+
+    init(output: String, delay: TimeInterval = 0) {
+        self.output = output
+        self.delay = delay
+    }
+
+    var callCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return _callCount
+    }
+
+    var images: [PasteboardImage] {
+        lock.lock()
+        defer { lock.unlock() }
+        return _images
+    }
+
+    var ranOnMainThread: Bool? {
+        lock.lock()
+        defer { lock.unlock() }
+        return _ranOnMainThread
+    }
+
+    func recognizeText(in image: PasteboardImage) throws -> String {
+        lock.lock()
+        _callCount += 1
+        _images.append(image)
+        _ranOnMainThread = Thread.isMainThread
+        lock.unlock()
+        if delay > 0 {
+            Thread.sleep(forTimeInterval: delay)
+        }
+        return output
+    }
+}
+
+private final class ThrowingImageTextRecognizer: ImageTextRecognizing, @unchecked Sendable {
+    private let lock = NSLock()
+    private let error: Error
+    private var _callCount = 0
+
+    init(error: Error) {
+        self.error = error
+    }
+
+    var callCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return _callCount
+    }
+
+    func recognizeText(in image: PasteboardImage) throws -> String {
+        lock.lock()
+        _callCount += 1
+        lock.unlock()
+        throw error
+    }
+}
+
+private final class BlockingImageTextRecognizer: ImageTextRecognizing, @unchecked Sendable {
+    private let lock = NSLock()
+    private let proceed = DispatchSemaphore(value: 0)
+    private let output: String
+    private var _hasStarted = false
+
+    init(output: String) {
+        self.output = output
+    }
+
+    var hasStarted: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return _hasStarted
+    }
+
+    func release() {
+        proceed.signal()
+    }
+
+    func recognizeText(in image: PasteboardImage) throws -> String {
         lock.lock()
         _hasStarted = true
         lock.unlock()
