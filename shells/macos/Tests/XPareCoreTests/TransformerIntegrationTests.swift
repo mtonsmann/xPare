@@ -39,6 +39,27 @@ import Foundation
         #expect(out == "HELLO WORLD")
     }
 
+    @Test func normalizedCurrentSchemaConfigIsAcceptedByLinkedCore() throws {
+        let maxParam = String(repeating: "x", count: TransformConfig.maxTextParameterBytes)
+        let rawOperations =
+            [
+                XPareCore.Operation.prefixLines(prefix: maxParam),
+                XPareCore.Operation.suffixLines(suffix: maxParam),
+                XPareCore.Operation.joinWith(separator: maxParam),
+            ]
+            + Array(
+                repeating: XPareCore.Operation.collapseWhitespace,
+                count: TransformConfig.maxOperations + 2)
+        let config = TransformConfig(
+            operations: TransformConfig.normalizedOperationsForCurrentSchema(rawOperations))
+
+        #expect(config.operations.count == TransformConfig.maxOperations)
+        #expect(
+            TransformConfig.currentSchemaGrowthProduct(config.operations)
+                <= TransformConfig.maxPipelineGrowthFactor)
+        _ = try transformer.transform("a\nb", config: config)
+    }
+
     @Test func emptyInputIsHandled() throws {
         // input_len == 0 with no operations is the identity transform; the ABI
         // explicitly permits a null/empty input here.

@@ -40,7 +40,7 @@ pub use pipeline::transform;
 pub const CAPABILITIES_JSON: &str = concat!(
     r#"{"name":"xpare-core","version":""#,
     env!("CARGO_PKG_VERSION"),
-    r#"","config_version":2,"ordering":["canonical","as_given"],"operations":["#,
+    r#"","config_version":3,"ordering":["canonical","as_given"],"operations":["#,
     r#"{"op":"strip_html"},"#,
     r#"{"op":"strip_markdown"},"#,
     r#"{"op":"html_to_markdown"},"#,
@@ -84,5 +84,17 @@ mod tests {
         );
         assert_eq!(value["version"].as_str(), Some(env!("CARGO_PKG_VERSION")));
         assert!(value["operations"].is_array());
+    }
+
+    #[test]
+    fn config_schema_breaks_are_semver_major_events() {
+        let package_major: u32 = env!("CARGO_PKG_VERSION_MAJOR")
+            .parse()
+            .expect("Cargo package major version is numeric");
+        assert!(
+            package_major + 1 >= CONFIG_VERSION,
+            "post-1.0 config schema bumps are semver-major events: package major \
+             {package_major} cannot advertise config schema {CONFIG_VERSION}"
+        );
     }
 }

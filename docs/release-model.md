@@ -10,7 +10,8 @@ xPare follows the normal open-source macOS pattern:
   alone. A DMG is deferred (see [`deferred-work.md`](deferred-work.md)).
 - **Releases are arm64-only (Apple Silicon) at 1.0.** x86_64 and universal binaries
   are deferred until there is demand (see [`deferred-work.md`](deferred-work.md)).
-- The current version is **1.0.0-rc.1**, heading to 1.0.0.
+- The latest tagged stable release is **1.0.0**. Current source is tracking
+  unreleased **2.0.0** config-schema changes.
 
 Unlike the upstream FormatStripper lineage, the xPare Swift app **statically
 links** `libxpare_ffi.a`, so a release bundle has **no embedded dylib** under
@@ -231,6 +232,9 @@ is:
 - the **CLI flags**.
 
 A breaking change to any of these requires a **major** version.
+`core` has a unit-test tripwire for this: once a config schema has broken the 1.0
+surface, the workspace package major must keep pace with the schema's post-1.0
+major baseline.
 
 **MSRV policy:** the minimum supported Rust version is declared as `rust-version`
 in the root `Cargo.toml` and checked by a dedicated CI job (a floor-compile of the

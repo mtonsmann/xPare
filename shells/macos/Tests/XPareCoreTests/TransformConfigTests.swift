@@ -34,7 +34,7 @@ import Foundation
         let json = try config.encodedJSON()
 
         let expected = """
-            {"version":2,"operations":[{"op":"strip_html"},{"op":"change_case","case":"title"},{"op":"collapse_whitespace"}],"ordering":"canonical"}
+            {"version":3,"operations":[{"op":"strip_html"},{"op":"change_case","case":"title"},{"op":"collapse_whitespace"}],"ordering":"canonical"}
             """
 
         // Compare structurally (key order within objects is not significant to
@@ -48,7 +48,7 @@ import Foundation
         ])
         let json = try config.encodedJSON()
         let expected = """
-            {"version":2,"operations":[{"op":"html_to_markdown"},{"op":"dedupe_lines"},{"op":"extract_emails"},{"op":"extract_urls"}],"ordering":"canonical"}
+            {"version":3,"operations":[{"op":"html_to_markdown"},{"op":"dedupe_lines"},{"op":"extract_emails"},{"op":"extract_urls"}],"ordering":"canonical"}
             """
         #expect(try jsonObject(json) == jsonObject(expected))
     }
@@ -75,7 +75,7 @@ import Foundation
         ])
         let json = try config.encodedJSON()
         let expected = """
-            {"version":2,"operations":[\
+            {"version":3,"operations":[\
             {"op":"prefix_lines","prefix":"> "},\
             {"op":"suffix_lines","suffix":";"},\
             {"op":"join_with","separator":", "},\
@@ -94,7 +94,7 @@ import Foundation
         ])
         let json = try config.encodedJSON()
         let expected = """
-            {"version":2,"operations":[\
+            {"version":3,"operations":[\
             {"op":"defang","style":"square"},\
             {"op":"refang"},\
             {"op":"clean_urls"},\
@@ -113,7 +113,7 @@ import Foundation
 
     @Test func defangDecodesWithDefaultStyleWhenAbsent() throws {
         // serde defaults a missing `style` to square; the Swift mirror must match.
-        let json = #"{"version":2,"operations":[{"op":"defang"}]}"#
+        let json = #"{"version":3,"operations":[{"op":"defang"}]}"#
         let decoded = try JSONDecoder().decode(TransformConfig.self, from: Data(json.utf8))
         #expect(decoded == TransformConfig(operations: [.defang(style: .square)]))
     }
@@ -131,7 +131,7 @@ import Foundation
     }
 
     @Test func maskIdentifiersDecodesWithDefaultFalseFlags() throws {
-        let json = #"{"version":2,"operations":[{"op":"mask_identifiers","emails":true}]}"#
+        let json = #"{"version":3,"operations":[{"op":"mask_identifiers","emails":true}]}"#
         let decoded = try JSONDecoder().decode(TransformConfig.self, from: Data(json.utf8))
         #expect(
             decoded
@@ -153,10 +153,10 @@ import Foundation
     }
 
     @Test func emptyConfigEncodesIdentity() throws {
-        // The bare TransformConfig() is the identity transform: version 2, no ops.
+        // The bare TransformConfig() is the identity transform: version 3, no ops.
         let json = try TransformConfig().encodedJSON()
         let dict = try jsonObject(json)
-        #expect(dict["version"] as? Int == 2)
+        #expect(dict["version"] as? Int == 3)
         #expect((dict["operations"] as? [Any])?.count == 0)
     }
 
@@ -172,13 +172,38 @@ import Foundation
 
         // A config that omits `ordering` decodes to canonical (mirrors serde default).
         let decoded = try JSONDecoder().decode(
-            TransformConfig.self, from: Data(#"{"version":2,"operations":[]}"#.utf8))
+            TransformConfig.self, from: Data(#"{"version":3,"operations":[]}"#.utf8))
         #expect(decoded.ordering == .canonical)
     }
 
     @Test func allOrderingsRawValues() {
         #expect(Ordering.canonical.rawValue == "canonical")
         #expect(Ordering.asGiven.rawValue == "as_given")
+    }
+
+    @Test func currentSchemaGrowthFactorsMirrorCoreEnvelope() {
+        let maxParam = String(repeating: "x", count: TransformConfig.maxTextParameterBytes)
+        #expect(XPareCore.Operation.prefixLines(prefix: maxParam).currentSchemaGrowthFactor == 17)
+        #expect(XPareCore.Operation.suffixLines(suffix: maxParam).currentSchemaGrowthFactor == 17)
+        #expect(XPareCore.Operation.joinWith(separator: maxParam).currentSchemaGrowthFactor == 16)
+        #expect(XPareCore.Operation.splitOn(delimiter: maxParam).currentSchemaGrowthFactor == 1)
+        #expect(XPareCore.Operation.htmlToMarkdown.currentSchemaGrowthFactor == 5)
+        #expect(XPareCore.Operation.changeCase(case: .upper).currentSchemaGrowthFactor == 3)
+        #expect(XPareCore.Operation.defang(style: .square).currentSchemaGrowthFactor == 3)
+        #expect(
+            XPareCore.Operation.maskIdentifiers(emails: true, ipv4: true, ipv6: true)
+                .currentSchemaGrowthFactor == 2)
+        #expect(XPareCore.Operation.stripMarkdown.currentSchemaGrowthFactor == 1)
+    }
+
+    @Test func currentSchemaNormalizationDropsOnlyNonClampableGrowthOverflow() {
+        let operations = Array(repeating: XPareCore.Operation.htmlToMarkdown, count: 6)
+        let normalized = TransformConfig.normalizedOperationsForCurrentSchema(operations)
+
+        #expect(normalized == Array(repeating: XPareCore.Operation.htmlToMarkdown, count: 5))
+        #expect(
+            TransformConfig.currentSchemaGrowthProduct(normalized)
+                <= TransformConfig.maxPipelineGrowthFactor)
     }
 
     @Test func roundTripThroughCodable() throws {

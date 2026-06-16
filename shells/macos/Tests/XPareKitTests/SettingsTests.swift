@@ -131,6 +131,60 @@ import Foundation
         #expect(config.version == TransformConfig.schemaVersion)
     }
 
+    @Test func transformConfigNormalizesPersistedFreeTextParamsForCurrentSchema() {
+        let tooLong = String(repeating: "x", count: TransformConfig.maxTextParameterBytes + 4)
+        let expected = String(repeating: "x", count: TransformConfig.maxTextParameterBytes)
+        let cases: [(XPareCore.Operation, XPareCore.Operation)] = [
+            (.prefixLines(prefix: tooLong), .prefixLines(prefix: expected)),
+            (.suffixLines(suffix: tooLong), .suffixLines(suffix: expected)),
+            (.joinWith(separator: tooLong), .joinWith(separator: expected)),
+            (.splitOn(delimiter: tooLong), .splitOn(delimiter: expected)),
+        ]
+
+        for (input, output) in cases {
+            #expect(Settings(operations: [input]).transformConfig().operations == [output])
+        }
+    }
+
+    @Test func transformConfigClampsPersistedPipelineToAggregateGrowthEnvelope() {
+        let maxParam = String(repeating: "x", count: TransformConfig.maxTextParameterBytes)
+        let config = Settings(operations: [
+            .prefixLines(prefix: maxParam),
+            .suffixLines(suffix: maxParam),
+            .joinWith(separator: maxParam),
+            .splitOn(delimiter: maxParam),
+        ]).transformConfig()
+
+        #expect(
+            config.operations == [
+                .prefixLines(prefix: maxParam),
+                .suffixLines(suffix: maxParam),
+                .joinWith(separator: String(repeating: "x", count: 14)),
+                .splitOn(delimiter: maxParam),
+            ])
+        #expect(
+            TransformConfig.currentSchemaGrowthProduct(config.operations)
+                <= TransformConfig.maxPipelineGrowthFactor)
+    }
+
+    @Test func transformConfigCapsPersistedOperationCountForCurrentSchema() {
+        let oversized = Array(
+            repeating: XPareCore.Operation.collapseWhitespace,
+            count: TransformConfig.maxOperations + 2)
+
+        #expect(
+            Settings(operations: oversized).transformConfig().operations.count
+                == TransformConfig.maxOperations)
+    }
+
+    @Test func textParameterNormalizationIsUtf8SafeAndDropsLineBreaks() {
+        #expect(
+            TransformConfig.normalizedTextParameter(String(repeating: "é", count: 9))
+                == String(repeating: "é", count: 8))
+        #expect(TransformConfig.normalizedTextParameter("ab\ncd\rEF") == "abcdEF")
+        #expect(TransformConfig.normalizedTextParameter("ab\r\ncd") == "abcd")
+    }
+
     @Test func partialBlobFromAnOlderBuildUpgradesMissingFieldsToDefaults() throws {
         // A settings JSON written by an older build that predates `ordering` (and omits
         // several fields) must decode tolerantly — each absent key falls back to its

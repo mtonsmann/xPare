@@ -71,12 +71,14 @@ allocation-size overflow at the boundary.
    above are sufficient because behavior is data. New capability should almost always
    be a new operation, queried via `xp_capabilities_json`, not a new function.
 5. **Keep config back-compatible or bump `CONFIG_VERSION`.** The config schema is
-   versioned independently (`core/src/config.rs`, currently `2`). An incompatible
+   versioned independently (`core/src/config.rs`, currently `3`). An incompatible
    schema change bumps `CONFIG_VERSION`; `parse_config` rejects mismatched versions
    so a shell detects it deterministically (surfaced across the FFI as
    `ErrUnsupportedConfigVersion`). The strictness is deliberate and fail-closed:
    unknown fields and unknown versions are rejected; schema evolution happens only
-   through explicit `CONFIG_VERSION` bumps. `CAPABILITIES_JSON`'s `config_version`
+   through explicit `CONFIG_VERSION` bumps. From 1.0 onward, a config-schema break is
+   a semver-major event; a core unit test fails if the package major falls behind the
+   config schema's post-1.0 major baseline. `CAPABILITIES_JSON`'s `config_version`
    must stay equal to `CONFIG_VERSION` (a unit test enforces this).
 6. **No `unsafe` outside this crate, and follow the FFI safety rules** in
    [memory-safety](memory-safety.md) (validate pointers, `catch_unwind`, zeroize).

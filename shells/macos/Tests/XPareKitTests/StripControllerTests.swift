@@ -116,6 +116,61 @@ struct StripControllerTests {
         }
     }
 
+    @Test func effectiveConfigNormalizesSettingsForCurrentSchema() throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let maxParam = String(repeating: "x", count: TransformConfig.maxTextParameterBytes)
+        let controller = StripController(
+            settings: Settings(
+                operations: [
+                    .prefixLines(prefix: maxParam),
+                    .suffixLines(suffix: maxParam),
+                    .joinWith(separator: maxParam),
+                    .splitOn(delimiter: maxParam),
+                ],
+                ordering: .asGiven
+            ),
+            pasteboard: FakePasteboard(),
+            defaults: defaults
+        )
+
+        let config = controller.effectiveConfig(
+            for: PasteboardSnapshot(text: "a\nb", kind: .plain))
+        #expect(
+            config.operations == [
+                .prefixLines(prefix: maxParam),
+                .suffixLines(suffix: maxParam),
+                .joinWith(separator: String(repeating: "x", count: 14)),
+                .splitOn(delimiter: maxParam),
+            ])
+        #expect(config.ordering == .asGiven)
+        #expect(
+            TransformConfig.currentSchemaGrowthProduct(config.operations)
+                <= TransformConfig.maxPipelineGrowthFactor)
+    }
+
+    @Test func stripNowUsesNormalizedSettingsConfigBeforeCallingCore() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let maxParam = String(repeating: "x", count: TransformConfig.maxTextParameterBytes)
+        let pb = FakePasteboard(snapshot: PasteboardSnapshot(text: "a\nb", kind: .plain))
+        let controller = StripController(
+            settings: Settings(operations: [
+                .prefixLines(prefix: maxParam),
+                .suffixLines(suffix: maxParam),
+                .joinWith(separator: maxParam),
+            ]),
+            pasteboard: pb,
+            defaults: defaults
+        )
+
+        let outcome = await controller.stripNow(trigger: .manual)
+        #expect(outcome == .stripped(changed: true))
+        #expect(!pb.writes.isEmpty)
+    }
+
     /// A plain string already equal to the stripped result is not rewritten, so
     /// we don't churn the change count.
     @Test func plainUnchangedIsNotRewritten() async throws {
@@ -498,6 +553,37 @@ struct StripControllerTests {
         // The transient command must not mutate the persisted pipeline — `runOnce`
         // never writes settings, so the configured pipeline is untouched.
         #expect(controller.settings.operations == [.stripHtml])
+    }
+
+    @Test func runOnceNormalizesTransientConfigForCurrentSchema() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let maxParam = String(repeating: "x", count: TransformConfig.maxTextParameterBytes)
+        let transformer = RecordingTransformer(output: "normalized")
+        let pb = FakePasteboard(snapshot: PasteboardSnapshot(text: "a\nb", kind: .plain))
+        let controller = StripController(
+            settings: Settings(mode: .onDemand, operations: [.collapseWhitespace]),
+            pasteboard: pb,
+            transformer: transformer,
+            defaults: defaults
+        )
+
+        let outcome = await controller.runOnce(operations: [
+            .prefixLines(prefix: maxParam),
+            .suffixLines(suffix: maxParam),
+            .joinWith(separator: maxParam),
+        ])
+
+        #expect(outcome == .stripped(changed: true))
+        #expect(
+            transformer.configs == [
+                TransformConfig(operations: [
+                    .prefixLines(prefix: maxParam),
+                    .suffixLines(suffix: maxParam),
+                    .joinWith(separator: String(repeating: "x", count: 14)),
+                ])
+            ])
     }
 
     /// Transient command configs also force HTML neutralization first and dedupe

@@ -62,6 +62,14 @@ new platform.
    operation pipeline / chosen config). Settings are *configuration*, never clipboard
    *content* — persisting content is forbidden (see
    [privacy-and-data-handling](privacy-and-data-handling.md)).
+   When the core's config schema tightens settings-derived fields, the shell must
+   normalize or migrate persisted settings at the boundary where settings become
+   `config_json` for the current schema. UI validation alone is not enough: an older
+   stored blob can bypass the text field and be stamped with the new schema version.
+   The helper must be shared by every emission path (`Settings.transformConfig`,
+   normal strip config construction, and transient config construction) and must
+   enforce whole-pipeline limits such as the core growth envelope, not just
+   per-field text ceilings.
    **Numeric settings are typo/corruption-shaped input**: any arithmetic on a
    user-controlled value (size thresholds, intervals) must be clamped or saturating
    *at the point of use* — mirroring the core's saturating growth-product discipline

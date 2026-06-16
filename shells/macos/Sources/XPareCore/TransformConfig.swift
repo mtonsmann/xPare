@@ -208,8 +208,20 @@ public enum Ordering: String, Codable, Sendable, CaseIterable {
 /// ``schemaVersion``.
 public struct TransformConfig: Codable, Equatable, Sendable {
     /// The config schema version the core understands. Kept in sync with
-    /// `core/src/config.rs::CONFIG_VERSION`. **v2** added ``ordering``.
-    public static let schemaVersion: UInt32 = 2
+    /// `core/src/config.rs::CONFIG_VERSION`. **v3** tightened the free-text
+    /// parameter and whole-pipeline growth envelope.
+    public static let schemaVersion: UInt32 = 3
+
+    /// Current schema's UTF-8 byte ceiling for free-text operation parameters.
+    public static let maxTextParameterBytes = 16
+
+    /// Current schema's maximum operation count. Mirrors
+    /// `core/src/config.rs::MAX_CONFIG_OPERATIONS`.
+    public static let maxOperations = 32
+
+    /// Current schema's whole-pipeline growth cap. Mirrors
+    /// `core/src/config.rs::MAX_PIPELINE_GROWTH_FACTOR`.
+    public static let maxPipelineGrowthFactor: UInt64 = 1 << 12
 
     public var version: UInt32
     public var operations: [Operation]
@@ -255,5 +267,147 @@ public struct TransformConfig: Codable, Equatable, Sendable {
             throw TransformError.encodingFailed
         }
         return s
+    }
+
+    /// Normalize shell-owned free-text parameters before emitting the current
+    /// wire schema. Persisted settings from an older build may carry values the
+    /// current core deliberately rejects.
+    public static func normalizedTextParameter(_ value: String) -> String {
+        normalizedTextParameter(value, maxBytes: maxTextParameterBytes)
+    }
+
+    /// Return operations that fit the current config schema before they cross
+    /// the FFI. This is intentionally a shell-boundary helper, not persistence:
+    /// old settings blobs may contain values that are no longer valid, while the
+    /// live `config_json` must be accepted by the current core.
+    public static func normalizedOperationsForCurrentSchema(_ operations: [Operation])
+        -> [Operation]
+    {
+        var result: [Operation] = []
+        var product: UInt64 = 1
+
+        for operation in operations {
+            guard result.count < maxOperations else { break }
+
+            let normalized = operation.normalizedForCurrentSchema()
+            let remainingFactor = maxPipelineGrowthFactor / product
+            guard
+                let envelopeOp = normalized.clampedForCurrentSchemaGrowth(
+                    maxFactor: remainingFactor)
+            else { continue }
+
+            let factor = envelopeOp.currentSchemaGrowthFactor
+            guard factor <= maxPipelineGrowthFactor / product else { continue }
+            result.append(envelopeOp)
+            product *= factor
+        }
+
+        return result
+    }
+
+    static func currentSchemaGrowthProduct(_ operations: [Operation]) -> UInt64 {
+        var product: UInt64 = 1
+        for operation in operations {
+            let multiplied = product.multipliedReportingOverflow(
+                by: operation.currentSchemaGrowthFactor)
+            if multiplied.overflow { return UInt64.max }
+            product = multiplied.partialValue
+        }
+        return product
+    }
+
+    fileprivate static func normalizedTextParameter(_ value: String, maxBytes: Int) -> String {
+        let byteLimit = Swift.max(0, maxBytes)
+        let withoutLineBreaks =
+            value
+            .replacingOccurrences(of: "\r", with: "")
+            .replacingOccurrences(of: "\n", with: "")
+        guard withoutLineBreaks.utf8.count > byteLimit else {
+            return withoutLineBreaks
+        }
+
+        var result = ""
+        var bytes = 0
+        for character in withoutLineBreaks {
+            let characterBytes = String(character).utf8.count
+            if bytes + characterBytes > byteLimit {
+                break
+            }
+            result.append(character)
+            bytes += characterBytes
+        }
+        return result
+    }
+}
+
+public extension Operation {
+    /// Return an operation whose free-text payload fits the current config schema.
+    func normalizedForCurrentSchema() -> Operation {
+        switch self {
+        case .prefixLines(let prefix):
+            return .prefixLines(prefix: TransformConfig.normalizedTextParameter(prefix))
+        case .suffixLines(let suffix):
+            return .suffixLines(suffix: TransformConfig.normalizedTextParameter(suffix))
+        case .joinWith(let separator):
+            return .joinWith(separator: TransformConfig.normalizedTextParameter(separator))
+        case .splitOn(let delimiter):
+            return .splitOn(delimiter: TransformConfig.normalizedTextParameter(delimiter))
+        case .stripHtml, .stripMarkdown, .htmlToMarkdown, .collapseWhitespace,
+            .trimTrailingWhitespace, .removeBlankLines, .unwrapLines, .changeCase,
+            .sortLines, .dedupeLines, .extractEmails, .extractUrls, .defang, .refang,
+            .cleanUrls, .maskIdentifiers:
+            return self
+        }
+    }
+}
+
+extension Operation {
+    var currentSchemaGrowthFactor: UInt64 {
+        switch self {
+        case .prefixLines(let prefix):
+            return 1 + UInt64(prefix.utf8.count)
+        case .suffixLines(let suffix):
+            return 1 + UInt64(suffix.utf8.count)
+        case .joinWith(let separator):
+            return Swift.max(UInt64(separator.utf8.count), 1)
+        case .htmlToMarkdown:
+            return 5
+        case .changeCase:
+            return 3
+        case .defang:
+            return 3
+        case .maskIdentifiers:
+            return 2
+        case .stripHtml, .stripMarkdown, .collapseWhitespace, .trimTrailingWhitespace,
+            .removeBlankLines, .unwrapLines, .sortLines, .dedupeLines, .splitOn,
+            .extractEmails, .extractUrls, .refang, .cleanUrls:
+            return 1
+        }
+    }
+
+    func clampedForCurrentSchemaGrowth(maxFactor: UInt64) -> Operation? {
+        let maxFactor = Swift.max(UInt64(1), maxFactor)
+        switch self {
+        case .prefixLines(let prefix):
+            let maxBytes = Int(
+                min(UInt64(TransformConfig.maxTextParameterBytes), maxFactor - 1))
+            return .prefixLines(
+                prefix: TransformConfig.normalizedTextParameter(prefix, maxBytes: maxBytes))
+        case .suffixLines(let suffix):
+            let maxBytes = Int(
+                min(UInt64(TransformConfig.maxTextParameterBytes), maxFactor - 1))
+            return .suffixLines(
+                suffix: TransformConfig.normalizedTextParameter(suffix, maxBytes: maxBytes))
+        case .joinWith(let separator):
+            let maxBytes = Int(
+                min(UInt64(TransformConfig.maxTextParameterBytes), maxFactor))
+            return .joinWith(
+                separator: TransformConfig.normalizedTextParameter(separator, maxBytes: maxBytes))
+        case .stripHtml, .stripMarkdown, .htmlToMarkdown, .collapseWhitespace,
+            .trimTrailingWhitespace, .removeBlankLines, .unwrapLines, .changeCase,
+            .sortLines, .dedupeLines, .splitOn, .extractEmails, .extractUrls, .defang,
+            .refang, .cleanUrls, .maskIdentifiers:
+            return currentSchemaGrowthFactor <= maxFactor ? self : nil
+        }
     }
 }

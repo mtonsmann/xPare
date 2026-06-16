@@ -117,7 +117,7 @@ fn free(ptr: *mut u8, len: usize) {
 
 /// A config that performs no operations: the identity transform (echo, modulo the
 /// lossy UTF-8 decode the boundary always applies to input).
-const IDENTITY_CFG: &str = r#"{"version":2,"operations":[]}"#;
+const IDENTITY_CFG: &str = r#"{"version":3,"operations":[]}"#;
 
 // ---------------------------------------------------------------------------
 // 1. ABI version.
@@ -177,7 +177,7 @@ fn capabilities_json_matches_core_and_describes_schema() {
     );
 
     // And it must actually be the capabilities document: an `operations` array and
-    // a `config_version` matching the core's CONFIG_VERSION (2). Checked via string
+    // a `config_version` matching the core's CONFIG_VERSION. Checked via string
     // search to avoid pulling in a JSON parser as a dependency.
     assert!(
         caps.contains("\"operations\":["),
@@ -201,7 +201,7 @@ fn capabilities_json_matches_core_and_describes_schema() {
 #[test]
 fn transform_happy_path_strip_html_then_collapse_whitespace() {
     let cfg_json =
-        r#"{"version":2,"operations":[{"op":"strip_html"},{"op":"collapse_whitespace"}]}"#;
+        r#"{"version":3,"operations":[{"op":"strip_html"},{"op":"collapse_whitespace"}]}"#;
     let cfg = config(cfg_json);
     let input = b"<p>Hi   there</p>";
 
@@ -392,13 +392,14 @@ fn transform_unsupported_version_is_its_own_status() {
 #[test]
 fn transform_amplifying_config_is_invalid_config() {
     // A pipeline whose worst-case output growth exceeds the envelope (three
-    // 256-byte affixes -> ~257^3) is rejected at the boundary as ErrInvalidConfig,
-    // so the infallible (and here, would-be resource-exhausting) transform is never
-    // entered. No parameter contains a line break, so this exercises the growth
-    // bound specifically — the class the overnight fuzz run surfaced.
-    let big = "a".repeat(256);
+    // max-length 16-byte affixes -> 17^3 = 4913 > the 4096 cap) is rejected at the
+    // boundary as ErrInvalidConfig, so the infallible (and would-be
+    // resource-exhausting) transform is never entered. Params are within the length
+    // and line-break limits, so this exercises the *growth* bound specifically — the
+    // class the overnight fuzz run surfaced — not the param-length rule.
+    let big = "a".repeat(16);
     let cfg = config(&format!(
-        r#"{{"version":2,"operations":[{{"op":"prefix_lines","prefix":"{big}"}},{{"op":"suffix_lines","suffix":"{big}"}},{{"op":"prefix_lines","prefix":"{big}"}}]}}"#
+        r#"{{"version":3,"operations":[{{"op":"prefix_lines","prefix":"{big}"}},{{"op":"suffix_lines","suffix":"{big}"}},{{"op":"prefix_lines","prefix":"{big}"}}]}}"#
     ));
     let result = transform(b"x", &cfg);
     assert_eq!(result.status, XpStatus::ErrInvalidConfig);
@@ -453,7 +454,7 @@ impl XorShift64 {
 fn transform_fuzz_lite_boundary_never_panics() {
     // A non-trivial pipeline with two hand-rolled/parser-backed strippers, so the
     // random bytes exercise real work behind the boundary.
-    let cfg = config(r#"{"version":2,"operations":[{"op":"strip_html"},{"op":"strip_markdown"}]}"#);
+    let cfg = config(r#"{"version":3,"operations":[{"op":"strip_html"},{"op":"strip_markdown"}]}"#);
 
     // Under Miri (which interprets MIR ~two orders of magnitude slower) a smaller
     // sweep still exercises the pointer/slice/buffer protocol on every input shape;
