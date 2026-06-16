@@ -15,7 +15,7 @@ struct XPareApp: App {
     @StateObject private var model = AppModel()
 
     var body: some Scene {
-        MenuBarExtra("xPare", systemImage: "scissors") {
+        MenuBarExtra(model.menuBarTitle, systemImage: model.menuBarSystemImage) {
             MenuContent(model: model)
         }
         .menuBarExtraStyle(.menu)
@@ -84,6 +84,16 @@ final class AppModel: ObservableObject {
     /// `nil` (no hint shown) when the key has no single-character equivalent.
     var stripMenuShortcut: KeyboardShortcut? {
         settings.hotkey.menuShortcut
+    }
+
+    /// The menu-bar title doubles as the accessibility label for the status item.
+    var menuBarTitle: String {
+        settings.mode == .continuous ? "xPare, continuous monitoring on" : "xPare"
+    }
+
+    /// Keep the icon monochrome and shape-based so state is not conveyed by color alone.
+    var menuBarSystemImage: String {
+        settings.mode == .continuous ? "scissors.circle.fill" : "scissors"
     }
 
     /// Toggle launch-at-login via `SMAppService` (the modern sandbox-friendly

@@ -188,7 +188,10 @@ cd shells/macos && ./package-app.sh --run      # or, from the root: make run
 This builds the staticlib, `swift build`s the app, assembles a runnable
 `LSUIElement` `.app`, ad-hoc signs it (Apple Silicon requires a signature), and
 launches it — a ✂ icon appears in the menu bar and the default hotkey **⌃⌥⌘V**
-(configurable via the recorder in Settings) strips the clipboard in place.
+(configurable via the recorder in Settings) strips the clipboard in place. When
+continuous monitoring is on, the menu-bar icon changes to a filled circled
+scissors so the armed clipboard-rewrite state is visible without opening the
+menu.
 
 > A signed, **notarized** build for distribution to other Macs needs full Xcode + a
 > Developer ID. See [the macOS posture](docs/guardrails/macos-posture.md) and
