@@ -4,6 +4,12 @@ Use this guardrail when a security scan, code review, performance review, fuzz
 run, CI failure, or manual audit finds a class of bug. The goal is simple:
 anything found once should be hard to introduce again.
 
+When the finding comes from an agentic security scanner, cloud reviewer,
+generated fix PR, or similar agent-produced report, first use
+[`agentic-security-finding-triage.md`](agentic-security-finding-triage.md) to
+validate, classify, scope, and map the finding to the owning boundary. This file
+owns closure after the finding is validated as a real issue class.
+
 ## The rule
 
 Do not close a finding class with only a one-off fix. A closure PR needs:

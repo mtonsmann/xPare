@@ -34,6 +34,9 @@ class:
   enforced.
 - `docs/guardrails/` — focused rules per change class (linked from each workflow
   section below).
+- `docs/guardrails/agentic-security-finding-triage.md` — how to validate,
+  classify, scope, and plan fixes for agent-produced security findings before
+  writing code.
 - `docs/guardrails/review-finding-closure.md` — what to add when a review finds
   a class of bug that should not come back.
 - `docs/agent-workflow.md` — the evidence-first engineering loop (classify → brief →
@@ -59,7 +62,9 @@ not by weakening the check.
 5. Add or update focused tests for behavior changes — especially anything that
    affects transform output, the ABI, or the privacy posture. Core changes must
    include adversarial-input coverage.
-6. If a review, scan, fuzz run, or performance pass found an issue class, follow
+6. If an agent, review, scan, fuzz run, or performance pass reports a security
+   finding, first use `docs/guardrails/agentic-security-finding-triage.md` to
+   validate and scope it. For any real issue class, then follow
    `docs/guardrails/review-finding-closure.md`: add repeatable regression
    protection and the relevant docs lesson before closing it.
 7. Run checks that match the risk of the change (see `CONTRIBUTING.md`). If you
@@ -189,6 +194,9 @@ formatter.
 If the docs-only change captures a review lesson, also consult
 `docs/guardrails/review-finding-closure.md`.
 
+If the docs-only change captures how agents should triage security findings,
+also consult `docs/guardrails/agentic-security-finding-triage.md`.
+
 ## Pull Requests
 
 - State the change class and any compatibility or posture impact (ABI, privacy,
@@ -198,6 +206,8 @@ If the docs-only change captures a review lesson, also consult
   boundary move.
 - For any fixed review finding class, state the mechanical regression protection
   and the docs lesson added.
+- For any agent-produced security finding, state the triage outcome, owning
+  boundary, sibling search, blocker, docs lesson, checks, and proof gaps.
 - Automated review: a subscription cloud reviewer (Codex / Claude Code cloud) reviews PRs
   against [`docs/guardrails/code-and-test-hygiene.md`](docs/guardrails/code-and-test-hygiene.md)
   ("Tier-2 review") — anti-slop on every code PR, security focus on the security-relevant
