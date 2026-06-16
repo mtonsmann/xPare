@@ -47,15 +47,16 @@ privacy posture, ABI, dependency, or release boundary change.
 - Wired pointers into `AGENTS.md`, `docs/agent-workflow.md`,
   `docs/agent-tasks/review-finding-closure.md`, and
   `docs/guardrails/review-finding-closure.md`.
-- Routed existing security/posture entry points (`SECURITY.md`, `DESIGN.md`,
-  `ARCHITECTURE.md`, `docs/guardrails/code-and-test-hygiene.md`) through the
-  triage guardrail before review-finding closure.
+- Routed existing security/posture/contributor entry points (`CONTRIBUTING.md`,
+  `SECURITY.md`, `DESIGN.md`, `ARCHITECTURE.md`,
+  `docs/guardrails/code-and-test-hygiene.md`) through the triage guardrail
+  before review-finding closure.
 - Added a `Security finding triage` section to the PR template so finding fixes
   prompt for status, issue class, source/sink/control, owning boundary, sibling
   search, and proof gaps.
-- Extended `check-agent-workflow` so CI verifies the Codex and Claude
-  `security-finding-triage` wrappers keep their required headings and
-  repo-root guardrail links.
+- Extended `check-agent-workflow` so CI verifies `CONTRIBUTING.md`, the Codex
+  and Claude `security-finding-triage` wrappers, and the PR-template triage
+  prompt keep their required headings and repo-root guardrail links.
 
 ## Validation
 

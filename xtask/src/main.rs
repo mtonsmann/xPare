@@ -4483,6 +4483,10 @@ fn check_swift() -> Result<(), String> {
 /// check, but reordering or adding sections is fine. Kept intentionally small and
 /// stable: these are the load-bearing sections, not every heading.
 const AGENT_WORKFLOW_FILES: &[(&str, &[&str])] = &[
+    (
+        "CONTRIBUTING.md",
+        &["## GitHub Actions lanes", "## Closing review findings"],
+    ),
     ("docs/agent-workflow.md", &["## The loop", "## North star"]),
     (
         "docs/guardrails/agentic-security-finding-triage.md",
@@ -4523,10 +4527,20 @@ const SECURITY_TRIAGE_SKILL_GUARDRAIL_LINKS: &[&str] = &[
     "../../../docs/guardrails/review-finding-closure.md",
 ];
 
-/// Agent wrappers must remain thin pointers to the repo-owned guardrails. The
-/// literals are intentionally exact: if a guardrail moves, update the wrapper and
-/// this check in the same PR after proving the new path resolves from the skill dir.
-const AGENT_SKILL_GUARDRAIL_LINKS: &[(&str, &[&str])] = &[
+const CONTRIBUTOR_REVIEW_FINDING_GUARDRAIL_LINKS: &[&str] = &[
+    "docs/guardrails/agentic-security-finding-triage.md",
+    "docs/guardrails/review-finding-closure.md",
+];
+
+/// Workflow entry points and agent wrappers must remain thin pointers to the
+/// repo-owned guardrails. The literals are intentionally exact: if a guardrail
+/// moves, update the entry point and this check in the same PR after proving the
+/// new path resolves from the source file's directory.
+const AGENT_WORKFLOW_GUARDRAIL_LINKS: &[(&str, &[&str])] = &[
+    (
+        "CONTRIBUTING.md",
+        CONTRIBUTOR_REVIEW_FINDING_GUARDRAIL_LINKS,
+    ),
     (
         ".agents/skills/security-finding-triage/SKILL.md",
         SECURITY_TRIAGE_SKILL_GUARDRAIL_LINKS,
@@ -4557,30 +4571,28 @@ fn missing_workflow_headings(text: &str, required: &[&str]) -> Vec<String> {
         .collect()
 }
 
-fn missing_skill_guardrail_links_for_text(
+fn missing_guardrail_links_for_text(
     root: &Path,
-    skill_rel: &str,
+    rel: &str,
     text: &str,
     required_links: &[&str],
 ) -> Vec<String> {
-    let skill_dir = Path::new(skill_rel)
-        .parent()
-        .unwrap_or_else(|| Path::new(""));
+    let source_dir = Path::new(rel).parent().unwrap_or_else(|| Path::new(""));
     required_links
         .iter()
         .filter_map(|link| {
             if !text.contains(link) {
                 return Some(format!(
-                    "{skill_rel} must mention repo-root guardrail link `{link}`"
+                    "{rel} must mention required guardrail link `{link}`"
                 ));
             }
 
-            let target = root.join(skill_dir).join(link);
+            let target = root.join(source_dir).join(link);
             if target.is_file() {
                 None
             } else {
                 Some(format!(
-                    "{skill_rel} guardrail link `{link}` does not resolve to a file from the skill directory ({})",
+                    "{rel} guardrail link `{link}` does not resolve to a file from the source directory ({})",
                     target.display()
                 ))
             }
@@ -4588,15 +4600,13 @@ fn missing_skill_guardrail_links_for_text(
         .collect()
 }
 
-fn missing_skill_guardrail_links(root: &Path) -> Vec<String> {
-    AGENT_SKILL_GUARDRAIL_LINKS
+fn missing_workflow_guardrail_links(root: &Path) -> Vec<String> {
+    AGENT_WORKFLOW_GUARDRAIL_LINKS
         .iter()
         .flat_map(|(rel, required_links)| {
             let path = root.join(rel);
             match std::fs::read_to_string(&path) {
-                Ok(text) => {
-                    missing_skill_guardrail_links_for_text(root, rel, &text, required_links)
-                }
+                Ok(text) => missing_guardrail_links_for_text(root, rel, &text, required_links),
                 Err(_) => vec![format!("{rel} is missing")],
             }
         })
@@ -4626,11 +4636,11 @@ fn check_agent_workflow() -> Result<(), String> {
             Err(_) => errors.push(format!("{rel} is missing")),
         }
     }
-    errors.extend(missing_skill_guardrail_links(&root));
+    errors.extend(missing_workflow_guardrail_links(&root));
 
     if errors.is_empty() {
         println!(
-            "check-agent-workflow: all {} AI-native workflow artifact(s) present with required headings and skill guardrail links.",
+            "check-agent-workflow: all {} AI-native workflow artifact(s) present with required headings and guardrail links.",
             AGENT_WORKFLOW_FILES.len()
         );
         Ok(())
@@ -4640,11 +4650,11 @@ fn check_agent_workflow() -> Result<(), String> {
              \n\
              xPare's evidence-first workflow lives in repo-native docs so future\n\
              agents have a clear loop (see docs/agent-workflow.md). These files must stay\n\
-             present and structured, and security-finding skill wrappers must resolve to\n\
-             the repo-owned guardrails. Restore the missing file, section, or wrapper\n\
+             present and structured, and workflow entry points must resolve to\n\
+             the repo-owned guardrails. Restore the missing file, section, or guardrail\n\
              link; do not delete the workflow docs to make this check pass. If a section\n\
              or guardrail path is intentionally renamed, update AGENT_WORKFLOW_FILES or\n\
-             AGENT_SKILL_GUARDRAIL_LINKS in xtask/src/main.rs in the same PR.",
+             AGENT_WORKFLOW_GUARDRAIL_LINKS in xtask/src/main.rs in the same PR.",
             errors.join("\n  ")
         ))
     }
@@ -6108,7 +6118,7 @@ mod tests {
     fn agent_workflow_detects_missing_skill_guardrail_link() {
         let root = workspace_root();
         let text = "# Security Finding Triage\n\nRead `docs/guardrails/agentic-security-finding-triage.md`.\n";
-        let missing = missing_skill_guardrail_links_for_text(
+        let missing = missing_guardrail_links_for_text(
             &root,
             ".agents/skills/security-finding-triage/SKILL.md",
             text,
@@ -6116,7 +6126,7 @@ mod tests {
         );
         assert_eq!(missing.len(), 1, "got: {missing:?}");
         assert!(
-            missing[0].contains("must mention repo-root guardrail link"),
+            missing[0].contains("must mention required guardrail link"),
             "got: {missing:?}"
         );
     }
@@ -6126,7 +6136,7 @@ mod tests {
         let root = workspace_root();
         let text =
             "# Security Finding Triage\n\nRead `../../../docs/guardrails/not-a-guardrail.md`.\n";
-        let missing = missing_skill_guardrail_links_for_text(
+        let missing = missing_guardrail_links_for_text(
             &root,
             ".agents/skills/security-finding-triage/SKILL.md",
             text,
@@ -6134,6 +6144,23 @@ mod tests {
         );
         assert_eq!(missing.len(), 1, "got: {missing:?}");
         assert!(missing[0].contains("does not resolve"), "got: {missing:?}");
+    }
+
+    #[test]
+    fn agent_workflow_detects_contributor_closure_without_triage() {
+        let root = workspace_root();
+        let text = "## Closing review findings\n\nFollow [`docs/guardrails/review-finding-closure.md`](docs/guardrails/review-finding-closure.md).\n";
+        let missing = missing_guardrail_links_for_text(
+            &root,
+            "CONTRIBUTING.md",
+            text,
+            CONTRIBUTOR_REVIEW_FINDING_GUARDRAIL_LINKS,
+        );
+        assert_eq!(missing.len(), 1, "got: {missing:?}");
+        assert!(
+            missing[0].contains("agentic-security-finding-triage"),
+            "got: {missing:?}"
+        );
     }
 
     // --- check-no-content-logging ---

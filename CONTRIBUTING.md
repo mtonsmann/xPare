@@ -55,7 +55,7 @@ it runs:
 7. `cargo xtask check-no-network` — no network/OS-capable crate anywhere in the tree
 8. `cargo xtask check-no-content-logging` — no shipped line logs/persists clipboard content
 9. `cargo xtask check-pipeline-zeroization` — fused core scratch storage is wiped before release
-10. `cargo xtask check-agent-workflow` — the AI-native workflow docs exist with required headings
+10. `cargo xtask check-agent-workflow` — the AI-native workflow docs and guardrail links stay wired
 11. `cargo xtask check-clipboard-safety` — default targets never touch the real clipboard
 12. `cargo xtask check-c-ffi-surface` — no unexpected handwritten C/C++/Objective-C surface
 13. `cargo xtask check-swift-no-network-apis` — shipped Swift has no network/browser API surface
@@ -145,7 +145,11 @@ Security scans, ordinary code reviews, fuzzing, CI failures, and performance
 reviews can all uncover a class of issue, not just one bad line. Closing that
 class requires more than the immediate fix.
 
-For each finding class, follow
+For security findings from any source, first follow
+[`docs/guardrails/agentic-security-finding-triage.md`](docs/guardrails/agentic-security-finding-triage.md):
+validate the finding, source/sink/control, owning boundary, and sibling search
+before writing a patch. For each finding class, including validated security
+findings, follow
 [`docs/guardrails/review-finding-closure.md`](docs/guardrails/review-finding-closure.md):
 
 - name the issue class in the PR,
@@ -247,7 +251,10 @@ To report a finding upstream, open a GitHub issue with the target name, toolchai
 commit SHA, the libFuzzer/sanitizer output, the decoded input, and the **minimized**
 reproducer attached — not a tarball. Closing the finding means more than the one fix:
 keep the committed regression, add a focused test for the behavior, and follow the
-[finding-closure guardrail](docs/guardrails/review-finding-closure.md).
+[finding-closure guardrail](docs/guardrails/review-finding-closure.md). If the finding
+is security-relevant, run the
+[security-finding triage guardrail](docs/guardrails/agentic-security-finding-triage.md)
+before closure.
 
 ## Miri (FFI undefined-behavior detection)
 

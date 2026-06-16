@@ -349,14 +349,15 @@ The repo's engineering loop is **evidence-first**: a change is judged by the
 correctness evidence it ships, not by the plausibility of the diff. The loop —
 classify → correctness brief → invariants → tests/properties/fuzz → smallest patch →
 deterministic gates → evidence packet — is encoded as repo-native docs
-([`docs/agent-workflow.md`](docs/agent-workflow.md), the brief and PR templates, the
-security-finding triage guardrail, per-change-class task prompts under
-`docs/agent-tasks/`, and the thin Codex/Claude security-triage skill wrappers) and
-kept from rotting by the `check-agent-workflow` structural check. **Why:** agents
-make producing a plausible patch cheap; what stays expensive — and is the actual
-product — is trustworthy evidence. Making the evidence a required,
-mechanically-checked artifact is what keeps quality from regressing as authoring
-gets faster. "Agents propose; deterministic tools dispose."
+([`CONTRIBUTING.md`](CONTRIBUTING.md), [`docs/agent-workflow.md`](docs/agent-workflow.md),
+the brief and PR templates, the security-finding triage guardrail,
+per-change-class task prompts under `docs/agent-tasks/`, and the thin
+Codex/Claude security-triage skill wrappers) and kept from rotting by the
+`check-agent-workflow` structural check. **Why:** agents make producing a
+plausible patch cheap; what stays expensive — and is the actual product — is
+trustworthy evidence. Making the evidence a required, mechanically-checked
+artifact is what keeps quality from regressing as authoring gets faster. "Agents
+propose; deterministic tools dispose."
 
 The technical centerpiece is an **executable reference interpreter** for the
 pipeline. Production `transform` fuses adjacent operations and folds intermediates
