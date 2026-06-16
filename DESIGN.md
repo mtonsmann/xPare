@@ -223,10 +223,14 @@ check prints a remediation-oriented message that teaches how to *fix* the violat
 not how to silence it.
 
 When a review finds a new class of security, correctness, or performance issue,
-the fix also adds a repeatable blocker and a short guardrail lesson. **Why:** the
-project treats review findings as new knowledge about an invariant, not as
-one-off cleanup. The workflow is captured in
+the fix also adds a repeatable blocker and a short guardrail lesson. Security
+findings first pass through
+[`docs/guardrails/agentic-security-finding-triage.md`](docs/guardrails/agentic-security-finding-triage.md)
+to validate the source/sink/control, owning boundary, and sibling search; true
+positives then close through
 [`docs/guardrails/review-finding-closure.md`](docs/guardrails/review-finding-closure.md).
+**Why:** the project treats review findings as new knowledge about an invariant,
+not as one-off cleanup.
 
 ### D12 — Operation taxonomy: rewrites vs reductions, toggles vs commands
 
@@ -345,13 +349,14 @@ The repo's engineering loop is **evidence-first**: a change is judged by the
 correctness evidence it ships, not by the plausibility of the diff. The loop —
 classify → correctness brief → invariants → tests/properties/fuzz → smallest patch →
 deterministic gates → evidence packet — is encoded as repo-native docs
-([`docs/agent-workflow.md`](docs/agent-workflow.md), the brief and PR templates, and
-per-change-class task prompts under `docs/agent-tasks/`) and kept from rotting by the
-`check-agent-workflow` structural check. **Why:** agents make producing a plausible
-patch cheap; what stays expensive — and is the actual product — is trustworthy
-evidence. Making the evidence a required, mechanically-checked artifact is what keeps
-quality from regressing as authoring gets faster. "Agents propose; deterministic
-tools dispose."
+([`docs/agent-workflow.md`](docs/agent-workflow.md), the brief and PR templates, the
+security-finding triage guardrail, per-change-class task prompts under
+`docs/agent-tasks/`, and the thin Codex/Claude security-triage skill wrappers) and
+kept from rotting by the `check-agent-workflow` structural check. **Why:** agents
+make producing a plausible patch cheap; what stays expensive — and is the actual
+product — is trustworthy evidence. Making the evidence a required,
+mechanically-checked artifact is what keeps quality from regressing as authoring
+gets faster. "Agents propose; deterministic tools dispose."
 
 The technical centerpiece is an **executable reference interpreter** for the
 pipeline. Production `transform` fuses adjacent operations and folds intermediates

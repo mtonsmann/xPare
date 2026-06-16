@@ -47,11 +47,23 @@ privacy posture, ABI, dependency, or release boundary change.
 - Wired pointers into `AGENTS.md`, `docs/agent-workflow.md`,
   `docs/agent-tasks/review-finding-closure.md`, and
   `docs/guardrails/review-finding-closure.md`.
+- Routed existing security/posture entry points (`SECURITY.md`, `DESIGN.md`,
+  `ARCHITECTURE.md`, `docs/guardrails/code-and-test-hygiene.md`) through the
+  triage guardrail before review-finding closure.
+- Added a `Security finding triage` section to the PR template so finding fixes
+  prompt for status, issue class, source/sink/control, owning boundary, sibling
+  search, and proof gaps.
+- Extended `check-agent-workflow` so CI verifies the Codex and Claude
+  `security-finding-triage` wrappers keep their required headings and
+  repo-root guardrail links.
 
 ## Validation
 
-- `python3 - <<'PY' ... PY` structural skill check: passed.
+- `python3 - <<'PY' ... PY` structural skill check: superseded by the committed
+  `check-agent-workflow` skill-wrapper guard.
 - `cargo fmt --all --check`: passed.
+- `cargo clippy -p xtask --all-targets -- -D warnings`: passed.
+- `cargo test -p xtask`: passed.
 - `cargo run -p xtask -- check-agent-workflow`: passed.
 - `cargo run -p xtask -- check-docs`: passed.
 - `git diff --check`: passed.

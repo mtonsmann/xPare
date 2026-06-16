@@ -129,6 +129,8 @@ Rules of the review:
 - A **recurring** finding graduates into a new deterministic `xtask` check: the agent
   discovers the *next* gate, then retires from that duty. Close it through
   [`review-finding-closure.md`](review-finding-closure.md) and, if it creates or changes an
-  enforced invariant, update the `ARCHITECTURE.md` table. (Worked example: the review found
-  an `html_to_markdown` bug a golden test had frozen as correct — the fix landed and the
-  test now pins the correct output.)
+  enforced invariant, update the `ARCHITECTURE.md` table. Security findings first pass through
+  [`agentic-security-finding-triage.md`](agentic-security-finding-triage.md) so validation and
+  sibling search happen before closure. (Worked example: the review found an
+  `html_to_markdown` bug a golden test had frozen as correct — the fix landed and the test
+  now pins the correct output.)

@@ -36,6 +36,12 @@ zeroization, supported transforms. State "none" explicitly if nothing changed. -
 - ABI: <none / bumped XP_ABI_VERSION, header regenerated, non-Swift shell confirmed>
 - Privacy / security: <none / describe>
 
+## Security finding triage
+
+<!-- For security-finding fixes, summarize docs/guardrails/agentic-security-finding-triage.md:
+status, issue class, source/sink/control, owning boundary, sibling search, and
+residual proof gaps. State "not applicable" for non-security-finding PRs. -->
+
 ## Tests / properties / fuzzing added or updated
 
 <!-- Name them. New behavior needs both a regression test and adversarial-input

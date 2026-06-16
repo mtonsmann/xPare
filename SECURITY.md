@@ -266,7 +266,10 @@ must be called out explicitly in the PR, justified, and reflected here and in th
 relevant guardrail before it can land. The corresponding `xtask` check must be
 updated to *match* the new posture — never weakened to hide a regression.
 
-Security-finding fixes also follow
+Security-finding fixes first follow
+[`docs/guardrails/agentic-security-finding-triage.md`](docs/guardrails/agentic-security-finding-triage.md):
+validate the finding, source/sink/control, owning boundary, and sibling search
+before writing a patch. True positives then follow
 [`docs/guardrails/review-finding-closure.md`](docs/guardrails/review-finding-closure.md):
 the issue class needs repeatable regression protection plus a short docs lesson
 so future agents and humans know which invariant was violated and which check now

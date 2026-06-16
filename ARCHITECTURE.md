@@ -229,7 +229,7 @@ the check.
 | Pipeline intermediates, fused scratch, and growable op accumulators wiped before release | `Zeroizing` buffers in the pipeline + `check-pipeline-zeroization` (a regression tripwire for the fused-scratch and wipe-on-grow accumulator patterns, not a whole-program proof) + `xp_buffer_free` zeroizes output | `core/src/pipeline.rs`, `core/src/ops/wipe.rs`, `xtask`, `core-ffi` |
 | Deterministic output | `transform(x,c) == transform(x,c)` property test | `core` tests |
 | Optimized pipeline == reference semantics | differential property test: production `transform` equals a one-op-at-a-time reference interpreter (so every fused fast path stays byte-for-byte equal to sequential application, and canonical ordering equals an explicitly sorted `as_given` run) | `core/tests/reference_transform.rs` |
-| AI-native workflow docs present & structured | `check-agent-workflow` (the workflow doc, brief/PR templates, and per-class task prompts exist with required headings) | `xtask`, `docs/agent-workflow.md` |
+| AI-native workflow docs and security-triage skill links present & structured | `check-agent-workflow` (the workflow doc, triage guardrail, brief/PR templates, per-class task prompts, and Codex/Claude security-triage skill wrappers exist with required headings and repo-root guardrail links) | `xtask`, `docs/agent-workflow.md`, `.agents/skills/security-finding-triage/`, `.claude/skills/security-finding-triage/` |
 | Minimal macOS entitlements | checked-in entitlements file + `check-entitlements`; `release.sh dist` requires it for Developer ID signing and verifies the signed payload is still minimal | `xtask`, `shells/macos/` |
 | No dead/dangling code | `unreachable_pub = "deny"` forces unexported `pub` to `pub(crate)`, after which `dead_code` (via `-D warnings`) flags the truly unused | `[workspace.lints]`, all crates |
 | No tangled functions or scaffolding macros | `cognitive_complexity` + `too_many_arguments` thresholds; `clippy::todo`/`unimplemented`/`dbg_macro` denied | `[workspace.lints]`, `clippy.toml` |
@@ -249,4 +249,8 @@ separate Actions lanes. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 When a review discovers a new issue class, close it through
 [`docs/guardrails/review-finding-closure.md`](docs/guardrails/review-finding-closure.md):
 add the blocker to the owning test/check layer, and update this table if the
-finding creates or changes an enforced invariant.
+finding creates or changes an enforced invariant. Security findings first pass
+through
+[`docs/guardrails/agentic-security-finding-triage.md`](docs/guardrails/agentic-security-finding-triage.md)
+so validation, source/sink/control, owning boundary, and sibling search happen
+before closure.
