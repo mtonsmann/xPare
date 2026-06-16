@@ -35,8 +35,7 @@ class:
 - `docs/guardrails/` — focused rules per change class (linked from each workflow
   section below).
 - `docs/guardrails/agentic-security-finding-triage.md` — how to validate,
-  classify, scope, and plan fixes for agent-produced security findings before
-  writing code.
+  classify, scope, and plan fixes for security findings before writing code.
 - `docs/guardrails/review-finding-closure.md` — what to add when a review finds
   a class of bug that should not come back.
 - `docs/agent-workflow.md` — the evidence-first engineering loop (classify → brief →
@@ -62,7 +61,7 @@ not by weakening the check.
 5. Add or update focused tests for behavior changes — especially anything that
    affects transform output, the ABI, or the privacy posture. Core changes must
    include adversarial-input coverage.
-6. If an agent-produced security finding is reported, first use
+6. If a security finding is reported from any source, first use
    `docs/guardrails/agentic-security-finding-triage.md` to validate and scope it.
 7. If a review, scan, fuzz run, performance pass, CI failure, manual audit, or
    validated security triage found an issue class, follow
@@ -207,8 +206,8 @@ also consult `docs/guardrails/agentic-security-finding-triage.md`.
   boundary move.
 - For any fixed review finding class, state the mechanical regression protection
   and the docs lesson added.
-- For any agent-produced security finding, state the triage outcome, owning
-  boundary, sibling search, blocker, docs lesson, checks, and proof gaps.
+- For any security finding, state the triage outcome, owning boundary, sibling
+  search, blocker, docs lesson, checks, and proof gaps.
 - Automated review: a subscription cloud reviewer (Codex / Claude Code cloud) reviews PRs
   against [`docs/guardrails/code-and-test-hygiene.md`](docs/guardrails/code-and-test-hygiene.md)
   ("Tier-2 review") — anti-slop on every code PR, security focus on the security-relevant

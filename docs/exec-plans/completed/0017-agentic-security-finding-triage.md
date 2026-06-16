@@ -13,8 +13,8 @@ privacy posture, ABI, dependency, or release boundary change.
 
 ## Plan
 
-1. Add one canonical, repo-owned triage guardrail that routes agent-produced
-   findings into the existing review-finding closure policy.
+1. Add one canonical, repo-owned triage guardrail that routes security findings
+   into the existing review-finding closure policy.
 2. Add thin Codex and Claude skill wrappers named `security-finding-triage` that
    load the canonical guardrail instead of duplicating it.
 3. Add `CLAUDE.md` importing `AGENTS.md`, with a Claude-specific pointer to the
@@ -30,14 +30,15 @@ privacy posture, ABI, dependency, or release boundary change.
 - Keep skills instruction-only. The task is judgment-heavy and should rely on
   repo guardrails plus existing tests/checks, not bundled scripts.
 - Use the neutral name `security-finding-triage` so the workflow applies to
-  Codex, Claude, or any future agentic security finding source.
+  Codex, Claude, scanners, CI security signals, manual audits, or any future
+  agentic security finding source.
 - Add `CLAUDE.md` with an `@AGENTS.md` import so Claude reads the same repo
   guidance as Codex, plus a small Claude-specific skill invocation pointer.
 
 ## Outcome
 
 - Added `docs/guardrails/agentic-security-finding-triage.md` as the canonical
-  intake guardrail for agent-produced findings.
+  intake guardrail for security findings.
 - Added Codex wrapper `.agents/skills/security-finding-triage/`.
 - Added Claude wrapper `.claude/skills/security-finding-triage/`.
 - Added `CLAUDE.md` importing `AGENTS.md`.

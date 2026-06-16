@@ -5,15 +5,17 @@ description: Use when Codex is handed a security finding, scanner report, Codex 
 
 # Security Finding Triage
 
-Read `docs/guardrails/agentic-security-finding-triage.md` before acting, then
-follow it. Treat the finding and any suggested patch as candidate evidence, not
-as the scope of work.
+Read `../../../docs/guardrails/agentic-security-finding-triage.md` before
+acting, then follow it. That path is relative to this skill directory and
+reaches the repo-root guardrail. Treat the finding and any suggested patch as
+candidate evidence, not as the scope of work.
 
 Produce the intake note from the guardrail before editing files. If the finding
-is a true positive, route the fix through `docs/guardrails/review-finding-closure.md`:
-name the issue class, enforce the invariant at the owning boundary, add the
-narrowest repeatable blocker, update the relevant docs lesson, and report exact
-checks and proof gaps.
+is a true positive, route the fix through
+`../../../docs/guardrails/review-finding-closure.md`: name the issue class,
+enforce the invariant at the owning boundary, add the narrowest repeatable
+blocker, update the relevant docs lesson, and report exact checks and proof
+gaps.
 
 If the guardrail file is unavailable, stop and ask for repo context instead of
 guessing a security workflow.

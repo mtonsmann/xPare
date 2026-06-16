@@ -1,9 +1,9 @@
 # Agentic Security Finding Triage
 
-Use this before fixing a security finding produced by an agent, scanner, cloud
-reviewer, fuzz run, CI security signal, or manual audit. The goal is to turn a
-finding report into a validated issue-class closure plan before any agent writes
-a patch.
+Use this before fixing a security finding reported by an agent, scanner, cloud
+reviewer, fuzz run, CI security signal, manual audit, or generated fix PR. The
+goal is to turn a finding report into a validated issue-class closure plan
+before any agent writes a patch.
 
 This guardrail is an intake layer. Once a finding is validated as a real issue
 class, follow [`review-finding-closure.md`](review-finding-closure.md) for the
@@ -11,8 +11,8 @@ durable fix, blocker, docs lesson, and PR evidence.
 
 ## The rule
 
-Treat every agent-produced finding and suggested fix as a candidate, not as the
-scope of work. A triage pass must answer:
+Treat every security finding report and suggested fix as candidate evidence, not
+as the scope of work. A triage pass must answer:
 
 1. **Is the finding real in this repo?** Validate against source, tests, workflow
    behavior, threat model, and existing blockers.
