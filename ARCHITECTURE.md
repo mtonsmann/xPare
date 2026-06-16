@@ -124,9 +124,9 @@ hand-rolled parsers and the full pipeline: `strip_html`, `strip_markdown`,
 ### `shells/` — native OS integration
 
 Shells own everything the core refuses to touch: clipboard read/write
-(including rich→plain extraction), change detection, tray/menu-bar UI, the global
-hotkey, settings, and calling the core over the C ABI. **No transform logic lives
-in a shell.**
+(including rich→plain extraction and platform-local image OCR), change detection,
+tray/menu-bar UI, the global hotkey, settings, and calling the core over the C ABI.
+**No transform logic lives in a shell.**
 
 - `shells/macos/` — the Swift menu-bar shell. Links the FFI staticlib through the
   C ABI via the `CXPare` module map (`Sources/CXPare/include/`), which
@@ -139,12 +139,13 @@ in a shell.**
 ## The trust boundary
 
 ```
-            UNTRUSTED INPUT (clipboard: passwords, tokens, PII, source, HTML, Markdown)
+            UNTRUSTED INPUT (clipboard: passwords, tokens, PII, source, HTML, Markdown, images)
                                     |
    ┌───────────────────────────────┼─────────────────────────────────────────────┐
    │  SHELL (trusted with OS)       │                                              │
    │  • reads the pasteboard        │                                              │
    │  • extracts the best text rep  │   rich → plain                               │
+   │  • OCRs images locally on opt-in paths                                         │
    │  • owns hotkey / tray / poller │                                              │
    └───────────────────────────────┼─────────────────────────────────────────────┘
                                     │  xp_transform(input_bytes, config_json)   ← C ABI (v3)
@@ -190,6 +191,13 @@ which is small enough to read end to end.
    an owned `(ptr, len)` buffer.
 5. The shell writes the transformed text back to the clipboard **in place**, then
    frees the buffer with `xp_buffer_free`, which zeroizes it first.
+
+Image OCR is a macOS-shell-only data path, not a core transform: the shell reads a
+bounded image representation, uses Apple's on-device Vision OCR off the main actor,
+and writes recognized text back as one plain string. The manual command is always
+available; continuous-mode OCR for image-only clipboards is separately opt-in and
+still honors do-not-process pasteboard markers before reading content. This does not
+change the C ABI or add any network, filesystem, or entitlement capability.
 
 The canonical sanitization config is **`StripHtml` → `StripMarkdown`** (HTML first
 to neutralize active content, then Markdown to remove residual formatting),

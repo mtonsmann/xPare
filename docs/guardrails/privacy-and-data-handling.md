@@ -74,6 +74,9 @@ sanctioned, opt-in exception — the paste-as-file feature — bounded by rule 2
    the FFI has its own hard backstop. When a platform exposes raw rich representation
    bytes, check them before decoding; still do not document the ceiling as a
    universal streaming pre-parse limit for every native format.
+   For shell-owned OCR, raw image representations and decoded pixel dimensions must
+   be bounded before expensive decode/recognition, and recognized text must be
+   bounded before writing it back to the pasteboard.
 10. **No shipped command execution path.** Clipboard handling must not spawn
     subprocesses or delegate clipboard-derived content to shell commands. Release
     scripts and `xtask` may run tools; shipped app/core/CLI surfaces may not.
@@ -113,6 +116,7 @@ update `SECURITY.md` and the relevant guardrail, and update the enforcing check 
 - any direct network/browser/auth API usage in the shipped shell,
 - any new persistence of content, any new log/telemetry path, or a new data path
   that lets content escape the transform,
+- any image/OCR path that is not local/on-device, bounded, and in-memory only,
 - any shipped command-execution path,
 - a new entitlement,
 - any broadening of the plain-string pasteboard rewrite path or expansion of the

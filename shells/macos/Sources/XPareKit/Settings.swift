@@ -59,6 +59,9 @@ public struct Settings: Codable, Equatable, Sendable {
     /// reference instead of the raw string — so pasting attaches a file. See
     /// SECURITY.md ("Opt-in paste-as-file exception").
     public var pasteLargeAsFile: Bool
+    /// Whether continuous mode may OCR image-only clipboard contents. Off by
+    /// default; the manual OCR command remains available regardless of this setting.
+    public var ocrImagesInContinuousMode: Bool
     /// Paste-as-file threshold in KB: a transformed output strictly larger than
     /// `pasteAsFileThresholdKB * 1024` UTF-8 bytes takes the file path. Clamped
     /// to ≥ 1 by ``pasteAsFileThresholdBytes``.
@@ -74,6 +77,7 @@ public struct Settings: Codable, Equatable, Sendable {
         pollIntervalMs: Int = 500,
         ordering: Ordering = .canonical,
         pasteLargeAsFile: Bool = false,
+        ocrImagesInContinuousMode: Bool = false,
         pasteAsFileThresholdKB: Int = Settings.defaultPasteAsFileThresholdKB
     ) {
         self.mode = mode
@@ -82,6 +86,7 @@ public struct Settings: Codable, Equatable, Sendable {
         self.pollIntervalMs = pollIntervalMs
         self.ordering = ordering
         self.pasteLargeAsFile = pasteLargeAsFile
+        self.ocrImagesInContinuousMode = ocrImagesInContinuousMode
         self.pasteAsFileThresholdKB = pasteAsFileThresholdKB
     }
 
@@ -95,7 +100,7 @@ public struct Settings: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case mode, operations, hotkey, pollIntervalMs, ordering
-        case pasteLargeAsFile, pasteAsFileThresholdKB
+        case pasteLargeAsFile, ocrImagesInContinuousMode, pasteAsFileThresholdKB
     }
 
     /// Decode tolerantly so a settings blob saved by an older build (missing newer
@@ -111,6 +116,8 @@ public struct Settings: Codable, Equatable, Sendable {
         ordering = try c.decodeIfPresent(Ordering.self, forKey: .ordering) ?? .canonical
         pasteLargeAsFile =
             try c.decodeIfPresent(Bool.self, forKey: .pasteLargeAsFile) ?? false
+        ocrImagesInContinuousMode =
+            try c.decodeIfPresent(Bool.self, forKey: .ocrImagesInContinuousMode) ?? false
         pasteAsFileThresholdKB =
             try c.decodeIfPresent(Int.self, forKey: .pasteAsFileThresholdKB)
             ?? Settings.defaultPasteAsFileThresholdKB

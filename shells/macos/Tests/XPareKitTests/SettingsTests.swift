@@ -8,6 +8,7 @@ import Foundation
     @Test func defaultsAreOnDemandAndContinuousIsOptIn() {
         let s = Settings()
         #expect(s.mode == .onDemand, "continuous must be opt-in / off by default")
+        #expect(!s.ocrImagesInContinuousMode, "continuous image OCR must be opt-in")
         #expect(s.pollIntervalMs == 500, "default poll interval is 500ms")
         #expect(s.hotkey == .defaultCombo)
     }
@@ -39,7 +40,8 @@ import Foundation
                 .prefixLines(prefix: "- "),
             ],
             hotkey: HotkeyCombo(keyCode: 9, modifiers: 0x0100 | 0x0800),
-            pollIntervalMs: 250
+            pollIntervalMs: 250,
+            ocrImagesInContinuousMode: true
         )
         let data = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(Settings.self, from: data)
@@ -92,6 +94,7 @@ import Foundation
         let old = #"{"mode":"continuous","pollIntervalMs":250}"#
         let decoded = try JSONDecoder().decode(Settings.self, from: Data(old.utf8))
         #expect(decoded.pasteLargeAsFile == false)
+        #expect(decoded.ocrImagesInContinuousMode == false)
         #expect(decoded.pasteAsFileThresholdKB == Settings.defaultPasteAsFileThresholdKB)
     }
 

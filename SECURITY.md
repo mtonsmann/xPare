@@ -75,7 +75,9 @@ world.**
   dependency allowlist (`check-core-deps`), not by convention.
 - The **shell** is the only component with OS access (clipboard, hotkey, UI). It is
   small, platform-specific, and sandboxed, and it owns the read → call-core →
-  write-back-in-place flow.
+  write-back-in-place flow. On macOS it also owns image OCR: bounded image bytes are
+  handed to Apple's on-device Vision framework locally, then recognized text is
+  written back as a plain string.
 - The **FFI shim** (`core-ffi`) is the only crate with `unsafe`. It is intentionally
   tiny so it can be audited in one sitting; it validates every pointer, lossy-decodes
   input so adversarial bytes can never make it fail, wraps the core call in
@@ -171,6 +173,11 @@ Clipboard markup is attacker-influenced, so the core treats all input as hostile
   bytes. Rich-format extraction itself is still platform work, so the limit is a
   pre-core-transform guard, not a streaming rich-format parser for every native
   format.
+- **Image OCR is local and bounded** — the macOS shell reads only a bounded image
+  representation, rejects oversized decoded dimensions before Vision creates a
+  `CGImage`, runs Apple's on-device OCR off the main actor, and writes recognized
+  text back as a single plain string. It does not add network, filesystem,
+  entitlement, or core/ABI capability.
 - **Configs are envelope-bounded before transform** — `parse_config` rejects configs
   with too many operations (≤ 32), free-text parameters over 16 UTF-8 bytes, `\r`/`\n`
   inside prefix/suffix/join/split parameters, or a pipeline whose worst-case output
@@ -227,6 +234,9 @@ security-relevant ones:
   *without reading it* (password-manager etiquette). The user-initiated
   hotkey/menu path deliberately still processes marked content: an explicit
   strip request wins over the marker.
+- **Continuous image OCR is separately opt-in.** With continuous monitoring on,
+  xPare still follows the text pipeline first. Only image-only clipboards fall
+  through to OCR, and only when the user has enabled the continuous OCR setting.
 - **Official release sandboxing is part of the release gate.** Unsigned/ad-hoc
   previews are for testing and are not official downloadable binaries. `make dist`
   and the release workflow require the checked-in App Sandbox entitlements for the

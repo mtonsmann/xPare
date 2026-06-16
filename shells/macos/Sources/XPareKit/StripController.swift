@@ -58,6 +58,7 @@ public enum StripOutcome: Equatable, Sendable {
 public final class StripController {
     private let pasteboard: PasteboardProtocol
     private let transformer: any Transforming
+    private let imageTextRecognizer: any ImageTextRecognizing
     private let defaults: UserDefaults
     /// Owns the single transient file behind the opt-in paste-as-file feature —
     /// the sanctioned content-persistence exception (see ``PasteFileStore``).
@@ -103,6 +104,7 @@ public final class StripController {
         settings: Settings? = nil,
         pasteboard: PasteboardProtocol = SystemPasteboard(),
         transformer: any Transforming = Transformer(),
+        imageTextRecognizer: any ImageTextRecognizing = VisionTextRecognizer(),
         defaults: UserDefaults = .standard,
         maxInputBytes: Int = StripController.defaultMaxInputBytes(),
         busyThreshold: Duration = .milliseconds(400),
@@ -110,6 +112,7 @@ public final class StripController {
     ) {
         self.pasteboard = pasteboard
         self.transformer = transformer
+        self.imageTextRecognizer = imageTextRecognizer
         self.defaults = defaults
         self.maxInputBytes = maxInputBytes
         self.busyThreshold = busyThreshold
@@ -186,7 +189,20 @@ public final class StripController {
     /// hotkey / continuous action. Returns a content-free outcome.
     @discardableResult
     public func stripNow(trigger: StripTrigger = .manual) async -> StripOutcome {
-        await perform(trigger: trigger) { self.effectiveConfig(for: $0) }
+        let result = await perform(trigger: trigger) { self.effectiveConfig(for: $0) }
+        let outcome = result.outcome
+        guard trigger == .clipboardChanged,
+            outcome == .empty,
+            settings.ocrImagesInContinuousMode,
+            let emptyReadChangeCount = result.emptyReadChangeCount
+        else {
+            return outcome
+        }
+
+        let imageOutcome = await extractImageText(
+            trigger: .clipboardChanged,
+            expectedChangeCount: emptyReadChangeCount)
+        return imageOutcome == .notApplicable ? outcome : imageOutcome
     }
 
     /// Run a **transient** explicit operation list once against the clipboard, without
@@ -201,7 +217,7 @@ public final class StripController {
         operations: [XPareCore.Operation],
         trigger: StripTrigger = .manual
     ) async -> StripOutcome {
-        await perform(trigger: trigger) { snapshot in
+        let result = await perform(trigger: trigger) { snapshot in
             var ops = operations
             let convertsHtmlToMarkdown = ops.contains(.htmlToMarkdown)
             if convertsHtmlToMarkdown {
@@ -214,15 +230,22 @@ public final class StripController {
             return TransformConfig(
                 operations: TransformConfig.normalizedOperationsForCurrentSchema(ops))
         }
+        return result.outcome
     }
 
-    /// Shared machinery for ``stripNow`` / ``runOnce``: read the best pasteboard
-    /// representation, refuse an oversized clipboard, build the config via
-    /// `makeConfig`, run the transform OFF the main actor (with the threshold-gated
-    /// "Stripping…" signal), and write the result back only when it actually changed.
-    private func perform(
+    /// Explicit one-shot OCR command: read a bounded image representation from the
+    /// pasteboard, recognize text with macOS Vision off the main actor, and write
+    /// the recognized plain text back in place. This is not part of the core
+    /// pipeline; continuous mode only uses the same path when the user explicitly
+    /// enables image OCR for image-only clipboards.
+    @discardableResult
+    public func extractImageText() async -> StripOutcome {
+        await extractImageText(trigger: .manual, expectedChangeCount: nil)
+    }
+
+    private func extractImageText(
         trigger: StripTrigger,
-        makeConfig: (PasteboardSnapshot) -> TransformConfig?
+        expectedChangeCount: Int?
     ) async -> StripOutcome {
         removeStalePasteFile()
 
@@ -232,26 +255,148 @@ public final class StripController {
             return .stripped(changed: false)
         }
 
+        if trigger == .clipboardChanged, pasteboard.hasDoNotProcessMarker {
+            return .skippedConcealed
+        }
+
+        if let expectedChangeCount,
+            pasteboard.changeCount != expectedChangeCount
+        {
+            return .notApplicable
+        }
+
+        let imageReadResult = pasteboard.readImage(maxRepresentationBytes: maxInputBytes)
+        if let outcome = postContinuousImageReadOutcome(
+            trigger: trigger,
+            expectedChangeCount: expectedChangeCount
+        ) {
+            return outcome
+        }
+
+        let read: PasteboardImageRead
+        switch imageReadResult {
+        case .content(let content):
+            read = content
+        case .empty(let changeCount):
+            if let expectedChangeCount,
+                changeCount != expectedChangeCount
+            {
+                return .notApplicable
+            }
+            return .notApplicable
+        case .tooLarge(let bytes, let changeCount):
+            if let expectedChangeCount,
+                changeCount != expectedChangeCount
+            {
+                return .notApplicable
+            }
+            return .tooLarge(bytes: bytes, rich: true)
+        }
+
+        if let expectedChangeCount,
+            read.changeCount != expectedChangeCount
+        {
+            return .notApplicable
+        }
+
+        guard pasteboard.changeCount == read.changeCount else {
+            return .notApplicable
+        }
+
+        if read.image.data.count > maxInputBytes {
+            return .tooLarge(bytes: read.image.data.count, rich: true)
+        }
+
+        let image = read.image
+        let recognizer = imageTextRecognizer
+        let recognitionResult: Result<String, Error> = await runWithBusyIndicator {
+            await Task.detached(priority: .userInitiated) { [image, recognizer] in
+                do {
+                    return .success(try recognizer.recognizeText(in: image))
+                } catch {
+                    return .failure(error)
+                }
+            }.value
+        }
+
+        let output: String
+        switch recognitionResult {
+        case .success(let recognized):
+            output = recognized
+        case .failure(let error):
+            if let recognitionError = error as? ImageTextRecognitionError,
+                let decodedBytes = recognitionError.estimatedDecodedBytes
+            {
+                return .tooLarge(bytes: decodedBytes, rich: true)
+            }
+            return .notApplicable
+        }
+
+        guard !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return .notApplicable
+        }
+        let outputByteCount = output.utf8.count
+        if outputByteCount > maxInputBytes {
+            return .tooLarge(bytes: outputByteCount, rich: true)
+        }
+
+        guard pasteboard.changeCount == read.changeCount else {
+            return .stripped(changed: false)
+        }
+
+        guard let generation = pasteboard.writePlain(output) else {
+            return .writeFailed
+        }
+        lastSelfWriteChangeCount = generation
+        return .stripped(changed: true)
+    }
+
+    /// Shared machinery for ``stripNow`` / ``runOnce``: read the best pasteboard
+    /// representation, refuse an oversized clipboard, build the config via
+    /// `makeConfig`, run the transform OFF the main actor (with the threshold-gated
+    /// "Stripping…" signal), and write the result back only when it actually changed.
+    private func perform(
+        trigger: StripTrigger,
+        makeConfig: (PasteboardSnapshot) -> TransformConfig?
+    ) async -> PerformResult {
+        removeStalePasteFile()
+
+        if trigger == .clipboardChanged,
+            pasteboard.changeCount == lastSelfWriteChangeCount
+        {
+            return PerformResult(outcome: .stripped(changed: false))
+        }
+
         // nspasteboard.org convention (privacy): password managers and similar
         // tools mark secrets/ephemeral buffers with a "do not process" type.
         // An automatic continuous-mode pass must honor the marker and leave the
         // content untouched — before reading it at all. A manual trigger
         // (hotkey / menu) is a deliberate user action and still runs.
         if trigger == .clipboardChanged, pasteboard.hasDoNotProcessMarker {
-            return .skippedConcealed
+            return PerformResult(outcome: .skippedConcealed)
+        }
+
+        let ceilingRead = readWithinCeiling()
+        if let outcome = postContinuousTextReadOutcome(
+            trigger: trigger,
+            readChangeCount: ceilingRead.changeCount
+        ) {
+            return PerformResult(outcome: outcome)
         }
 
         let read: PasteboardRead
-        switch readWithinCeiling() {
+        switch ceilingRead {
         case .ok(let content):
             read = content
-        case .bail(let earlyOutcome):
-            return earlyOutcome
+        case .empty(let changeCount):
+            return PerformResult(outcome: .empty, emptyReadChangeCount: changeCount)
+        case .bail(let earlyOutcome, _):
+            return PerformResult(outcome: earlyOutcome)
         }
         let snapshot = read.snapshot
 
         guard var config = makeConfig(snapshot) else {
-            return .notApplicable
+            return PerformResult(outcome: .notApplicable)
         }
         // D12 guard: continuous mode must NEVER run a reduction — it would silently
         // replace every copied buffer with a derived subset. Drop any that slipped
@@ -261,6 +406,52 @@ public final class StripController {
             config.operations.removeAll(where: { $0.isReduction })
         }
 
+        // The transform is the only heavy step and touches no main-affine state, so
+        // run it OFF the main actor to keep the menu-bar UI responsive on large inputs.
+        let input = snapshot.text
+        let transformer = self.transformer
+        let transformConfig = config
+        let output: String? = await runWithBusyIndicator {
+            await Task.detached(priority: .userInitiated) {
+                try? transformer.transform(input, config: transformConfig)
+            }.value
+        }
+
+        guard let output else {
+            // Only the (content-free) failure category is surfaced — never the input.
+            return PerformResult(outcome: .failed)
+        }
+
+        guard pasteboard.changeCount == read.changeCount else {
+            return PerformResult(outcome: .stripped(changed: false))
+        }
+
+        // Runs before the unchanged-skip below: an already-plain large buffer
+        // should still become a file.
+        if let fileOutcome = writeAsFileIfLarge(output) {
+            return PerformResult(outcome: fileOutcome)
+        }
+
+        // Only rewrite when the result actually differs from what a plain paste would
+        // have produced, to avoid bumping the change count needlessly. For HTML/RTF
+        // sources there was no plain string to compare to, so we always write.
+        let priorPlain = (snapshot.kind == .plain) ? snapshot.text : nil
+        if let priorPlain, priorPlain == output {
+            return PerformResult(outcome: .stripped(changed: false))
+        }
+        guard let generation = pasteboard.writePlain(output) else {
+            // The system rejected the write after the old contents were already
+            // cleared. Do NOT record a self-write generation — the clipboard
+            // holds the cleared generation, not our output, and suppressing it
+            // would hide the very change the user needs to notice. Surface the
+            // (content-free) failure instead.
+            return PerformResult(outcome: .writeFailed)
+        }
+        lastSelfWriteChangeCount = generation
+        return PerformResult(outcome: .stripped(changed: true))
+    }
+
+    private func runWithBusyIndicator<T: Sendable>(_ operation: () async -> T) async -> T {
         // Threshold-gated "Stripping…" signal: flip to busy only if the work outlasts
         // `busyThreshold`, so the instant common case never flickers. The task reports
         // whether it actually signaled, so we clear the state iff we set it.
@@ -269,64 +460,43 @@ public final class StripController {
             do {
                 try await Task.sleep(for: threshold)
             } catch {
-                return false  // cancelled before the threshold elapsed → never signaled
+                return false  // cancelled before the threshold elapsed -> never signaled
             }
             self?.onStrippingChange?(true)
             return true
         }
 
-        // The transform is the only heavy step and touches no main-affine state, so
-        // run it OFF the main actor to keep the menu-bar UI responsive on large inputs.
-        let input = snapshot.text
-        let transformer = self.transformer
-        let output: String? = await Task.detached(priority: .userInitiated) {
-            try? transformer.transform(input, config: config)
-        }.value
+        let result = await operation()
 
         busyTask.cancel()
         if await busyTask.value {
             onStrippingChange?(false)
         }
-
-        guard let output else {
-            // Only the (content-free) failure category is surfaced — never the input.
-            return .failed
-        }
-
-        guard pasteboard.changeCount == read.changeCount else {
-            return .stripped(changed: false)
-        }
-
-        // Runs before the unchanged-skip below: an already-plain large buffer
-        // should still become a file.
-        if let fileOutcome = writeAsFileIfLarge(output) {
-            return fileOutcome
-        }
-
-        // Only rewrite when the result actually differs from what a plain paste would
-        // have produced, to avoid bumping the change count needlessly. For HTML/RTF
-        // sources there was no plain string to compare to, so we always write.
-        let priorPlain = (snapshot.kind == .plain) ? snapshot.text : nil
-        if let priorPlain, priorPlain == output {
-            return .stripped(changed: false)
-        }
-        guard let generation = pasteboard.writePlain(output) else {
-            // The system rejected the write after the old contents were already
-            // cleared. Do NOT record a self-write generation — the clipboard
-            // holds the cleared generation, not our output, and suppressing it
-            // would hide the very change the user needs to notice. Surface the
-            // (content-free) failure instead.
-            return .writeFailed
-        }
-        lastSelfWriteChangeCount = generation
-        return .stripped(changed: true)
+        return result
     }
 
     /// A ceiling-checked pasteboard read: the content, or the content-free
     /// outcome `perform` should return early.
     private enum CeilingRead {
         case ok(PasteboardRead)
-        case bail(StripOutcome)
+        case empty(changeCount: Int)
+        case bail(StripOutcome, changeCount: Int?)
+
+        var changeCount: Int? {
+            switch self {
+            case .ok(let read):
+                return read.changeCount
+            case .empty(let changeCount):
+                return changeCount
+            case .bail(_, let changeCount):
+                return changeCount
+            }
+        }
+    }
+
+    private struct PerformResult {
+        let outcome: StripOutcome
+        var emptyReadChangeCount: Int? = nil
     }
 
     /// Read the best pasteboard representation, refusing an oversized clipboard
@@ -335,20 +505,53 @@ public final class StripController {
     /// out-of-memory abort transforming it; the clipboard is left untouched).
     private func readWithinCeiling() -> CeilingRead {
         switch pasteboard.readBest(maxRepresentationBytes: maxInputBytes) {
-        case .empty:
-            return .bail(.empty)
-        case .tooLarge(let bytes, _):
+        case .empty(let changeCount):
+            return .empty(changeCount: changeCount)
+        case .tooLarge(let bytes, let changeCount):
             // `readBest` size-checks only raw *rich* representations (HTML/RTF
             // bytes), so this refusal is always about rich content.
-            return .bail(.tooLarge(bytes: bytes, rich: true))
+            return .bail(.tooLarge(bytes: bytes, rich: true), changeCount: changeCount)
         case .content(let content):
             let byteCount = content.snapshot.text.utf8.count
             if byteCount > maxInputBytes {
                 return .bail(
-                    .tooLarge(bytes: byteCount, rich: content.snapshot.kind != .plain))
+                    .tooLarge(bytes: byteCount, rich: content.snapshot.kind != .plain),
+                    changeCount: content.changeCount)
             }
             return .ok(content)
         }
+    }
+
+    private func postContinuousTextReadOutcome(
+        trigger: StripTrigger,
+        readChangeCount: Int?
+    ) -> StripOutcome? {
+        guard trigger == .clipboardChanged else { return nil }
+        if pasteboard.hasDoNotProcessMarker {
+            return .skippedConcealed
+        }
+        if let readChangeCount,
+            pasteboard.changeCount != readChangeCount
+        {
+            return .stripped(changed: false)
+        }
+        return nil
+    }
+
+    private func postContinuousImageReadOutcome(
+        trigger: StripTrigger,
+        expectedChangeCount: Int?
+    ) -> StripOutcome? {
+        guard trigger == .clipboardChanged else { return nil }
+        if pasteboard.hasDoNotProcessMarker {
+            return .skippedConcealed
+        }
+        if let expectedChangeCount,
+            pasteboard.changeCount != expectedChangeCount
+        {
+            return .notApplicable
+        }
+        return nil
     }
 
     // MARK: - Paste-as-file (the opt-in persistence exception; see PasteFileStore)

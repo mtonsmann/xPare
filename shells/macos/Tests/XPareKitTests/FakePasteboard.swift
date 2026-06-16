@@ -9,9 +9,15 @@ final class FakePasteboard: PasteboardProtocol {
     private(set) var writes: [String] = []
     private(set) var fileURLWrites: [URL] = []
     private(set) var readBestCalls: Int = 0
+    private(set) var readImageCalls: Int = 0
     private(set) var materializedReadCount: Int = 0
+    private(set) var materializedImageReadCount: Int = 0
     var snapshot: PasteboardSnapshot?
     var rawRepresentationBytes: Int?
+    var image: PasteboardImage?
+    var rawImageBytes: Int?
+    var afterReadBest: (() -> Void)?
+    var afterReadImageGenerationCaptured: (() -> Void)?
     /// Simulates the nspasteboard.org "do not process" marker types
     /// (concealed/transient/auto-generated) being declared by the writer.
     var hasDoNotProcessMarker: Bool = false
@@ -23,14 +29,26 @@ final class FakePasteboard: PasteboardProtocol {
     /// Same simulation for `writeFileURL`.
     var failNextFileURLWrite = false
 
-    init(snapshot: PasteboardSnapshot? = nil, rawRepresentationBytes: Int? = nil) {
+    init(
+        snapshot: PasteboardSnapshot? = nil,
+        rawRepresentationBytes: Int? = nil,
+        image: PasteboardImage? = nil,
+        rawImageBytes: Int? = nil
+    ) {
         self.snapshot = snapshot
         self.rawRepresentationBytes = rawRepresentationBytes
+        self.image = image
+        self.rawImageBytes = rawImageBytes
     }
 
     func readBest(maxRepresentationBytes: Int) -> PasteboardReadResult {
         readBestCalls += 1
         let generation = changeCount
+        defer {
+            let callback = afterReadBest
+            afterReadBest = nil
+            callback?()
+        }
         if let rawRepresentationBytes,
             rawRepresentationBytes > maxRepresentationBytes
         {
@@ -44,12 +62,34 @@ final class FakePasteboard: PasteboardProtocol {
         return .content(PasteboardRead(snapshot: snapshot, changeCount: generation))
     }
 
+    func readImage(maxRepresentationBytes: Int) -> PasteboardImageReadResult {
+        readImageCalls += 1
+        let generation = changeCount
+        if let callback = afterReadImageGenerationCaptured {
+            afterReadImageGenerationCaptured = nil
+            callback()
+        }
+        if let rawImageBytes,
+            rawImageBytes > maxRepresentationBytes
+        {
+            return .tooLarge(bytes: rawImageBytes, changeCount: generation)
+        }
+
+        materializedImageReadCount += 1
+        guard let image else {
+            return .empty(changeCount: generation)
+        }
+        return .content(PasteboardImageRead(image: image, changeCount: generation))
+    }
+
     func writePlain(_ text: String) -> Int? {
         // The clear half of the in-place rewrite always runs: it empties the
         // pasteboard and bumps the generation even when the set half fails.
         changeCount += 1
         snapshot = nil
         rawRepresentationBytes = nil
+        image = nil
+        rawImageBytes = nil
         if failNextPlainWrite {
             failNextPlainWrite = false
             return nil
@@ -65,6 +105,8 @@ final class FakePasteboard: PasteboardProtocol {
         changeCount += 1
         snapshot = nil
         rawRepresentationBytes = nil
+        image = nil
+        rawImageBytes = nil
         if failNextFileURLWrite {
             failNextFileURLWrite = false
             return nil
@@ -75,9 +117,25 @@ final class FakePasteboard: PasteboardProtocol {
 
     /// Simulate an external app putting new content on the clipboard (bumps the
     /// change count the way a real external write would).
-    func externalSet(_ snapshot: PasteboardSnapshot, rawRepresentationBytes: Int? = nil) {
+    func externalSet(
+        _ snapshot: PasteboardSnapshot,
+        rawRepresentationBytes: Int? = nil,
+        image: PasteboardImage? = nil,
+        rawImageBytes: Int? = nil
+    ) {
         self.snapshot = snapshot
         self.rawRepresentationBytes = rawRepresentationBytes
+        self.image = image
+        self.rawImageBytes = rawImageBytes
+        changeCount += 1
+    }
+
+    /// Simulate an external app putting an image on the clipboard.
+    func externalSetImage(_ image: PasteboardImage, rawImageBytes: Int? = nil) {
+        snapshot = nil
+        rawRepresentationBytes = nil
+        self.image = image
+        self.rawImageBytes = rawImageBytes
         changeCount += 1
     }
 }

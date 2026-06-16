@@ -31,6 +31,8 @@ with no extra toolchain).
    `make checks`, `make build`, `make test`, `make app`, `make run`, `make preview`,
    and `make dist` must use synthetic pasteboards only, so the gate is safe to run
    anywhere and never reads or mutates the user's real clipboard.
+   OCR/image coverage follows the same rule: use fakes or uniquely named
+   `NSPasteboard(name:)` instances, never the user's general pasteboard.
 4. **The ordinary pasteboard rewrite stays plain-string only.** The macOS shell's
    `writePlain(_:)` path clears the pasteboard and writes one `.string`
    representation. Rich formats or extra representations on that path are a

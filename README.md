@@ -9,11 +9,12 @@ A **memory-safe, plain-text clipboard utility**. xPare cleans the text on
 your clipboard — coerce rich text to plain, strip HTML and Markdown, normalize
 whitespace, change case, run line operations, extract emails/URLs, defang and
 refang network indicators (IOCs), strip URL tracking parameters, and mask selected
-email/IP identifiers — and writes the result back **in place**, without your
-clipboard content ever leaving the process. Optionally (off by default), a result
-larger than a size you choose is placed on the clipboard as a **temporary text
-file** instead of a raw string, so pasting attaches a file rather than dumping a
-huge blob.
+email/IP identifiers. On macOS it can also extract text from clipboard images using
+Apple's built-in on-device Vision OCR. It writes the result back **in place**,
+without your clipboard content ever leaving the process. Optionally (off by
+default), a result larger than a size you choose is placed on the clipboard as a
+**temporary text file** instead of a raw string, so pasting attaches a file rather
+than dumping a huge blob.
 
 Its whole reason to exist is trust: the clipboard holds passwords, tokens, PII, and
 source, and the markup it carries is untrusted. So xPare is built so that
@@ -38,6 +39,8 @@ pasteboard content marked `org.nspasteboard.ConcealedType`, `TransientType`, or
 recent macOS versions prompt on background pasteboard access, the primary flow
 is user-initiated: the global hotkey (default **⌃⌥⌘V**, Control+Option+Command+V,
 re-recordable in Settings) strips the clipboard on demand.
+Image OCR is user-initiated by default too; continuous-mode OCR for image-only
+clipboards is a separate opt-in shown in the menu and Settings.
 
 ## Install
 
@@ -61,8 +64,9 @@ unreleased **2.0.0** config-schema changes.
 ```
   native shell (Swift / …)  ──xp_transform(input, config_json)──▶  Rust core
   • owns the clipboard, hotkey, UI            C ABI                • pure, deterministic
-  • reads rich text, extracts plain      (frozen, language-        • #![forbid(unsafe_code)]
-  • writes the result back in place         neutral)              • no OS / IO / network
+  • reads rich text/images, extracts     (frozen, language-        • #![forbid(unsafe_code)]
+    plain text locally                      neutral)              • no OS / IO / network
+  • writes the result back in place
 ```
 
 - A portable **Rust transformation core** (`core/`) — `String` in, `String` out,

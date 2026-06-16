@@ -74,6 +74,8 @@ should distrust, so the posture is deliberately minimal and is checked mechanica
    paste. This mirrors the OS clipboard's own memory-bound nature; the core's
    `XP_MAX_INPUT_BYTES` is the hard backstop beneath it. See `DESIGN.md`
    → *Performance & large inputs → Input size ceiling*.
+   The same ceiling applies to image representations read for local OCR, and Vision
+   decoded dimensions are checked before creating a `CGImage`.
 9. **Treat local pasteboard writers as a race/DoS boundary, not a confidentiality
    boundary.** Another same-user process can write the general pasteboard before a
    read, during a transform, or after the in-place rewrite. xPare must still
@@ -95,18 +97,26 @@ should distrust, so the posture is deliberately minimal and is checked mechanica
    intermediate values if multiple writes happen between ticks and it can race a
    writer before the read or after the rewrite. The shell suppresses xPare
    self-write generations, drops stale transform completions when `changeCount`
-   moved in flight, and coalesces callbacks while a strip is running. Those controls
-   belong in the shell and must not change the core ABI.
+   moved in flight, and coalesces callbacks while a strip is running. Automatic reads
+   must also re-check the live `changeCount` and the do-not-process marker after
+   materializing text or image bytes and before running the core or Vision; a
+   generation stamp captured before the read is not enough if the pasteboard changes
+   mid-read. Those controls belong in the shell and must not change the core ABI.
+   Continuous OCR remains separately opt-in and image-only: a text representation
+   always runs through the normal text pipeline first, and do-not-process markers are
+   checked before image bytes are read.
 
 ### Responsiveness
 
-12. **Transform off the main thread; indicate only when it's slow.** `stripNow` runs
-   the core transform on a background task — the menu-bar UI must never block, even on
-   a large clipboard. It is **threshold-gated**: `onStrippingChange(true)` fires only
-   if a run outlasts `busyThreshold` (default 400 ms), and `(false)` when it finishes,
-   so the instant common case shows nothing and only a multi-second run surfaces a
-   "Stripping…" state. The pasteboard read and the in-place write stay on the main
-   actor (AppKit is main-affine); only the pure transform is backgrounded. The
+12. **Transform/OCR off the main thread; indicate only when it's slow.** `stripNow`
+   runs the core transform on a background task, and image OCR runs Vision
+   recognition off the main actor too — the menu-bar UI must never block, even on a
+   large clipboard or image. It is **threshold-gated**: `onStrippingChange(true)`
+   fires only if a run outlasts `busyThreshold` (default 400 ms), and `(false)` when
+   it finishes, so the instant common case shows nothing and only a multi-second run
+   surfaces a "Stripping…" state. The pasteboard read and the in-place write stay on
+   the main actor (AppKit is main-affine); only the pure transform/OCR work is
+   backgrounded. The
    indicator is **indeterminate** by design — the FFI is one opaque call, so an honest
    percentage isn't available without a progress-callback ABI or the deferred
    streaming API.
@@ -160,4 +170,6 @@ you from. Full rationale: [`DESIGN.md`](../../DESIGN.md) (D8, D9) and
   that introduces paste simulation. Broadening the plain-string rewrite path, or
   expanding paste-as-file beyond its documented file-reference exception, is a
   posture change.
+- Any image OCR path: confirm it is local/on-device, bounded before decode, off the
+  main actor, uses no new entitlement, and keeps continuous OCR separately opt-in.
 - Any change to the poller's lifecycle (it must stay fully torn down when off).

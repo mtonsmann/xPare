@@ -66,6 +66,12 @@ final class AppModel: ObservableObject {
         controller.update(settings)
     }
 
+    /// Toggle whether continuous mode may OCR image-only clipboard contents.
+    func setContinuousImageOCR(_ enabled: Bool) {
+        settings.ocrImagesInContinuousMode = enabled
+        controller.update(settings)
+    }
+
     /// Persist a newly recorded global hotkey. The controller re-registers it
     /// immediately and reports the result through `hotkeyActive`.
     func setHotkey(_ combo: HotkeyCombo) {
@@ -549,6 +555,29 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Run local OCR over an image currently on the clipboard. This is a
+    /// deliberate one-shot command and does not require continuous OCR to be on.
+    func extractImageText() {
+        Task { @MainActor in
+            switch await controller.extractImageText() {
+            case .stripped(let changed):
+                lastStatus = changed ? "Extracted image text" : "Image text unchanged"
+            case .strippedToFile:
+                lastStatus = "Extracted image text — clipboard is now a file"
+            case .empty, .notApplicable:
+                lastStatus = "No image text found"
+            case .failed:
+                lastStatus = "Image text extraction failed"
+            case .writeFailed:
+                lastStatus = "Could not write to clipboard"
+            case .skippedConcealed:
+                lastStatus = "Skipped: marked confidential by its source"
+            case .tooLarge(let bytes, let rich):
+                lastStatus = Self.tooLargeStatus(bytes: bytes, rich: rich)
+            }
+        }
+    }
+
     /// Quit via the controller so its teardown runs first — in particular the
     /// paste-as-file store cleanup, so no paste file outlives the app. Launch-time
     /// cleanup in `activate()` is the backstop for terminations that skip this
@@ -668,6 +697,15 @@ private struct MenuContent: View {
                 get: { model.settings.mode == .continuous },
                 set: { model.setMode($0 ? .continuous : .onDemand) }
             ))
+        Toggle(
+            "OCR images continuously",
+            isOn: Binding(
+                get: { model.settings.ocrImagesInContinuousMode },
+                set: { model.setContinuousImageOCR($0) }
+            )
+        )
+        .disabled(model.settings.mode != .continuous)
+
         // Output mode: how the stripped result lands on the pasteboard. Bounded
         // options live here per D12 (status-bearing row + radio submenu); the
         // typed threshold is the free parameter, so "Custom…" routes to Settings.
@@ -779,6 +817,10 @@ private struct MenuContent: View {
         .disabled(model.isStripping)
         Button("Extract URLs") {  // rank 13
             model.runCommand(.extractUrls, label: "Extracted URLs")
+        }
+        .disabled(model.isStripping)
+        Button("Extract text from image") {
+            model.extractImageText()
         }
         .disabled(model.isStripping)
 

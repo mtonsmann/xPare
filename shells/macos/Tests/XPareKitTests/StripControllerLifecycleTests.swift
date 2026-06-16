@@ -207,6 +207,33 @@ struct StripControllerLifecycleTests {
         #expect(pb.writes.isEmpty)
     }
 
+    /// The marker can appear while a read is in progress; continuous mode must
+    /// re-check before handing materialized text to the core.
+    @Test func continuousTriggerSkipsDoNotProcessMarkerThatAppearsDuringRead() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let transformer = RecordingTransformer(output: "should not run")
+        let pb = FakePasteboard(
+            snapshot: PasteboardSnapshot(text: "old text", kind: .plain))
+        pb.afterReadBest = {
+            pb.externalSet(PasteboardSnapshot(text: "new secret", kind: .plain))
+            pb.hasDoNotProcessMarker = true
+        }
+        let controller = StripController(
+            settings: Settings(mode: .continuous, operations: [.collapseWhitespace]),
+            pasteboard: pb,
+            transformer: transformer,
+            defaults: defaults
+        )
+
+        let outcome = await controller.stripNow(trigger: .clipboardChanged)
+        #expect(outcome == .skippedConcealed)
+        #expect(pb.readBestCalls == 1)
+        #expect(transformer.callCount == 0)
+        #expect(pb.writes.isEmpty)
+    }
+
     /// The marker only gates *automatic* processing: a manual trigger is a
     /// deliberate user action and still strips marked content.
     @Test func manualTriggerStillProcessesMarkedContent() async throws {

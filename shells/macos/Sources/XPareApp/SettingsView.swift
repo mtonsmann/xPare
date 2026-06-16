@@ -35,6 +35,21 @@ struct SettingsView: View {
                 HotkeyRecorderRow(model: model)
             }
 
+            Section("Continuous mode") {
+                Toggle(
+                    "OCR image-only clipboard contents",
+                    isOn: Binding(
+                        get: { model.settings.ocrImagesInContinuousMode },
+                        set: { model.setContinuousImageOCR($0) }
+                    ))
+                Text(
+                    "When continuous monitoring is on, image-only clipboards can be "
+                        + "recognized with macOS Vision and replaced with plain text."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
             Section("Line operations with text") {
                 ForEach(AppModel.ParamOp.allCases) { kind in
                     ParamRow(model: model, kind: kind)
@@ -132,7 +147,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 440, height: 560)
+        .frame(width: 440, height: 610)
         .navigationTitle("xPare Settings")
     }
 }
