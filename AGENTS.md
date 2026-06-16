@@ -62,14 +62,15 @@ not by weakening the check.
 5. Add or update focused tests for behavior changes — especially anything that
    affects transform output, the ABI, or the privacy posture. Core changes must
    include adversarial-input coverage.
-6. If an agent, review, scan, fuzz run, or performance pass reports a security
-   finding, first use `docs/guardrails/agentic-security-finding-triage.md` to
-   validate and scope it. For any real issue class, then follow
+6. If an agent-produced security finding is reported, first use
+   `docs/guardrails/agentic-security-finding-triage.md` to validate and scope it.
+7. If a review, scan, fuzz run, performance pass, CI failure, manual audit, or
+   validated security triage found an issue class, follow
    `docs/guardrails/review-finding-closure.md`: add repeatable regression
    protection and the relevant docs lesson before closing it.
-7. Run checks that match the risk of the change (see `CONTRIBUTING.md`). If you
+8. Run checks that match the risk of the change (see `CONTRIBUTING.md`). If you
    skip a relevant check, explain why in the PR.
-8. Update `ARCHITECTURE.md`, `DESIGN.md`, the relevant guardrail, and the shell
+9. Update `ARCHITECTURE.md`, `DESIGN.md`, the relevant guardrail, and the shell
    contract when the boundary, invariants, posture, or supported transforms
    change.
 
