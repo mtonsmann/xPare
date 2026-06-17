@@ -75,7 +75,9 @@ open dist/xPare.app
 ```
 
 A ✂ **scissors** icon appears in the menu bar (no Dock icon — it's an
-`LSUIElement` agent). Using it:
+`LSUIElement` agent). When continuous monitoring is on, the icon changes to a
+filled circled scissors so the armed clipboard-rewrite state is visible without
+opening the menu. Using it:
 
 - **Strip on demand (default):** copy some rich text (e.g. a styled web
   selection), then press the global hotkey **⌃⌥⌘V** — the clipboard is rewritten
