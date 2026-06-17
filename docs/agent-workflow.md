@@ -32,6 +32,10 @@ task template:
 
 A review/scan/fuzz/CI finding is its own flow:
 [review-finding-closure](agent-tasks/review-finding-closure.md).
+For security findings from any source, first run
+[agentic-security-finding-triage](guardrails/agentic-security-finding-triage.md)
+so the finding is validated, classified, scoped, and mapped to a blocker before
+implementation.
 
 ### 2. Write a correctness brief
 
@@ -123,6 +127,11 @@ mismatch — surfaced a bug *class*, do not close it with only the one-off fix. 
 the narrowest repeatable blocker at the owning layer (test, corpus entry, fuzz
 regression, `perf_guard`, or `xtask` check), and record the lesson in the right
 guardrail/posture doc.
+
+For security findings from any source, perform the
+[agentic-security-finding-triage](guardrails/agentic-security-finding-triage.md)
+intake first; the finding report and any suggested patch are candidate evidence,
+not the scope of work.
 
 ### 9. Document proof gaps
 

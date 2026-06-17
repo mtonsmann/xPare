@@ -1,0 +1,4 @@
+interface:
+  display_name: "Security Finding Triage"
+  short_description: "Triage findings before durable fixes"
+  default_prompt: "Use $security-finding-triage to triage this security finding before implementing a fix."

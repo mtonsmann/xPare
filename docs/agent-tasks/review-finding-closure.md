@@ -7,6 +7,10 @@ mismatch. The rule: anything found once should be hard to introduce again.
 ## Files to read
 
 - [`docs/agent-workflow.md`](../agent-workflow.md).
+- [`docs/guardrails/agentic-security-finding-triage.md`](../guardrails/agentic-security-finding-triage.md)
+  — read this first for any security finding, regardless of whether it came from
+  a scanner, cloud reviewer, generated security-fix PR, manual audit, fuzz run,
+  or CI security signal.
 - [`docs/guardrails/review-finding-closure.md`](../guardrails/review-finding-closure.md)
   — the authoritative closure rules; this file is the agent-facing checklist over it.
 - The guardrail for the finding's change class, and the owning source/test file.
@@ -14,6 +18,8 @@ mismatch. The rule: anything found once should be hard to introduce again.
 ## Hard constraints
 
 - Do **not** close a finding class with only a one-off fix.
+- Do **not** treat a finding title or suggested patch as the scope of work;
+  validate the source, sink, control, boundary, and sibling class.
 - The fix must enforce the invariant at the **owning boundary** (the lowest layer
   that owns the behavior), not in PR narrative or reviewer memory.
 - Do not weaken an existing check to make the finding "go away".
