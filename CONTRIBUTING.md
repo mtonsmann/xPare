@@ -65,15 +65,16 @@ it runs:
 17. `cargo xtask check-real-clipboard-tests` — default Swift tests avoid `NSPasteboard.general`
 18. `cargo xtask check-pasteboard-write-shape` — `writePlain(_:)` stays clear-once + one `.string` write
 19. `cargo xtask check-codeql-workflow-posture` — CodeQL stays additive, pinned, and least-privilege
-20. `cargo xtask check-test-hygiene` — every ignored test has a reason; the count is ratcheted
-21. `cargo xtask check-docs` — docs build with `-D warnings` (no broken intra-doc links or invalid HTML)
-22. `cargo xtask check-abi` — the checked-in C header matches the FFI source
-23. `cargo xtask check-entitlements` — the macOS entitlements file is exactly minimal
-24. `cargo xtask check-release-posture` — official signing cannot broaden entitlements
-25. `cargo xtask check-shell` — `shellcheck` over the shell scripts
-26. `cargo xtask check-workflows` — `actionlint` + `zizmor` over `.github/workflows/`
-27. `cargo xtask check-unused-deps` — `cargo-machete`: no declared-but-unused dependency
-28. `cargo xtask check-supply-chain` — `cargo-deny`: advisories, licenses, bans, sources
+20. `cargo xtask check-dependabot-policy` — Dependabot PRs stay narrow and security-first
+21. `cargo xtask check-test-hygiene` — every ignored test has a reason; the count is ratcheted
+22. `cargo xtask check-docs` — docs build with `-D warnings` (no broken intra-doc links or invalid HTML)
+23. `cargo xtask check-abi` — the checked-in C header matches the FFI source
+24. `cargo xtask check-entitlements` — the macOS entitlements file is exactly minimal
+25. `cargo xtask check-release-posture` — official signing cannot broaden entitlements
+26. `cargo xtask check-shell` — `shellcheck` over the shell scripts
+27. `cargo xtask check-workflows` — `actionlint` + `zizmor` over `.github/workflows/`
+28. `cargo xtask check-unused-deps` — `cargo-machete`: no declared-but-unused dependency
+29. `cargo xtask check-supply-chain` — `cargo-deny`: advisories, licenses, bans, sources
 
 If any check fails, it prints a remediation-oriented message. **Fix the code so
 the check passes; do not weaken the check.** Each check can also be run on its
@@ -85,7 +86,7 @@ own (e.g. `cargo xtask check-abi`) for a fast inner loop.
 > `Cargo.toml`), checked by a dedicated CI job — keep new code MSRV-compatible.
 > MSRV bumps are minor releases.
 >
-> Steps 25–28 shell out to external linters. The cargo-installable ones
+> Steps 26–29 shell out to external linters. The cargo-installable ones
 > (`cargo-deny`, `zizmor`, `cargo-machete`) auto-install a pinned version on first
 > use; the system tools (`shellcheck`, `actionlint`) print a one-line install
 > command if missing. CI pre-installs all of them (pinned), so a green
@@ -126,7 +127,7 @@ the PR.
 | **FFI boundary / ABI** | `core-ffi/` (incl. `cbindgen.toml`), config serialization, capabilities/version, `CXPare` shim files | `cargo xtask check-abi`, `cargo xtask check-c-ffi-surface`, `cargo test -p xpare-ffi`. An intended ABI change means: bump `XP_ABI_VERSION`, run `cargo xtask gen-header`, and call it out in the PR (confirm a non-Swift shell could still consume the boundary). Adding a transform must **not** change the ABI. |
 | **Shell** | `shells/macos/` (Swift), reserved `windows/`/`linux/` | On macOS, run `cargo run -p xtask -- check-swift` (FFI staticlib build, swift-format, `swift test`, Sources coverage, and SwiftLint if present); if macOS/Swift is unavailable, explain the skip and run the narrower build checks you can. Also run `cargo xtask check-swift-no-network-apis`, `cargo xtask check-shipped-command-exec`, `cargo xtask check-real-clipboard-tests`, and `cargo xtask check-pasteboard-write-shape` for shell changes. Touching entitlements → `cargo xtask check-entitlements`; touching release signing → `cargo xtask check-release-posture`; touching the build/release shell scripts → `cargo xtask check-shell`. No transform logic belongs in a shell. |
 | **Security / privacy posture** | entitlements, logging, in-memory lifetime, data paths, anything network-adjacent | `cargo xtask check-no-network`, `cargo xtask check-swift-no-network-apis`, `cargo xtask check-shipped-command-exec`, `cargo xtask check-no-content-logging`, `cargo xtask check-real-clipboard-tests`, `cargo xtask check-pasteboard-write-shape`, `cargo xtask check-pipeline-zeroization`, `cargo xtask check-entitlements`, `cargo xtask check-release-posture`, `cargo xtask check-unsafe-forbid`. Any new entitlement, network-capable dependency/API, command-exec path, data path, or weakening of wipe-before-release zeroization is a posture change — justify it in the PR and update `SECURITY.md`. |
-| **Dependencies & CI** | crate versions, `Cargo.toml`/`Cargo.lock`, lints, `xtask`, `.github/workflows/`, shell scripts | `cargo xtask check-core-deps`, `cargo xtask check-no-network`, `cargo xtask check-swift-package-deps` (SwiftPM changes), `cargo xtask check-python-tooling-posture` (Python helper changes), `cargo xtask check-supply-chain` + `cargo xtask check-unused-deps` (any dependency/lockfile change), `cargo xtask check-workflows` + `cargo xtask check-codeql-workflow-posture` (workflow/CodeQL changes), plus `cargo test -p xtask` / `cargo clippy -p xtask --all-targets -- -D warnings` when editing `xtask`. New crates: prefer boring, audited, API-stable ones; a new core dependency must be a pure-data crate (no OS/IO/net) and added to the `xtask` allowlist with justification — and it must actually be used (`check-unused-deps`). |
+| **Dependencies & CI** | crate versions, `Cargo.toml`/`Cargo.lock`, lints, `xtask`, `.github/workflows/`, `.github/dependabot.yml`, shell scripts | `cargo xtask check-core-deps`, `cargo xtask check-no-network`, `cargo xtask check-swift-package-deps` (SwiftPM changes), `cargo xtask check-python-tooling-posture` (Python helper changes), `cargo xtask check-supply-chain` + `cargo xtask check-unused-deps` (any dependency/lockfile change), `cargo xtask check-workflows` + `cargo xtask check-codeql-workflow-posture` (workflow/CodeQL changes), `cargo xtask check-dependabot-policy` (Dependabot config changes), plus `cargo test -p xtask` / `cargo clippy -p xtask --all-targets -- -D warnings` when editing `xtask`. New crates: prefer boring, audited, API-stable ones; a new core dependency must be a pure-data crate (no OS/IO/net) and added to the `xtask` allowlist with justification — and it must actually be used (`check-unused-deps`). |
 | **Docs only** | `README`, `ARCHITECTURE.md`, `DESIGN.md`, `docs/`, runbooks | `cargo fmt --all --check` (still run the formatter); if you edited Rust doc comments, `cargo xtask check-docs`. Other checks may be skipped if the PR explains why. |
 
 ## Automated PR review (advisory)

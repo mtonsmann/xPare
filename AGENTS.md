@@ -158,10 +158,18 @@ dependency and automation updates separate from behavior changes. The invariants
 (no-unsafe core, frozen ABI surface, no-network, core-has-no-OS-deps,
 determinism) are enforced by CI lints and structural tests. Supply-chain auditing
 (`cargo-deny`: advisories, licenses, bans, sources), workflow linting (`actionlint`
-+ `zizmor`), and shell linting (`shellcheck`) also run inside `cargo xtask ci`, so
-the one gate stays a complete superset of CI. CodeQL runs separately as an additive,
-SHA-pinned `security-extended` signal, not as branch protection until its baseline is
-triaged. Keep all gates green by fixing the code, not by weakening the check.
++ `zizmor`), Dependabot policy checks, and shell linting (`shellcheck`) also run
+inside `cargo xtask ci`, so the one gate stays a complete superset of CI. CodeQL runs
+separately as an additive, SHA-pinned `security-extended` signal, not as branch
+protection until its baseline is triaged. Keep all gates green by fixing the code,
+not by weakening the check.
+
+For Dependabot or other dependency-update PRs, use
+`docs/guardrails/dependency-posture.md#dependabot-merge-recommendations` before
+recommending merge. Inspect the upstream crate/action diff and capability delta;
+do not treat a tiny repo diff or green checks as proof that a supply-chain update
+is benign. A recommendation is advisory evidence, not permission to automerge,
+bypass failed checks, or bypass branch protection.
 
 ## Performance And Releases
 
@@ -208,6 +216,8 @@ also consult `docs/guardrails/agentic-security-finding-triage.md`.
   and the docs lesson added.
 - For any security finding, state the triage outcome, owning boundary, sibling
   search, blocker, docs lesson, checks, and proof gaps.
+- For dependency-update PRs, state the `merge`, `hold`, or `close/defer`
+  recommendation and the supply-chain evidence behind it.
 - Automated review: a subscription cloud reviewer (Codex / Claude Code cloud) reviews PRs
   against [`docs/guardrails/code-and-test-hygiene.md`](docs/guardrails/code-and-test-hygiene.md)
   ("Tier-2 review") — anti-slop on every code PR, security focus on the security-relevant

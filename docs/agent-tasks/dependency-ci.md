@@ -29,6 +29,14 @@ automation.
   protection until baseline triage.
 - Fix the code to satisfy a check; do not weaken the check. A scoped `deny.toml`
   ignore/exception needs a documented risk decision and a reason.
+- For Dependabot or other dependency-update PRs, do not recommend merge from the
+  repository diff alone. Follow the merge rubric in
+  [`dependency-posture.md`](../guardrails/dependency-posture.md#dependabot-merge-recommendations):
+  classify the update, inspect the upstream diff, check capability changes and
+  maintainer trust signals, then give a `merge`, `hold`, or `close/defer`
+  recommendation with reproducible evidence. A recommendation is not an automerge
+  instruction and must not bypass `cargo xtask ci`, failed GitHub checks, or branch
+  protection.
 
 ## Implementation rules
 
@@ -36,6 +44,15 @@ automation.
   `cargo metadata` and update `CORE_DEP_ALLOWLIST` only for genuinely new pure-data
   transitive crates.
 - When editing `xtask`, add unit tests in `xtask/src/main.rs` for new parsing/logic.
+- GitHub Actions bumps must stay SHA-pinned with matching same-line version
+  comments. For each action bump, record the old/new SHAs, release comments, and
+  compare URL or command; compare the old and new upstream SHAs and look for new
+  network, credential, artifact, shell, subprocess, persistence, or release-write
+  behavior before recommending merge.
+- Rust crate bumps must state whether the changed crate is in the shipped path,
+  dev/test/bench path, fuzz workspace, or build/release tooling path; whether a
+  CVE/advisory is actually reachable by xPare; and whether any new transitive
+  crate, feature, build script, license, or source appears.
 
 ## Required tests / checks
 
@@ -45,6 +62,7 @@ automation.
 - `cargo xtask check-python-tooling-posture` for Python helper changes.
 - `cargo xtask check-workflows` and `cargo xtask check-codeql-workflow-posture` for
   any workflow change.
+- `cargo xtask check-dependabot-policy` for `.github/dependabot.yml` changes.
 - `cargo test -p xtask` / `cargo clippy -p xtask --all-targets -- -D warnings` when
   editing `xtask`.
 
@@ -53,8 +71,15 @@ automation.
 - The full `cargo xtask ci` run (it is a superset of CI).
 - For a new dependency: the justification, its capability surface, and confirmation
   it is on the right allowlist (and not on a banlist).
+- For a dependency-update merge recommendation: the decision (`merge`, `hold`, or
+  `close/defer`), vulnerability applicability, old/new action SHA or crate
+  version, compare URL or diff command, upstream delta, xPare usage path,
+  capability delta, maintainer/repository trust signals, and exact checks
+  inspected.
 
 ## Proof gaps to report
 
 - Supply-chain auditing is advisory-DB + license + ban + source policy at a point in
   time, not a guarantee of crate correctness or absence of latent vulnerabilities.
+- Upstream diff review and reputation checks are probabilistic; they reduce
+  malicious-update risk but cannot prove that an action or crate is benign.

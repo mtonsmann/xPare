@@ -57,8 +57,11 @@ capability-constrained**, and the constraint is enforced mechanically.
    over-broad `GITHUB_TOKEN` permissions) through `cargo xtask ci`
    (`check-workflows`, which also runs `actionlint` for correctness), so an agent
    catches workflow issues locally before pushing; `.github/dependabot.yml` bumps
-   the pinned SHAs so the pins don't rot. The official release workflow has one
-   extra project-specific invariant inside `check-workflows`: Apple signing/notary
+   the pinned SHAs so the pins don't rot. `check-dependabot-policy` keeps action
+   updates ungrouped with a 7-day version-update cooldown, keeps Cargo routine
+   version PRs disabled, and rejects Cargo cooldown/grouping that would delay or
+   batch security-update PRs. The official release workflow has one extra
+   project-specific invariant inside `check-workflows`: Apple signing/notary
    material may exist only around `make dist`; the notary profile must be stored
    in and consumed from the temporary keychain; cleanup must fail closed before
    any post-signing `uses:` action; and no third-party `uses:` action may run
@@ -114,6 +117,103 @@ capability-constrained**, and the constraint is enforced mechanically.
     packs wired only to their owning language jobs. Do not put CodeQL in branch
     protection until the alert baseline is triaged.
 
+## Dependabot merge recommendations
+
+Treat every dependency PR as a supply-chain review, even when the repository diff
+is only a lockfile or a GitHub Actions SHA. A reviewer may recommend **merge** only
+after it can state why the update reduces or preserves risk for xPare's actual
+dependency surface. The recommendation is advisory evidence, not an automerge
+instruction; never bypass `cargo xtask ci`, failed GitHub checks, or branch
+protection to land a dependency update.
+
+Classify the PR first:
+
+- **Applicable vulnerability fix:** a CVE/RustSec/GitHub advisory affects code,
+  workflow, or release tooling that xPare actually uses. Triage immediately and
+  prefer fast merge once the deterministic gates pass and the update diff does
+  not introduce a more serious supply-chain concern.
+- **Non-applicable vulnerability fix:** the advisory is for an unused feature,
+  unreachable target, dev-only path, or package capability xPare does not invoke.
+  Do not merge only because the PR says "security"; weigh the reduced advisory
+  noise against the new upstream code being admitted.
+- **Routine version update:** no known vulnerability is fixed. Merge only when
+  the update is narrow, low-risk, and useful for staying on maintained pins; close
+  or defer churn that adds no xPare value.
+- **New dependency or new action:** a posture change until proven otherwise.
+  Require the normal new-dependency justification plus an explicit capability and
+  maintainer-trust review.
+
+For **GitHub Actions** updates, inspect the upstream action, not just this repo's
+workflow diff:
+
+- Keep action updates one action per PR unless a PR explicitly justifies the
+  reviewability tradeoff. Dependabot's ungrouped default is one PR per dependency;
+  an all-actions group or repository/org grouped-security-update setting can batch
+  unrelated upstream diffs and should be treated as a dependency-posture decision.
+- Verify the new SHA belongs to the action's repository and matches the same-line
+  release/version comment. Full-length SHA pinning is the immutable execution
+  boundary; tags and comments are review aids, not the thing that runs.
+- Record the old and new upstream SHAs plus a compare URL or exact diff command.
+  Summarize changed files and call out any action code, generated `dist/` bundle,
+  Dockerfile, workflow, manifest, or install-script change.
+- Look specifically for new network destinations, credential/token access,
+  artifact upload/download behavior, shell expansion, subprocess execution,
+  release-write behavior, or persistence. Any such change is a security-relevant
+  workflow change, even if xPare's YAML only changed one SHA.
+- Check whether xPare uses the changed feature path. For a manifest-only
+  `taiki-e/install-action` update, for example, confirm whether the changed tool
+  manifests include the tools xPare installs (`cargo-deny`, `zizmor`,
+  `shellcheck`, `cargo-machete`, `cargo-llvm-cov`, `cargo-mutants`) or only tools
+  xPare never requests.
+- Treat maintainer/repository signals as probabilistic context: long-lived
+  project, active maintenance, release cadence, signed/verified releases,
+  issue/advisory history, and whether the action is widely used. Good reputation
+  cannot override a bad diff; weak reputation can turn an otherwise small bump
+  into a hold.
+
+For **Rust crate** updates:
+
+- Run the relevant `xtask` dependency checks and inspect `cargo metadata`/`cargo
+  tree` output for new transitive crates, feature changes, build scripts, source
+  changes, yanked versions, and license/source drift.
+- If the update touches the core's normal/build dependency closure, every new
+  transitive crate must remain pure-data and be justified before it enters
+  `CORE_DEP_ALLOWLIST`.
+- For advisory fixes, identify the vulnerable crate, affected version range,
+  fixed version, and whether xPare reaches the vulnerable API or feature. If the
+  vulnerable path is reachable, speed matters; if not, prefer the lowest-risk
+  fixed version and do not broaden capability to silence an alert.
+- When the code delta is large or the package is security-sensitive, use a
+  source diff review (`cargo vet diff`/manual crate diff) before recommending
+  merge. `cargo-vet` is a good future ratchet for recording audited crate deltas,
+  but it should not become required until the existing tree has an intentional
+  baseline.
+
+A merge recommendation must include:
+
+- **Decision:** `merge`, `hold`, or `close/defer`.
+- **Applicability:** whether the update fixes an issue xPare can actually hit.
+- **Identifiers:** old/new action SHAs and release comments, or old/new crate
+  versions and advisory identifiers.
+- **Review source:** compare URL, `cargo vet diff` command, crate source diff
+  command, or equivalent reproducible source used for the upstream review.
+- **Upstream delta:** what changed outside this repo, with special attention to
+  executable code and generated bundles.
+- **xPare usage path:** where xPare invokes the action/crate/tooling path, or a
+  statement that the changed upstream path is unused by xPare.
+- **Capability delta:** any new network, filesystem, OS, credential, artifact,
+  subprocess, entitlement, or release-write behavior.
+- **Trust signals:** maintainer/repository reputation and any negative signals
+  found during review.
+- **Checks:** exact local/GitHub checks inspected and their pass/fail state.
+
+Recommend **hold** when the upstream diff is too large to review in the current
+turn, the action/crate gains a capability xPare does not need, the maintainer or
+repository changed hands unexpectedly, a release contains unexplained generated
+code or binaries, checks fail, or the PR batches unrelated dependencies. For
+routine updates, a hold is not a failure; it is often the right answer when
+fresh code offers less value than the supply-chain risk it introduces.
+
 ## How the checks work
 
 - `check-core-deps` runs `cargo metadata`, walks `xpare-core`'s transitive
@@ -123,6 +223,10 @@ capability-constrained**, and the constraint is enforced mechanically.
   member and fails if any crate on `NETWORK_BANLIST` appears anywhere.
 - `check-supply-chain` runs `cargo-deny check` (advisories + licenses + bans + sources)
   against `deny.toml`.
+- `check-dependabot-policy` verifies `.github/dependabot.yml` keeps GitHub Actions
+  bumps one dependency per PR with a 7-day cooldown, disables routine Cargo version
+  PRs with `open-pull-requests-limit: 0`, and does not group or cooldown Cargo
+  security-update PRs.
 - `check-shell` runs `shellcheck` over every shell script; `check-workflows` runs
   `actionlint` (correctness) then `zizmor --offline` (security) over
   `.github/workflows/`.
@@ -154,6 +258,7 @@ not how to silence it.
 - `cargo xtask check-no-network`
 - `cargo xtask check-supply-chain` (cargo-deny; auto-installs the pinned tool on first
   local use, pre-installed in CI)
+- `cargo xtask check-dependabot-policy`
 - `cargo xtask check-swift-package-deps`
 - `cargo xtask check-python-tooling-posture`
 - `cargo xtask check-codeql-workflow-posture`
