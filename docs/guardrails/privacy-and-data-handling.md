@@ -76,7 +76,11 @@ sanctioned, opt-in exception — the paste-as-file feature — bounded by rule 2
    universal streaming pre-parse limit for every native format.
    For shell-owned OCR, raw image representations and decoded pixel dimensions must
    be bounded before expensive decode/recognition, and recognized text must be
-   bounded before writing it back to the pasteboard.
+   bounded before writing it back to the pasteboard. If the platform API only
+   exposes raw pasteboard image representations through an all-or-nothing read
+   (for example `NSPasteboard.data(forType:)`), that is not a pre-read bound:
+   fail closed or use a representation with independently knowable size rather
+   than materializing attacker-controlled bytes to discover their length.
 10. **No shipped command execution path.** Clipboard handling must not spawn
     subprocesses or delegate clipboard-derived content to shell commands. Release
     scripts and `xtask` may run tools; shipped app/core/CLI surfaces may not.

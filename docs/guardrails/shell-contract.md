@@ -31,7 +31,9 @@ new platform.
    streaming pre-parse limit for every native format.
    Platform OCR is also shell-owned OS integration: read a bounded image
    representation, run the platform's local/on-device OCR off the UI thread, and
-   write recognized text back as plain text. Do not add OCR to the core or ABI.
+   write recognized text back as plain text. The bound must apply before raw image
+   bytes are materialized; an all-or-nothing platform data read is not an
+   acceptable size check by itself. Do not add OCR to the core or ABI.
 2. **Clipboard write (in place).** Write the transformed text **back to the clipboard
    in place**. Never simulate a paste (e.g. synthesizing Cmd-V/Ctrl-V) — that needs
    intrusive input permissions and can fire into the wrong app. Replace the
