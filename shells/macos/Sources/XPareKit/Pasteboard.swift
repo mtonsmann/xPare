@@ -132,7 +132,6 @@ public final class SystemPasteboard: PasteboardProtocol {
         NSPasteboard.PasteboardType("public.heif"),
         .tiff,
     ]
-    private static let maxOversizedImageRepresentationSkips = 1
 
     public init(pasteboard: NSPasteboard = .general) {
         self.pasteboard = pasteboard
@@ -217,34 +216,19 @@ public final class SystemPasteboard: PasteboardProtocol {
     public func readImage(maxRepresentationBytes: Int) -> PasteboardImageReadResult {
         let generation = pasteboard.changeCount
         let ceiling = max(0, maxRepresentationBytes)
-        var largestOversizedRepresentation: Int?
 
-        for type in imageTypesAvailableOnPasteboard() {
-            guard let data = pasteboard.data(forType: type),
-                !data.isEmpty
-            else {
-                continue
-            }
-            if data.count > ceiling {
-                let largest = max(largestOversizedRepresentation ?? 0, data.count)
-                guard largestOversizedRepresentation == nil,
-                    Self.maxOversizedImageRepresentationSkips > 0
-                else {
-                    return .tooLarge(bytes: largest, changeCount: generation)
-                }
-                largestOversizedRepresentation = largest
-                continue
-            }
-            return .content(
-                PasteboardImageRead(
-                    image: PasteboardImage(data: data, pasteboardType: type.rawValue),
-                    changeCount: generation))
+        guard !imageTypesAvailableOnPasteboard().isEmpty else {
+            return .empty(changeCount: generation)
         }
 
-        if let bytes = largestOversizedRepresentation {
-            return .tooLarge(bytes: bytes, changeCount: generation)
-        }
-        return .empty(changeCount: generation)
+        // NSPasteboard exposes image representations through all-or-nothing
+        // `Data` reads. A lazy same-user pasteboard owner can allocate the whole
+        // advertised PNG/TIFF/HEIC payload inside `data(forType:)`, before this
+        // process can compare `data.count` with the OCR input ceiling. Because
+        // the shell cannot enforce a pre-materialization byte limit for raw
+        // image pasteboard types, fail closed instead of reading attacker-sized
+        // bytes into memory.
+        return .tooLarge(bytes: ceiling.saturatingAddOne(), changeCount: generation)
     }
 
     public func writePlain(_ text: String) -> Int? {
@@ -300,5 +284,11 @@ public final class SystemPasteboard: PasteboardProtocol {
     private static func isImageType(_ pasteboardType: NSPasteboard.PasteboardType) -> Bool {
         guard let type = UTType(pasteboardType.rawValue) else { return false }
         return type.conforms(to: .image)
+    }
+}
+
+private extension Int {
+    func saturatingAddOne() -> Int {
+        self == Int.max ? Int.max : self + 1
     }
 }
