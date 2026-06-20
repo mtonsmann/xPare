@@ -2,13 +2,19 @@
 # full commit SHA (with a `# vX.Y.Z` comment) so zizmor's `unpinned-uses` stays
 # clean and a moved tag can't change what runs. Dependabot understands that pin
 # format and bumps both the hash and the comment, so pinning doesn't rot.
+# Leave action version updates ungrouped: Dependabot's default is one PR per
+# dependency, which gives reviewers one upstream action diff to inspect. Do not
+# add a GitHub Actions group without calling out the reviewability tradeoff; if
+# repository/org grouped security updates are enabled, that is also a dependency
+# posture decision for this repo.
 #
 # Rust dependencies get a deliberately narrower treatment: routine version bumps
 # stay manual because crate updates are governed by the strict core-deps
 # allowlist (cargo xtask check-core-deps) and reviewed deliberately, not
-# automatically. The cargo entry below exists ONLY to turn on Dependabot
-# SECURITY updates for Cargo.lock — `open-pull-requests-limit: 0` is GitHub's
-# documented switch for "security fixes yes, version bumps no".
+# automatically. The cargo entry below configures Cargo behavior after
+# Dependabot alerts/security updates are enabled in GitHub settings:
+# `open-pull-requests-limit: 0` is GitHub's documented switch for "security fixes
+# yes, version bumps no".
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -22,20 +28,14 @@ updates:
       default-days: 7
     commit-message:
       prefix: ci
-    groups:
-      actions:
-        patterns:
-          - "*"
 
   # Security updates only — see the header comment. Version-update PRs are
-  # disabled by the 0 limit; known-vulnerability fixes still arrive as PRs.
+  # disabled by the 0 limit; known-vulnerability fixes still arrive as PRs and
+  # are intentionally not delayed by a cooldown.
   - package-ecosystem: cargo
     directory: /
     schedule:
       interval: weekly
     open-pull-requests-limit: 0
-    # Same day-zero supply-chain cooldown convention as the actions entry.
-    cooldown:
-      default-days: 7
     commit-message:
       prefix: deps

@@ -42,6 +42,14 @@ zeroization, supported transforms. State "none" explicitly if nothing changed. -
 status, issue class, source/sink/control, owning boundary, sibling search, and
 residual proof gaps. State "not applicable" for non-security-finding PRs. -->
 
+## Dependency review recommendation
+
+<!-- Dependency / CI PRs only. State merge / hold / close/defer, whether a CVE or
+advisory applies to xPare, old/new action SHA or crate version, compare URL or
+diff command, upstream files/code inspected, xPare usage path, capability delta,
+maintainer/repository trust signals, and checks inspected. Use "not applicable"
+for non-dependency PRs. -->
+
 ## Tests / properties / fuzzing added or updated
 
 <!-- Name them. New behavior needs both a regression test and adversarial-input

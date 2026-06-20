@@ -14,6 +14,7 @@
 //!   check-clipboard-safety    assert default targets avoid the real clipboard
 //!   check-pipeline-zeroization assert fused core scratch storage is wiped before release
 //!   check-agent-workflow      assert AI-native workflow docs/skills stay wired
+//!   check-dependabot-policy   assert Dependabot update PRs stay reviewable and security-first
 //!   check-c-ffi-surface       assert C/SwiftPM interop stays header-only and tiny
 //!   check-test-hygiene        assert every ignored test has a reason and the count is ratcheted
 //!   check-swift-no-network-apis assert shipped Swift cannot introduce network/browser APIs
@@ -58,6 +59,7 @@ fn main() -> ExitCode {
         Some("check-clipboard-safety") => report(check_clipboard_safety()),
         Some("check-pipeline-zeroization") => report(check_pipeline_zeroization()),
         Some("check-agent-workflow") => report(check_agent_workflow()),
+        Some("check-dependabot-policy") => report(check_dependabot_policy()),
         Some("check-c-ffi-surface") => report(check_c_ffi_surface()),
         Some("check-test-hygiene") => report(check_test_hygiene()),
         Some("check-swift-no-network-apis") => report(check_swift_no_network_apis()),
@@ -106,6 +108,7 @@ fn usage() {
          \x20 check-clipboard-safety     assert default targets avoid the real clipboard\n\
          \x20 check-pipeline-zeroization assert fused core scratch storage is wiped before release\n\
          \x20 check-agent-workflow       assert AI-native workflow docs/skills stay wired\n\
+         \x20 check-dependabot-policy    assert Dependabot PRs stay reviewable and security-first\n\
          \x20 check-c-ffi-surface        assert C/SwiftPM interop stays header-only and tiny\n\
          \x20 check-test-hygiene         assert every #[ignore] has a reason and the count is ratcheted\n\
          \x20 check-swift-no-network-apis assert shipped Swift has no network/browser API surface\n\
@@ -2682,6 +2685,226 @@ fn yaml_line_value_for_key<'a>(line: &'a str, expected_key: &str) -> Option<&'a 
     rest.strip_prefix(':').map(str::trim_start)
 }
 
+fn yaml_line_value_for_any_key<'a>(line: &'a str, expected_key: &str) -> Option<&'a str> {
+    let trimmed = line.trim_start();
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+        return None;
+    }
+    let without_dash = match trimmed.strip_prefix('-') {
+        Some(rest) => rest.trim_start(),
+        None => trimmed,
+    };
+    let key_end = without_dash
+        .find(|ch: char| ch == ':' || ch.is_whitespace())
+        .unwrap_or(without_dash.len());
+    let key = &without_dash[..key_end];
+    let key = normalize_yaml_key(key);
+    if key != expected_key {
+        return None;
+    }
+    let rest = without_dash[key_end..].trim_start();
+    rest.strip_prefix(':').map(str::trim_start)
+}
+
+fn trim_yaml_scalar(value: &str) -> &str {
+    value
+        .split('#')
+        .next()
+        .unwrap_or(value)
+        .trim()
+        .trim_matches(['"', '\''])
+}
+
+#[derive(Debug)]
+struct DependabotUpdateBlock {
+    ecosystem: String,
+    start_line: usize,
+    groups_line: Option<usize>,
+    cooldown_line: Option<usize>,
+    cooldown_default_days: Option<(usize, String)>,
+    open_pull_requests_limit: Option<(usize, String)>,
+    target_branch_line: Option<usize>,
+    multi_ecosystem_group_line: Option<usize>,
+}
+
+impl DependabotUpdateBlock {
+    fn new(ecosystem: String, start_line: usize) -> Self {
+        Self {
+            ecosystem,
+            start_line,
+            groups_line: None,
+            cooldown_line: None,
+            cooldown_default_days: None,
+            open_pull_requests_limit: None,
+            target_branch_line: None,
+            multi_ecosystem_group_line: None,
+        }
+    }
+}
+
+fn validate_dependabot_update_block(block: &DependabotUpdateBlock, errors: &mut Vec<String>) {
+    match block.ecosystem.as_str() {
+        "github-actions" => {
+            if let Some(line) = block.groups_line {
+                errors.push(format!(
+                    "line {line}: github-actions updates must stay ungrouped so reviewers inspect one upstream action diff per PR"
+                ));
+            }
+            if let Some(line) = block.multi_ecosystem_group_line {
+                errors.push(format!(
+                    "line {line}: github-actions updates must not join a multi-ecosystem group"
+                ));
+            }
+            if block.cooldown_line.is_none() {
+                errors.push(format!(
+                    "line {}: github-actions updates must keep a 7-day cooldown for routine version bumps",
+                    block.start_line
+                ));
+            }
+            match &block.cooldown_default_days {
+                Some((_, value)) if value == "7" => {}
+                Some((line, value)) => errors.push(format!(
+                    "line {line}: github-actions cooldown.default-days must stay 7, got `{value}`"
+                )),
+                None if block.cooldown_line.is_some() => errors.push(format!(
+                    "line {}: github-actions cooldown must set `default-days: 7`",
+                    block.start_line
+                )),
+                None => {}
+            }
+        }
+        "cargo" => {
+            match &block.open_pull_requests_limit {
+                Some((_, value)) if value == "0" => {}
+                Some((line, value)) => errors.push(format!(
+                    "line {line}: cargo open-pull-requests-limit must stay 0 so routine version PRs stay manual, got `{value}`"
+                )),
+                None => errors.push(format!(
+                    "line {}: cargo updates must set `open-pull-requests-limit: 0` so only security-update PRs are automated",
+                    block.start_line
+                )),
+            }
+            if let Some(line) = block.cooldown_line {
+                errors.push(format!(
+                    "line {line}: cargo security-update PRs must not be delayed by Dependabot cooldown"
+                ));
+            }
+            if let Some(line) = block.groups_line {
+                errors.push(format!(
+                    "line {line}: cargo security-update PRs must stay ungrouped unless a PR explicitly changes the supply-chain policy"
+                ));
+            }
+            if let Some(line) = block.target_branch_line {
+                errors.push(format!(
+                    "line {line}: cargo security-update configuration must target the default branch; remove target-branch"
+                ));
+            }
+            if let Some(line) = block.multi_ecosystem_group_line {
+                errors.push(format!(
+                    "line {line}: cargo updates must not join a multi-ecosystem group"
+                ));
+            }
+        }
+        _ => {}
+    }
+}
+
+fn validate_dependabot_policy(text: &str) -> Result<(), String> {
+    let mut errors = Vec::new();
+    let mut github_actions_entries = 0usize;
+    let mut cargo_entries = 0usize;
+    let mut current: Option<DependabotUpdateBlock> = None;
+
+    for (idx, line) in text.lines().enumerate() {
+        let line_no = idx + 1;
+        if yaml_line_key(line) == Some("multi-ecosystem-groups") {
+            errors.push(format!(
+                "line {line_no}: multi-ecosystem Dependabot groups would batch unrelated supply-chain diffs"
+            ));
+        }
+
+        if let Some(value) = yaml_line_value_for_any_key(line, "package-ecosystem") {
+            if let Some(block) = current.take() {
+                validate_dependabot_update_block(&block, &mut errors);
+                match block.ecosystem.as_str() {
+                    "github-actions" => github_actions_entries += 1,
+                    "cargo" => cargo_entries += 1,
+                    _ => {}
+                }
+            }
+            current = Some(DependabotUpdateBlock::new(
+                trim_yaml_scalar(value).to_string(),
+                line_no,
+            ));
+            continue;
+        }
+
+        let Some(block) = current.as_mut() else {
+            continue;
+        };
+        match yaml_line_key(line) {
+            Some("groups") => block.groups_line = Some(line_no),
+            Some("cooldown") => block.cooldown_line = Some(line_no),
+            Some("target-branch") => block.target_branch_line = Some(line_no),
+            Some("multi-ecosystem-group") => block.multi_ecosystem_group_line = Some(line_no),
+            _ => {}
+        }
+        if let Some(value) = yaml_line_value_for_any_key(line, "default-days") {
+            block.cooldown_default_days = Some((line_no, trim_yaml_scalar(value).to_string()));
+        }
+        if let Some(value) = yaml_line_value_for_any_key(line, "open-pull-requests-limit") {
+            block.open_pull_requests_limit = Some((line_no, trim_yaml_scalar(value).to_string()));
+        }
+    }
+
+    if let Some(block) = current.take() {
+        validate_dependabot_update_block(&block, &mut errors);
+        match block.ecosystem.as_str() {
+            "github-actions" => github_actions_entries += 1,
+            "cargo" => cargo_entries += 1,
+            _ => {}
+        }
+    }
+
+    if github_actions_entries != 1 {
+        errors.push(format!(
+            "expected exactly one github-actions Dependabot update entry, found {github_actions_entries}"
+        ));
+    }
+    if cargo_entries != 1 {
+        errors.push(format!(
+            "expected exactly one cargo Dependabot update entry, found {cargo_entries}"
+        ));
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("\n  "))
+    }
+}
+
+fn check_dependabot_policy() -> Result<(), String> {
+    let root = workspace_root();
+    let rel = ".github/dependabot.yml";
+    let text = std::fs::read_to_string(root.join(rel))
+        .map_err(|e| format!("check-dependabot-policy: FAIL — could not read {rel}: {e}"))?;
+    validate_dependabot_policy(&text).map_err(|e| {
+        format!(
+            "check-dependabot-policy: FAIL —\n  {e}\n\
+             \n\
+             xPare keeps automated dependency PRs narrow so each update gets a real\n\
+             supply-chain review. Leave GitHub Actions ungrouped with a 7-day version\n\
+             cooldown, keep Cargo routine version PRs disabled, and do not delay or\n\
+             batch Cargo security-update PRs without an explicit posture change."
+        )
+    })?;
+    println!(
+        "check-dependabot-policy: Dependabot keeps action updates reviewable and Cargo security updates undelayed."
+    );
+    Ok(())
+}
+
 fn release_workflow_steps(text: &str) -> Vec<ReleaseWorkflowStep> {
     let mut steps = Vec::new();
     for (start, line) in line_offset_pairs(text) {
@@ -4501,6 +4724,7 @@ const AGENT_WORKFLOW_FILES: &[(&str, &[&str])] = &[
         &[
             "## Change class",
             "## Security finding triage",
+            "## Dependency review recommendation",
             "## Commands run",
         ],
     ),
@@ -4785,6 +5009,10 @@ fn run_ci() -> ExitCode {
         return ExitCode::FAILURE;
     }
     if let Err(msg) = check_agent_workflow() {
+        eprintln!("{msg}");
+        return ExitCode::FAILURE;
+    }
+    if let Err(msg) = check_dependabot_policy() {
         eprintln!("{msg}");
         return ExitCode::FAILURE;
     }
@@ -6160,6 +6388,138 @@ mod tests {
         assert!(
             missing[0].contains("agentic-security-finding-triage"),
             "got: {missing:?}"
+        );
+    }
+
+    // --- check-dependabot-policy ---
+
+    #[test]
+    fn current_dependabot_policy_passes() {
+        check_dependabot_policy().unwrap();
+    }
+
+    #[test]
+    fn dependabot_policy_rejects_grouped_actions() {
+        let text = r#"
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns:
+          - "*"
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+"#;
+        let err = validate_dependabot_policy(text).unwrap_err();
+        assert!(
+            err.contains("github-actions updates must stay ungrouped"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn dependabot_policy_rejects_actions_default_days_without_cooldown() {
+        let text = r#"
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    default-days: 7
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+"#;
+        let err = validate_dependabot_policy(text).unwrap_err();
+        assert!(
+            err.contains("github-actions updates must keep a 7-day cooldown"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn dependabot_policy_rejects_cargo_cooldown() {
+        let text = r#"
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    cooldown:
+      default-days: 7
+"#;
+        let err = validate_dependabot_policy(text).unwrap_err();
+        assert!(
+            err.contains("cargo security-update PRs must not be delayed"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn dependabot_policy_rejects_cargo_version_prs() {
+        let text = r#"
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+"#;
+        let err = validate_dependabot_policy(text).unwrap_err();
+        assert!(err.contains("open-pull-requests-limit: 0"), "got: {err}");
+    }
+
+    #[test]
+    fn dependabot_policy_rejects_multi_ecosystem_grouping() {
+        let text = r#"
+version: 2
+multi-ecosystem-groups:
+  infrastructure:
+    schedule:
+      interval: weekly
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+"#;
+        let err = validate_dependabot_policy(text).unwrap_err();
+        assert!(
+            err.contains("multi-ecosystem Dependabot groups"),
+            "got: {err}"
         );
     }
 

@@ -83,6 +83,7 @@ checks run locally and in CI. Subcommands: `gen-header`, `check-abi`,
 `check-no-content-logging`, `check-clipboard-safety`,
 `check-pipeline-zeroization` (fused core scratch storage is wiped before release),
 `check-agent-workflow`,
+`check-dependabot-policy` (Dependabot update PRs stay narrow and security-first),
 `check-c-ffi-surface` (C/SwiftPM interop stays header-only and tiny),
 `check-swift-no-network-apis` (shipped Swift has no direct network/browser API
 surface), `check-shipped-command-exec` (shipped app/core/CLI surfaces cannot
@@ -230,6 +231,7 @@ the check.
 | Deterministic output | `transform(x,c) == transform(x,c)` property test | `core` tests |
 | Optimized pipeline == reference semantics | differential property test: production `transform` equals a one-op-at-a-time reference interpreter (so every fused fast path stays byte-for-byte equal to sequential application, and canonical ordering equals an explicitly sorted `as_given` run) | `core/tests/reference_transform.rs` |
 | AI-native workflow docs and security-triage links present & structured | `check-agent-workflow` (the contributor guide, workflow doc, triage guardrail, brief/PR templates, per-class task prompts, and Codex/Claude security-triage skill wrappers exist with required headings and repo-root guardrail links) | `xtask`, `CONTRIBUTING.md`, `docs/agent-workflow.md`, `.agents/skills/security-finding-triage/`, `.claude/skills/security-finding-triage/` |
+| Dependabot update PRs stay reviewable | `check-dependabot-policy` (GitHub Actions ungrouped with cooldown; Cargo routine version PRs disabled; Cargo security PRs not grouped or delayed) | `xtask`, `.github/dependabot.yml` |
 | Minimal macOS entitlements | checked-in entitlements file + `check-entitlements`; `release.sh dist` requires it for Developer ID signing and verifies the signed payload is still minimal | `xtask`, `shells/macos/` |
 | No dead/dangling code | `unreachable_pub = "deny"` forces unexported `pub` to `pub(crate)`, after which `dead_code` (via `-D warnings`) flags the truly unused | `[workspace.lints]`, all crates |
 | No tangled functions or scaffolding macros | `cognitive_complexity` + `too_many_arguments` thresholds; `clippy::todo`/`unimplemented`/`dbg_macro` denied | `[workspace.lints]`, `clippy.toml` |
