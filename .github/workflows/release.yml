@@ -175,7 +175,7 @@ jobs:
       # the versions in lockstep with CARGO_DENY_VERSION / ZIZMOR_VERSION /
       # CARGO_MACHETE_VERSION in xtask/src/main.rs.
       - name: Install lint tools (cargo-deny, zizmor, shellcheck, cargo-machete)
-        uses: taiki-e/install-action@59012be0884e296ca2da49b530610e72c49039ad # v2.81.6
+        uses: taiki-e/install-action@7a79fe8c3a13344501c80d99cae481c1c9085912 # v2.81.10
         with:
           tool: cargo-deny@0.19.8,zizmor@1.25.2,shellcheck@0.11.0,cargo-machete@0.9.2
 
