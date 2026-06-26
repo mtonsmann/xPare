@@ -207,6 +207,11 @@ A merge recommendation must include:
   found during review.
 - **Checks:** exact local/GitHub checks inspected and their pass/fail state.
 
+For automated reviewers, a no-findings review, approval, reaction, or thumbs-up
+without this evidence is not a dependency-review recommendation. On a dependency
+PR, missing recommendation evidence is itself a P1 review finding because the PR
+cannot be evaluated against xPare's supply-chain convention without it.
+
 Recommend **hold** when the upstream diff is too large to review in the current
 turn, the action/crate gains a capability xPare does not need, the maintainer or
 repository changed hands unexpectedly, a release contains unexplained generated

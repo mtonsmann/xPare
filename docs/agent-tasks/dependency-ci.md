@@ -37,6 +37,10 @@ automation.
   recommendation with reproducible evidence. A recommendation is not an automerge
   instruction and must not bypass `cargo xtask ci`, failed GitHub checks, or branch
   protection.
+- A no-findings review, approval, reaction, or thumbs-up is not enough for a
+  dependency-update PR unless it includes the dependency-review evidence below.
+  If that evidence is missing, flag it as a P1 review finding rather than
+  approving from the local diff.
 
 ## Implementation rules
 

@@ -111,6 +111,12 @@ pays nothing beyond its existing subscription. The reviewer reads this repo's ag
   (`core/src/ops/{html,markdown,html_to_markdown,defang,mask,indicators,urls}.rs`),
   config/pipeline validation, dependencies / `deny.toml`, macOS entitlements & signing, or
   CI workflows.
+- **Dependency-review evidence** on Dependabot and other dependency-update PRs:
+  follow [`dependency-posture.md`](dependency-posture.md#dependabot-merge-recommendations)
+  and require a `merge`, `hold`, or `close/defer` recommendation with upstream
+  diff, capability, usage-path, trust-signal, and check-state evidence. A
+  no-findings review or thumbs-up without that evidence is a P1 finding, not an
+  approval against repo convention.
 - **Advisory only**: the required signal stays `cargo xtask ci`. The reviewer is a
   *discovery* mechanism, not a merge gate — never block on a nondeterministic reviewer, and
   never let "the bot approved it" substitute for the deterministic invariants.

@@ -76,6 +76,23 @@ not by weakening the check.
 For non-trivial work, write an execution plan under `docs/exec-plans/active/`
 with a decision log before you start; move it to `completed/` when done.
 
+## Review guidelines
+
+Automated review is advisory, but it must be evidence-bearing. Review PRs against
+the matching guardrail, and treat missing required evidence as a real finding.
+
+- For Dependabot or other dependency-update PRs, apply
+  `docs/guardrails/dependency-posture.md#dependabot-merge-recommendations`.
+  The review must either provide or request the `merge`, `hold`, or
+  `close/defer` recommendation with upstream-diff evidence, xPare usage path,
+  capability delta, maintainer/repository trust signals, and checks inspected.
+- A no-findings review, approval, or thumbs-up without that dependency evidence is
+  not enough. Flag the missing recommendation as P1 because the PR cannot be
+  reviewed against repo convention without it.
+- Do not approve a dependency update while relevant GitHub checks are failing.
+  Failed checks should produce a `hold`/rerun recommendation unless the failure is
+  understood and resolved in the PR evidence.
+
 ## Core Transformations
 
 Use for changes to transform logic (HTML/Markdown strip, whitespace, case, line
