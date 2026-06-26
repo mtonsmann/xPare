@@ -4707,6 +4707,15 @@ fn check_swift() -> Result<(), String> {
 /// stable: these are the load-bearing sections, not every heading.
 const AGENT_WORKFLOW_FILES: &[(&str, &[&str])] = &[
     (
+        "AGENTS.md",
+        &[
+            "## Knowledge base",
+            "## Operating Loop",
+            "## Review guidelines",
+            "## Pull Requests",
+        ],
+    ),
+    (
         "CONTRIBUTING.md",
         &["## GitHub Actions lanes", "## Closing review findings"],
     ),
@@ -4756,6 +4765,23 @@ const CONTRIBUTOR_REVIEW_FINDING_GUARDRAIL_LINKS: &[&str] = &[
     "docs/guardrails/review-finding-closure.md",
 ];
 
+/// Markers the top-level Codex/GitHub review guidance must keep. This is a
+/// lightweight structural guard, not a prose parser: if the review policy is
+/// intentionally rewritten, preserve these reviewer-facing concepts or update the
+/// markers in the same PR.
+const AGENTS_REVIEW_GUIDELINE_MARKERS: &[&str] = &[
+    "docs/guardrails/dependency-posture.md#dependabot-merge-recommendations",
+    "`merge`, `hold`",
+    "`close/defer`",
+    "upstream-diff evidence",
+    "xPare usage path",
+    "capability delta",
+    "maintainer/repository trust signals",
+    "checks inspected",
+    "P1",
+    "Failed checks",
+];
+
 /// Workflow entry points and agent wrappers must remain thin pointers to the
 /// repo-owned guardrails. The literals are intentionally exact: if a guardrail
 /// moves, update the entry point and this check in the same PR after proving the
@@ -4793,6 +4819,18 @@ fn missing_workflow_headings(text: &str, required: &[&str]) -> Vec<String> {
         .filter(|heading| !text.lines().any(|line| line.trim() == **heading))
         .map(|heading| (*heading).to_string())
         .collect()
+}
+
+fn missing_text_markers(text: &str, required: &[&str]) -> Vec<String> {
+    required
+        .iter()
+        .filter(|marker| !text.contains(**marker))
+        .map(|marker| (*marker).to_string())
+        .collect()
+}
+
+fn missing_agents_review_guideline_markers(text: &str) -> Vec<String> {
+    missing_text_markers(text, AGENTS_REVIEW_GUIDELINE_MARKERS)
 }
 
 fn missing_guardrail_links_for_text(
@@ -4861,6 +4899,15 @@ fn check_agent_workflow() -> Result<(), String> {
         }
     }
     errors.extend(missing_workflow_guardrail_links(&root));
+    if let Ok(text) = std::fs::read_to_string(root.join("AGENTS.md")) {
+        let missing = missing_agents_review_guideline_markers(&text);
+        if !missing.is_empty() {
+            errors.push(format!(
+                "AGENTS.md Review guidelines missing dependency-review marker(s): {}",
+                missing.join(", ")
+            ));
+        }
+    }
 
     if errors.is_empty() {
         println!(
@@ -6339,6 +6386,29 @@ mod tests {
         // Exact heading line (with surrounding whitespace) is accepted.
         assert!(
             missing_workflow_headings("  ## Files to read  \n", &["## Files to read"]).is_empty()
+        );
+    }
+
+    #[test]
+    fn agent_workflow_detects_missing_dependency_review_guidance() {
+        let text = "## Review guidelines\n\nReview dependency PRs carefully.\n";
+        let missing = missing_agents_review_guideline_markers(text);
+
+        assert!(
+            missing.contains(
+                &"docs/guardrails/dependency-posture.md#dependabot-merge-recommendations"
+                    .to_string()
+            ),
+            "got: {missing:?}"
+        );
+        assert!(
+            missing.contains(&"`close/defer`".to_string()),
+            "got: {missing:?}"
+        );
+        assert!(missing.contains(&"P1".to_string()), "got: {missing:?}");
+        assert!(
+            missing.contains(&"Failed checks".to_string()),
+            "got: {missing:?}"
         );
     }
 
