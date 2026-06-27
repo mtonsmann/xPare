@@ -248,8 +248,12 @@ fn orient(descending: bool, ord: std::cmp::Ordering) -> std::cmp::Ordering {
 /// * A trailing newline in the input is preserved.
 pub fn dedupe_lines(input: &str) -> String {
     let (lines, trailing_newline) = content_lines(input);
-    let mut seen: HashSet<&str> = HashSet::with_capacity(lines.len());
-    let mut kept: Vec<&str> = Vec::with_capacity(lines.len());
+    // Grow with the number of unique kept lines, not with the attacker-controlled
+    // total line count. Duplicate-heavy clipboard input can contain millions of
+    // short lines while producing a tiny output, so pre-sizing from `lines.len()`
+    // would turn a byte-bounded transform into a line-count memory amplifier.
+    let mut seen: HashSet<&str> = HashSet::new();
+    let mut kept: Vec<&str> = Vec::new();
     for line in lines {
         if seen.insert(line) {
             kept.push(line);

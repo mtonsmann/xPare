@@ -13,6 +13,7 @@
 //!   check-no-content-logging  assert no clipboard content is logged/persisted
 //!   check-clipboard-safety    assert default targets avoid the real clipboard
 //!   check-pipeline-zeroization assert fused core scratch storage is wiped before release
+//!   check-transform-resource-posture assert core transforms avoid known memory-amplifying pre-sizing
 //!   check-agent-workflow      assert AI-native workflow docs/skills stay wired
 //!   check-dependabot-policy   assert Dependabot update PRs stay reviewable and security-first
 //!   check-c-ffi-surface       assert C/SwiftPM interop stays header-only and tiny
@@ -58,6 +59,7 @@ fn main() -> ExitCode {
         Some("check-no-content-logging") => report(check_no_content_logging()),
         Some("check-clipboard-safety") => report(check_clipboard_safety()),
         Some("check-pipeline-zeroization") => report(check_pipeline_zeroization()),
+        Some("check-transform-resource-posture") => report(check_transform_resource_posture()),
         Some("check-agent-workflow") => report(check_agent_workflow()),
         Some("check-dependabot-policy") => report(check_dependabot_policy()),
         Some("check-c-ffi-surface") => report(check_c_ffi_surface()),
@@ -107,6 +109,7 @@ fn usage() {
          \x20 check-no-content-logging  assert no clipboard content is logged/persisted\n\
          \x20 check-clipboard-safety     assert default targets avoid the real clipboard\n\
          \x20 check-pipeline-zeroization assert fused core scratch storage is wiped before release\n\
+         \x20 check-transform-resource-posture assert core transforms avoid known memory-amplifying pre-sizing\n\
          \x20 check-agent-workflow       assert AI-native workflow docs/skills stay wired\n\
          \x20 check-dependabot-policy    assert Dependabot PRs stay reviewable and security-first\n\
          \x20 check-c-ffi-surface        assert C/SwiftPM interop stays header-only and tiny\n\
@@ -4691,6 +4694,57 @@ fn check_swift() -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
+// check-transform-resource-posture
+// ---------------------------------------------------------------------------
+
+fn validate_transform_resource_posture(text: &str) -> Result<(), String> {
+    let forbidden = [
+        "HashSet::with_capacity(lines.len())",
+        "Vec::with_capacity(lines.len())",
+    ];
+    let found: Vec<&str> = forbidden
+        .into_iter()
+        .filter(|pattern| text.contains(pattern))
+        .collect();
+
+    if found.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "memory-amplifying line-count pre-sizing found: {}.\n\
+             \n\
+             `dedupe_lines` may receive duplicate-heavy attacker-controlled clipboard input where \
+             total line count is enormous but the unique kept-line set is tiny. Do not reserve \
+             HashSet or Vec storage from `lines.len()` there; let those containers grow with \
+             actually kept unique lines or use a transform-specific bounded strategy.",
+            found.join(", ")
+        ))
+    }
+}
+
+fn check_transform_resource_posture() -> Result<(), String> {
+    let rel = "core/src/ops/lines.rs";
+    let path = workspace_root().join(rel);
+    let text = std::fs::read_to_string(&path).map_err(|e| {
+        format!(
+            "check-transform-resource-posture: FAIL — could not read {}: {e}",
+            path.display()
+        )
+    })?;
+
+    validate_transform_resource_posture(&text).map_err(|e| {
+        format!(
+            "check-transform-resource-posture: FAIL — {rel} violates core resource posture:\n{e}"
+        )
+    })?;
+
+    println!(
+        "check-transform-resource-posture: line dedupe does not pre-size containers from total attacker-controlled line count."
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // check-agent-workflow
 // ---------------------------------------------------------------------------
 //
@@ -5052,6 +5106,10 @@ fn run_ci() -> ExitCode {
         return ExitCode::FAILURE;
     }
     if let Err(msg) = check_pipeline_zeroization() {
+        eprintln!("{msg}");
+        return ExitCode::FAILURE;
+    }
+    if let Err(msg) = check_transform_resource_posture() {
         eprintln!("{msg}");
         return ExitCode::FAILURE;
     }
@@ -6327,6 +6385,30 @@ mod tests {
                 "{rel} lost load-bearing marker {marker:?} ({reason})"
             );
         }
+    }
+
+    // --- check-transform-resource-posture ---
+
+    #[test]
+    fn current_transform_resource_posture_passes() {
+        let text = std::fs::read_to_string(workspace_root().join("core/src/ops/lines.rs")).unwrap();
+        validate_transform_resource_posture(&text).unwrap();
+    }
+
+    #[test]
+    fn transform_resource_posture_rejects_line_count_presizing() {
+        let text = r#"
+            pub fn dedupe_lines(input: &str) -> String {
+                let (lines, trailing_newline) = content_lines(input);
+                let mut seen: HashSet<&str> = HashSet::with_capacity(lines.len());
+                let mut kept: Vec<&str> = Vec::with_capacity(lines.len());
+                join_lines(&kept, trailing_newline)
+            }
+        "#;
+        let err = validate_transform_resource_posture(text).unwrap_err();
+        assert!(err.contains("line-count pre-sizing"), "got: {err}");
+        assert!(err.contains("HashSet::with_capacity"), "got: {err}");
+        assert!(err.contains("Vec::with_capacity"), "got: {err}");
     }
 
     #[test]

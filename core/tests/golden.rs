@@ -569,6 +569,12 @@ fn dedupe_lines_preserves_trailing_newline() {
     assert_eq!(run(Operation::DedupeLines, "a\na\n"), "a\n");
 }
 
+#[test]
+fn dedupe_lines_handles_duplicate_heavy_adversarial_input() {
+    let input = "x\n".repeat(100_000);
+    assert_eq!(run(Operation::DedupeLines, &input), "x\n");
+}
+
 // ---------------------------------------------------------------------------
 // prefix_lines / suffix_lines
 // ---------------------------------------------------------------------------

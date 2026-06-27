@@ -82,6 +82,8 @@ checks run locally and in CI. Subcommands: `gen-header`, `check-abi`,
 `check-unsafe-forbid`, `check-core-deps`, `check-no-network`, `check-entitlements`,
 `check-no-content-logging`, `check-clipboard-safety`,
 `check-pipeline-zeroization` (fused core scratch storage is wiped before release),
+`check-transform-resource-posture` (core transforms avoid known
+attacker-controlled memory-amplifying pre-sizing),
 `check-agent-workflow`,
 `check-dependabot-policy` (Dependabot update PRs stay narrow and security-first),
 `check-c-ffi-surface` (C/SwiftPM interop stays header-only and tiny),

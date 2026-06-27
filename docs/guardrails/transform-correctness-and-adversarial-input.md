@@ -25,6 +25,12 @@ hangs, stays deterministic, neutralizes active content."
    `core/tests/perf_guard.rs` keeps that shape as a permanent linear-time guard.
    **Watch repeated/backward scans of the output buffer** — they are the easy way to
    reintroduce super-linearity.
+   Avoid pre-sizing auxiliary containers from attacker-controlled structural counts
+   when the result can be much smaller than the input shape. `dedupe_lines` is the
+   canonical case: duplicate-heavy text can have millions of short lines but only
+   one unique kept line, so its `HashSet`/`Vec` storage must grow with the unique
+   output, not reserve from total line count. `cargo xtask
+   check-transform-resource-posture` blocks that specific regression.
 3. **Be deterministic.** Same `(input, config)` ⇒ same output, with no dependence on
    environment, time, locale, or hash-set iteration order. (`dedupe_lines` uses a
    `HashSet` for membership only and emits in original order — copy that pattern.)
